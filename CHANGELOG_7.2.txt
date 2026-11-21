@@ -1,0 +1,24 @@
+VELTRIX TRADING CLOCK 7.2
+========================
+
+Research Lab responsiveness maintenance release.
+
+FIXES AND IMPROVEMENTS
+- Moved historical research-cache loading and JSON parsing to a background worker.
+- Moved session observation and 30/60/90-day statistics calculations off the Tkinter UI thread.
+- Added revision-based analysis caching so page navigation, filter changes and exports do not recalculate all historical bars.
+- Discarded obsolete analysis results when a newer import/fetch changes the source dataset.
+- Moved research-cache JSON serialization and disk writes to a dedicated background writer.
+- Coalesced pending cache snapshots so only the latest queued dataset is persisted.
+- Reused chronological ordering and removed redundant per-session sorts in the research engine.
+- Kept report exports disabled until the current dataset analysis is complete; exports now use cached outputs.
+- Preserved v7.1 economic-calendar timeout, retry and backoff changes.
+
+VALIDATION
+- 78 automated unit tests passed.
+- Python compilation passed.
+- Tkinter GUI smoke test passed under Xvfb. The smoke test injected a synthetic OHLC dataset, verified background analysis completed, and confirmed the research summary table populated.
+
+NOTES
+- Large datasets still require CPU and memory. The change prevents expensive analysis and cache I/O from running directly inside the Tkinter event loop; it does not make arbitrarily large files cost-free.
+- External market/calendar data connections were disabled during the GUI smoke test.

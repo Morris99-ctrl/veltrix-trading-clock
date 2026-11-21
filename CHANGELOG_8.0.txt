@@ -1,0 +1,25 @@
+VELTRIX TRADING CLOCK — PHASE 8.0
+Multi-Resolution & Information-Driven Bar Engine
+
+Added
+- Raw tick CSV import with timestamp parsing, stable sorting, duplicate preservation and row validation. The bounded two-pass importer avoids a second full in-memory copy of large exports; a 250,000-bar output cap protects the research cache.
+- Last-price tick-rule classification when sufficiently available; otherwise Bid/Ask midpoint proxy with explicit provenance label.
+- Fixed-tick bar construction with trailing incomplete-tick reporting.
+- Adaptive Tick Imbalance Bars (TIB) with seed/calibration bar, separately configured EWMA expected bar length (bars) and tick-by-tick signed imbalance (ticks), plus a configurable minimum expected-imbalance floor.
+- Raw-source timezone is captured at import and reused for every subsequent bar build, preventing accidental timestamp reinterpretation when the UI timezone setting changes.
+- Raw tick source registry in research_cache.json and local source preservation under tick_data/.
+- Separate generated OHLC datasets selectable from Research Lab and Strategy Lab.
+- Variable-interval session research handling propagated from generated-dataset metadata, plus sampling provenance in Strategy Lab status / HTML export.
+- Background processing for raw tick validation and bar construction.
+
+Preserved
+- Existing time-based/provider OHLC datasets and CSV imports.
+- Existing alarm, themes, global sessions, alerts, economic calendar and volatility workspace.
+- Existing SMA/ATR Strategy Lab, next-bar-open execution, costs, holdout and walk-forward evaluation.
+
+Important limitations
+- Tick direction is inferred with the tick rule; it is not an exchange aggressor-side flag.
+- Bid/Ask midpoint bars are quote-flow proxies, not true trade-flow TIBs.
+- Volume imbalance bars are not implemented because broker volume semantics must first be verified.
+- Strategy Lab consumes the resulting OHLC bars; it does not perform raw tick replay or model the exact intrabar order path.
+- Broker point value, contract size, quantity step, spread, commissions and slippage must be configured and verified before interpreting any backtest.

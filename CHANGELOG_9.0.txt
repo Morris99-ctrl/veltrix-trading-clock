@@ -1,0 +1,42 @@
+VELTRIX TRADING CLOCK — v9.0 / PHASE 10
+Provider-independent Market Data Gateway
+
+Added
+- Data Center workspace for provider credentials status, connection smoke tests, historical acquisition, dataset registry, OHLC quality audits and matched-timestamp provider comparisons.
+- Provider-neutral historical adapters for Massive (forex, indices and dated futures contracts) and Twelve Data (supported time-series instruments).
+- Databento provider catalog entry for future exchange-data integration. No Databento adapter is enabled in this release.
+- Environment-variable-only credentials: MASSIVE_API_KEY and TWELVE_DATA_API_KEY. No key is stored in application configuration, cache files or registered dataset metadata.
+- Background provider requests, quality audits and comparisons so network/API latency does not block the Tkinter interface.
+- Provider data registration in the existing research dataset registry, making fetched data selectable in Research Lab and Strategy Lab without replacing existing datasets.
+- Provenance metadata for provider, symbol, canonical instrument ID, asset class, requested dates, date-basis, UTC timestamp basis, price semantics and unreviewed commercial licensing.
+- Quality accounting for malformed rows skipped and duplicate timestamps removed, plus OHLC validation and large-gap review candidates.
+- Cross-provider comparison requiring the same user-assigned canonical instrument ID and same bar interval, with exact UTC timestamp alignment, matched coverage, close differences and return correlation.
+- Explicit truncation warning when Twelve Data reaches its 5,000-record request ceiling or Massive reaches the five-page safety cap.
+
+Correctness and data semantics
+- Massive FX bars are labelled as bid-quote bars; the provider's FX volume field is a quote count, not traded volume. FX dates are interpreted in Eastern Time; returned timestamps are UTC.
+- Massive index bars are index values, not executed trades. Index request dates use Eastern Time and output timestamps are UTC.
+- Massive futures bars retain exchange-trade price and volume semantics, with UTC timestamps and contract-specific tickers.
+- Twelve Data intraday bars request UTC; daily and higher bars are interpreted in the exchange timezone and normalised to UTC. The time-series adapter omits outputsize when start_date and end_date are both provided, and flags results reaching the provider 5,000-record limit.
+- Existing Yahoo Finance market-data integration remains available and is relabelled as an unofficial legacy fallback pending provider validation. It is not silently replaced.
+- MT5 broker-feed connectivity and Databento retrieval remain deferred; no unsupported data source is presented as active.
+
+Preserved
+- Existing alarm, themes, global sessions, session alerts, economic calendar and Windows toast support.
+- Existing volatility calculations and Yahoo fallback path.
+- Research Lab, Strategy Lab, broker CSV import, custom instruments, Phase 8 raw tick import, fixed-tick bars and Tick Imbalance Bars.
+- Existing cache formats and user data directories. Upgrade users should preserve config.json, research_cache.json, calendar_cache.json, market_cache.json, tick_data/ and alarm.mp3.
+
+Validation
+- 114 automated tests passed.
+- Python compilation passed.
+- Tkinter GUI smoke test passed under a virtual display: Data Center navigation, provider cards and controls, theme switching, navigation and shutdown.
+- Provider network requests were mocked during development. No user API credentials were available, so live provider entitlements, actual symbol coverage, rate limits and price freshness were not verified.
+
+Important limitations
+- Provider authentication success does not prove subscription entitlement for every asset class, symbol, history range or live product.
+- Massive futures are individual dated contracts. Contract discovery, roll construction and continuous-futures adjustment are not automated in this release.
+- Provider market feeds can represent different instruments and price bases. Spot XAU/USD, COMEX GC futures and broker XAUUSD CFD/OTC feeds must remain separate canonical datasets unless a documented basis methodology is applied.
+- Data Center comparisons do not resample, interpolate, correct bid/ask differences, adjust futures rolls or certify the correctness of either feed.
+- Data vendor licences may distinguish personal research, internal business use, external display and redistribution. Commercial licence review is not completed by this application; dataset metadata defaults commercial_licence_reviewed to false.
+- No live WebSocket streaming, automatic provider failover, vendor consensus feed, order-book reconstruction, MT5 bridge, order submission or trading execution is included.

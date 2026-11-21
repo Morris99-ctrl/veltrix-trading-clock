@@ -1,0 +1,25 @@
+VELTRIX TRADING CLOCK v9.5 — RELEASE VALIDATION
+
+Automated unit tests: 145 passed
+Python compilation: passed
+Tkinter GUI smoke test under Xvfb: passed
+- Focus workspace built and displayed
+- Goal creation and selection exercised
+- Milestone creation and tree rendering exercised
+- Stopwatch start, pause, resume and stop exercised
+- All six global themes switched with Focus workspace active
+
+Focus engine coverage:
+- Goal and milestone persistence
+- Goal date validation, manual/milestone progress
+- Restart-safe stopwatch and countdown state
+- Countdown completion while application is closed
+- Pause/resume and stop behavior
+- Daily-focus attribution across Africa/Nairobi midnight
+
+Packaging caveat:
+The build environment is Linux. The included Windows PyInstaller build and installer
+configuration must be executed on the target Windows 10/11 PC. A native Windows
+.exe, native Windows shortcut creation and Windows rendering are not verified here.
+
+No API keys, .env, caches, SQLite user data or imported tick files are included.

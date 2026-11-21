@@ -1,0 +1,26 @@
+VELTRIX TRADING CLOCK — v9.6 / PHASE 12
+
+NEW
+- Added a dedicated REGIME LAB workspace integrated with Research Lab dataset registration.
+- Added causal per-bar labels: RANGE, TREND_UP, TREND_DOWN, VOLATILITY_SHOCK, TRANSITION and WARMUP.
+- Added efficiency ratio, ATR-normalised OLS slope, fast/slow Wilder ATR ratio and true-range shock diagnostics.
+- Added historical regime frequency, regime transition counts and separate forward-horizon outcome statistics.
+- Added regime-coloured close-price path, recent classification table and CSV export.
+- Added configurable lookback, ATR periods, ER thresholds, normalized slope, shock thresholds and forward horizon.
+- Added background analysis and persisted Regime Lab preferences.
+
+METHODOLOGY / SAFETY
+- Regime labels at bar t use only OHLC information available through bar t. No future bars feed classification.
+- Forward returns are computed after labels and are descriptive conditional outcomes only; they are not predictions or trading signals.
+- No automated trading logic, strategy entry, broker connectivity or order submission was added.
+- Defaults are documented research starting points, not optimised parameters.
+
+PRESERVED
+- All v9.5 workspaces, Research Lab datasets, Strategy Lab, Data Center, tick import / Fixed Tick / TIB construction, user data, credentials migration, themes and Focus & Goals Center.
+
+VALIDATION
+- 159 automated unit tests passed.
+- Python bytecode compilation passed for main.py and regime_engine.py.
+- Tkinter GUI smoke test passed under Xvfb, including REGIME LAB rendering, result tables, chart redraw and all six themes.
+- Native Windows build and Windows-specific rendering remain to be verified on the target PC.
+- No claim of predictive edge or trading profitability is made by this release.

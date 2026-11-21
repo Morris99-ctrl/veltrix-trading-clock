@@ -1,0 +1,26 @@
+VELTRIX TRADING CLOCK v9.5 — PHASE 11: FOCUS & GOALS CENTER
+
+NEW
+- Added a dedicated FOCUS & GOALS workspace to the global navigation.
+- Added stopwatch and countdown timers with start, pause, resume and stop controls.
+- Persisted active timer state in a local SQLite database. Running stopwatches continue across application restarts; countdowns are reconciled against their stored deadline.
+- Added long-term goal creation, editing, deletion, categories, descriptions, status, manual progress and ISO start/deadline dates.
+- Added goal milestones with add, toggle-complete and remove actions. Milestone completion drives goal progress when milestones exist.
+- Added a live selected-goal deadline countdown (days, hours, minutes and seconds).
+- Added daily focus totals, adjustable daily target and recent session history.
+- Allocated focus intervals correctly across local midnight using the configured IANA timezone.
+- Stored personal goal and focus data in focus_goals.sqlite3 under the writable app-data folder, separate from the executable.
+
+PRESERVED
+- All seven previous workspaces, global theme system, six themes, alarms, sessions, alerts, calendar, Volatility Lab, Research Lab, Strategy Lab, Data Center, API credentials, market caches and tick-data workflow.
+- Existing focus database is preserved during subsequent desktop upgrades. The installer can also migrate focus_goals.sqlite3 from an existing project or AppData folder.
+
+FIXES / QUALITY
+- Corrected a countdown stop-state issue so a manually stopped running countdown preserves its remaining time.
+- Corrected a test import alias so pytest does not collect the production provider connection helper as a test.
+
+VALIDATION
+- 145 automated tests passed.
+- Python compilation passed.
+- Tkinter GUI smoke test passed for Focus Center navigation, goal creation, milestone display, stopwatch start/pause/resume/stop and all six themes.
+- Native Windows executable build and native Windows installation have not been run in this Linux build environment.

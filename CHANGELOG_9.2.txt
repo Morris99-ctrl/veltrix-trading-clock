@@ -1,0 +1,23 @@
+VELTRIX TRADING CLOCK — v9.2
+Cross-platform UI theme consistency patch
+
+Problem addressed
+- Readonly ttk Combobox fields appeared white/light on some Windows themes despite
+  the active Veltrix dark palette. Native Treeview headings could also ignore custom
+  heading colours under the Windows Vista ttk theme.
+
+Changes
+- Prefer the bundled ttk "clam" theme when available so Windows honours custom
+  field backgrounds, foregrounds, arrows and Treeview heading palettes.
+- Apply the active theme to all Combobox styles used by Calendar, Research Lab,
+  Strategy Lab and Data Center.
+- Explicitly map readonly, active, pressed and disabled Combobox states.
+- Theme the Combobox dropdown Listbox using the active palette.
+- Keep a safe fallback to the platform ttk theme if Clam is unavailable.
+- No changes to provider adapters, API keys, market data, research calculations,
+  backtests, calendar logic, alarms or existing user data.
+
+Validation
+- Five new UI-theme unit tests cover Clam selection/fallback, all Combobox styles,
+  state-specific colours, all six Veltrix palettes and safe option-database handling.
+- Full regression suite and GUI smoke tests are run for this release.

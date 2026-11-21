@@ -1,0 +1,23 @@
+VELTRIX TRADING CLOCK — v9.1 / PHASE 10 CONFIGURATION PATCH
+Local .env credential support
+
+Added
+- Project-local .env loading through python-dotenv. The file is resolved relative to data_gateway.py/main.py, not the current working directory.
+- Safe .env.example template containing provider-key placeholders only.
+- .gitignore rules that exclude .env and other .env.* files while allowing .env.example to be committed.
+- Data Center security guidance describing local .env configuration and process-environment precedence.
+
+Security and compatibility
+- Existing process/Windows environment variables take precedence over .env values (load_dotenv override=False).
+- API keys remain out of config.json, research_cache.json, logs, and registered dataset metadata.
+- Existing Windows environment-variable configuration remains supported.
+- The application never generates or overwrites a real .env file. Users create it by copying .env.example.
+
+Validation
+- Added tests for .env loading, process-environment precedence, and absent optional .env files.
+- 117 automated tests passed, including all existing v9.0 coverage and three new .env tests.
+- Python compilation passed.
+- Python compilation passed.
+- GUI smoke test passed under a virtual display: v9.1 startup, Data Center navigation, version display and clean shutdown.
+- No live provider request is made by the .env loader or the new tests.
+- No live provider request is made by the .env loader or the new tests.

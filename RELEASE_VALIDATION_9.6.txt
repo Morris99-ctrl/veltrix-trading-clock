@@ -1,0 +1,33 @@
+VELTRIX TRADING CLOCK v9.6 — RELEASE VALIDATION
+
+Automated validation
+- Unit tests: 173 passed with Python 3.14, including a Windows DPAPI round trip.
+- Python compilation: `python -m compileall -q .` passed.
+- Hashed dependency lock: dry-run install with `--require-hashes` passed.
+- Windows packaging: PyInstaller 6.22.3 with Python 3.11 successfully
+  produced the one-folder app at
+  `dist\Veltrix Trading Clock\VeltrixTradingClock.exe`.
+- The package includes the `.env.example` template; no real `.env` file or API
+  credentials are included in the executable bundle.
+
+Not verified in this run
+- The per-user installer was not run because it creates files under
+  `%LOCALAPPDATA%` and adds Desktop/Start-menu shortcuts.
+- The packaged GUI was not interactively launched for a Windows smoke test.
+- Optional pygame installation was not verified: downloading its wheel timed
+  out. The app uses the system-bell fallback when pygame is unavailable.
+- The executable is unsigned; no signing certificate was provided.
+
+Security and operational notes
+- Research CSV text fields are escaped against spreadsheet formula injection;
+  numeric values remain numeric.
+- Configuration and alarm state use validation and atomic writes. Future
+  scheduled/snoozed alarms survive restarts; an alarm elapsed while the app is
+  closed is reported as missed and is not replayed.
+- Windows `.env` files are protected at rest with the current user's DPAPI key;
+  same-user malware can still access credentials after decryption. Non-Windows
+  source runs keep `.env` as plaintext.
+- CPU idle work was reduced by slowing queue/focus/alarm polling and reusing
+  static clock-canvas items between updates.
+- `main.py` remains a large monolithic UI module; splitting its pages is
+  deferred to a separate, behavior-preserving refactor.

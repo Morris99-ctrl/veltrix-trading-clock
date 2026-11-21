@@ -1,0 +1,25 @@
+VELTRIX TRADING CLOCK — VERSION 9.4
+WINDOWS DESKTOP APPLICATION PACKAGING
+
+NEW
+- Added a custom multi-resolution Veltrix Windows application icon.
+- Added a PyInstaller one-folder build specification for Windows 10/11.
+- Added BUILD_AND_INSTALL.bat for one-time local build and installation.
+- Added a PowerShell installer that creates Desktop and Start-menu shortcuts.
+- Added version metadata to the packaged Windows executable.
+- Added optional pygame packaging for MP3 alarm playback; the existing system-bell fallback remains available.
+
+APPLICATION DATA AND UPGRADES
+- Added app_paths.py to separate bundled read-only resources from writable user data.
+- Source-mode data remains beside main.py for backwards compatibility.
+- Frozen Windows builds store config, .env, caches, imported ticks and alarm audio in %LOCALAPPDATA%\Veltrix Trading Clock.
+- Program files install under %LOCALAPPDATA%\Programs\Veltrix Trading Clock.
+- The installer migrates existing personal files only when destination files do not already exist.
+- Tick-data migration merges files and preserves files already in the app-data directory.
+- API credentials are not included in the executable or release ZIP.
+
+VALIDATION
+- 132 automated unit tests passed on the development host.
+- Python source compilation passed.
+- Tkinter GUI startup and clean shutdown smoke test passed under Xvfb.
+- Windows-native PyInstaller packaging and shortcut creation are configured but must be run on Windows; the development host is Linux and PyInstaller does not cross-compile Windows executables from Linux.

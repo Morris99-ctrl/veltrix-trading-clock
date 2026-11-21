@@ -1,0 +1,42 @@
+VELTRIX TRADING CLOCK — v9.3
+Application-wide theme consistency release
+
+Problem addressed
+- v9.2 corrected Data Center selection controls and several table headers, but
+  theme configuration still depended on scattered, page-specific widget lists.
+- Some standard Tk controls, future ttk controls, popup widgets and shared
+  component styles could retain platform-default colours after a theme change.
+
+Changes
+- Added a recursive classic-Tk theme pass for unregistered controls, including
+  buttons, entries, spinboxes, check/radio controls, listboxes, text areas,
+  menus, canvases, scrollbars and popup descendants.
+- Preserved the semantic panel/background roles of widgets registered through
+  the application's shared frame and label helpers.
+- Expanded shared ttk styling to buttons, labels, frames, entries, spinboxes,
+  checkboxes, radio buttons, label frames, notebook tabs, separators,
+  progress bars, scales and scrollbars.
+- Applied consistent row, selection and heading styles to all Treeviews used
+  by Calendar, Volatility, Research, Strategy and Data Center.
+- Applied normal, readonly, active, disabled and selected states to all
+  Combobox styles and themed native Tk dropdown menus/listboxes.
+- Kept all six palettes: CYAN, AMBER, MATRIX, VIOLET, ICE and LIGHT.
+- Updated the application version displayed in the window title to 9.3.
+- Corrected classic Entry styling so Entry widgets receive only supported Tk
+  options; Spinbox-only arrow-button styling is applied to Spinbox widgets only.
+  This prevents one unsupported option from cancelling the full Entry colour
+  update and leaving tick-bar parameter fields white.
+
+Unchanged
+- No changes to provider adapters, API credentials, .env loading, market data,
+  tick bars, research calculations, strategy/backtesting logic, calendar,
+  alerts, alarms or user data formats.
+
+Validation
+- 126/126 automated tests passed.
+- Python compileall passed.
+- Virtual-display GUI smoke test passed across all 7 workspaces and all 6
+  themes (42 workspace/theme combinations), including all Combobox and Treeview style families, classic Entry and
+  Spinbox controls, and a zero-pure-white classic-widget background audit.
+- Clean package extraction and regression tests passed.
+- Native Windows rendering remains for the user to confirm on their machine.

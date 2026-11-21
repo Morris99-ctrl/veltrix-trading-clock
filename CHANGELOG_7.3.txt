@@ -1,0 +1,14 @@
+VELTRIX TRADING CLOCK 7.3
+
+CUSTOM BROKER INSTRUMENT IMPORT
+- Added IMPORT AS NEW INSTRUMENT to Research Lab.
+- Broker CSV datasets are registered as persistent selectable instruments.
+- Custom datasets appear in both Research Lab and Strategy Lab after import and on subsequent launches.
+- Existing selected-instrument CSV replacement remains available.
+- Re-importing an instrument with the same name updates its existing custom dataset key.
+- Custom strategy datasets explicitly warn users to verify point value, quantity step, contract size and transaction costs.
+- Added selector/key helper tests.
+
+Compatibility
+- Existing built-in market instruments and caches are unchanged.
+- Custom research instruments are stored in research_cache.json and are not added to live market-data instruments.

@@ -1,0 +1,23 @@
+VELTRIX TRADING CLOCK v9.4 — RELEASE VALIDATION
+
+Automated tests: 133 passed
+Python compileall: passed
+PyInstaller spec syntax: passed
+Custom multi-resolution ICO asset: validated
+Tkinter GUI smoke test under Xvfb: passed
+- Application title/version: VELTRIX | Trading Clock v9.4
+- All 7 workspaces navigated successfully
+- All 6 themes switched successfully
+- Clean application shutdown completed
+
+Packaging caveat:
+The development environment for this release is Linux. PyInstaller does not
+cross-compile Windows executables from Linux. The Windows one-folder packaging
+configuration and one-click BUILD_AND_INSTALL.bat are included, but creation of
+the Windows .exe, installation and Desktop/Start-menu shortcuts must run on
+the target Windows 10/11 machine. PyInstaller itself could not be downloaded in
+the offline development environment, so the native Windows build has not been
+executed or verified here.
+
+No API credentials, .env, market caches, research caches, or imported tick
+files are included in this ZIP.

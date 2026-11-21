@@ -1,0 +1,177 @@
+{
+  "app_name": "VELTRIX TRADING CLOCK",
+  "home_timezone": "Africa/Nairobi",
+  "time_format": "24h",
+  "theme": "ICE",
+  "refresh_milliseconds": 1000,
+  "sessions": [
+    {
+      "key": "sydney",
+      "name": "SYDNEY",
+      "city": "Sydney, Australia",
+      "flag": "AU",
+      "timezone": "Australia/Sydney",
+      "open": "07:00",
+      "close": "16:00",
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "key": "tokyo",
+      "name": "TOKYO",
+      "city": "Tokyo, Japan",
+      "flag": "JP",
+      "timezone": "Asia/Tokyo",
+      "open": "09:00",
+      "close": "18:00",
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "key": "london",
+      "name": "LONDON",
+      "city": "London, United Kingdom",
+      "flag": "UK",
+      "timezone": "Europe/London",
+      "open": "08:00",
+      "close": "17:00",
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "key": "new_york",
+      "name": "NEW YORK",
+      "city": "New York, United States",
+      "flag": "US",
+      "timezone": "America/New_York",
+      "open": "08:00",
+      "close": "17:00",
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "alerts": {
+    "notify_pre_open": true,
+    "notify_open": true,
+    "notify_pre_close": true,
+    "notify_close": true,
+    "notify_overlap": true,
+    "sound_enabled": true,
+    "desktop_notifications_enabled": true,
+    "pre_open_minutes": 15,
+    "pre_close_minutes": 10
+  },
+  "economic_events": [],
+  "event_reminder_minutes": 15,
+  "calendar": {
+    "refresh_minutes": 15,
+    "lookahead_days": 7,
+    "notify_high_impact": true,
+    "reminder_minutes": 15
+  },
+  "market_instruments": [
+    {
+      "key": "gold_spot",
+      "name": "SPOT GOLD",
+      "symbol": "XAUUSD=X",
+      "unit": "USD/oz",
+      "description": "Yahoo Finance spot XAUUSD symbol",
+      "point_value": 1.0,
+      "quantity_step": 0.01
+    },
+    {
+      "key": "spx_cash",
+      "name": "S&P 500 CASH",
+      "symbol": "^GSPC",
+      "unit": "pts",
+      "description": "Cash index; generally only New York cash-session observations",
+      "point_value": 1.0,
+      "quantity_step": 0.01
+    },
+    {
+      "key": "spx_futures",
+      "name": "E-MINI S&P 500",
+      "symbol": "ES=F",
+      "unit": "pts",
+      "description": "Continuous futures proxy; session coverage and roll behaviour can vary",
+      "point_value": 50.0,
+      "quantity_step": 1.0
+    }
+  ],
+  "market_data": {
+    "refresh_minutes": 5,
+    "interval": "5m",
+    "intraday_range": "5d",
+    "daily_range": "3mo",
+    "atr_period": 14,
+    "expected_move_lookback": 20,
+    "baseline_sessions": 3,
+    "regime_alerts_enabled": true,
+    "expansion_multiple": 1.5,
+    "contraction_multiple": 0.67,
+    "provider": "yahoo_chart"
+  },
+  "research": {
+    "interval": "1h",
+    "range": "3mo",
+    "window_days": 90,
+    "csv_timezone": "UTC",
+    "selected_asset": "provider_twelve_data_d38da02217"
+  },
+  "backtest": {
+    "fast_period": 50,
+    "slow_period": 200,
+    "atr_period": 10,
+    "stop_atr_multiple": 2.0,
+    "target_r_multiple": 2.5,
+    "direction": "short_only",
+    "initial_capital": 1000.0,
+    "risk_per_trade_pct": 0.5,
+    "commission_bps": 0.5,
+    "commission_per_unit": 0.0,
+    "slippage_bps": 0.0,
+    "point_value": 1.0,
+    "quantity_step": 0.01,
+    "max_leverage": 1.0,
+    "train_fraction_pct": 80,
+    "walk_forward_train_fraction_pct": 50,
+    "walk_forward_folds": 3,
+    "account_currency": "USD",
+    "selected_asset": "provider_twelve_data_d38da02217"
+  },
+  "focus": {
+    "daily_target_hours": 4.0
+  },
+  "regime_lab": {
+    "lookback": 20,
+    "atr_fast_period": 14,
+    "atr_slow_period": 50,
+    "range_er_max": 0.25,
+    "trend_er_min": 0.35,
+    "trend_slope_atr_min": 0.2,
+    "shock_atr_ratio": 1.8,
+    "shock_true_range_multiple": 2.5,
+    "forward_horizon": 10,
+    "selected_asset": "provider_twelve_data_d38da02217"
+  }
+}

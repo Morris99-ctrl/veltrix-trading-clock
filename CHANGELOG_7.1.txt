@@ -1,0 +1,14 @@
+VELTRIX TRADING CLOCK 7.1 - CALENDAR CONNECTIVITY PATCH
+
+Changes
+-------
+1. Increased the calendar HTTPS request timeout from 15 to 25 seconds.
+2. Added one bounded retry after a transient network failure.
+3. Added actionable error messages for request timeout, DNS lookup and TLS failures.
+4. Separated successful-fetch refresh throttling from failed-request retry backoff.
+5. Failed requests retry after 30s, 60s, 120s, 240s, 480s and then 900s.
+6. Successful requests still respect the provider's documented 15-minute cache interval.
+7. Cached calendar data is preserved when a live request fails.
+8. Added Windows PowerShell connection diagnostics to the README.
+
+No API keys, TLS bypasses or plain-HTTP fallbacks are used.
