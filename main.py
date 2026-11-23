@@ -34,7 +34,8 @@ from desktop_notifications import send_desktop_notification
 from session_engine import format_countdown, get_session_state, load_session_definitions
 from themes import THEMES
 from ui_theme import (
-    apply_veltrix_classic_widget_palette, apply_veltrix_ttk_palette, prepare_veltrix_ttk_theme,
+    apply_veltrix_classic_widget_palette, apply_veltrix_font_defaults,
+    apply_veltrix_ttk_palette, prepare_veltrix_ttk_theme, UI_FONT,
 )
 from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
@@ -77,7 +78,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.11"
+APP_VERSION = "10.12"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 50
 
@@ -161,14 +162,15 @@ class VeltrixTradingClock:
             except tk.TclError:
                 # Some non-Windows Tk builds do not support .ico window icons.
                 pass
-        self.root.geometry("1160x1020")
-        self.root.minsize(900, 760)
+        self.root.geometry("1280x900")
+        self.root.minsize(1080, 740)
         self.root.configure(bg=THEMES[self.theme_name]["bg"])
         # Use a ttk theme that honours Veltrix's palette on Windows as well as
         # Linux/macOS. Native Windows "vista" controls can remain white even
         # when fieldbackground and Treeview heading colours are configured.
         self.ttk_style = ttk.Style(self.root)
         self.ttk_theme_name = prepare_veltrix_ttk_theme(self.ttk_style)
+        apply_veltrix_font_defaults(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Original alarm-clock state and callbacks.
@@ -417,6 +419,10 @@ class VeltrixTradingClock:
     def _frame(self, parent: tk.Widget, *, bg: str = "bg", **kwargs) -> tk.Frame:
         palette = THEMES[self.theme_name]
         resolved_bg = {"card": "panel", "raised": "dim"}.get(bg, bg)
+        # Surfaces are separated by tone and spacing, not bright one-pixel outlines.
+        for option in ("highlightthickness", "highlightbackground", "highlightcolor"):
+            kwargs.pop(option, None)
+        kwargs.update(highlightthickness=0, bd=0, relief="flat")
         frame = tk.Frame(parent, bg=palette[resolved_bg], **kwargs)
         self._register_theme(frame, bg)
         return frame
@@ -432,6 +438,7 @@ class VeltrixTradingClock:
     ) -> tk.Label:
         palette = THEMES[self.theme_name]
         resolved_bg = {"card": "panel", "raised": "dim"}.get(bg, bg)
+        kwargs.setdefault("font", UI_FONT)
         label = tk.Label(parent, text=text, bd=0, bg=palette[resolved_bg], fg=palette[fg], **kwargs)
         self._register_theme(label, bg, fg)
         return label
@@ -445,7 +452,7 @@ class VeltrixTradingClock:
         header.pack(fill="x", pady=(0, 13))
         brand_block = self._frame(header)
         brand_block.pack(side="left", anchor="w")
-        self.brand_label = self._label(brand_block, "VELTRIX", fg="bright", font=("Consolas", 23, "bold"))
+        self.brand_label = self._label(brand_block, "VELTRIX", fg="bright", font=("Segoe UI", 23, "bold"))
         self.brand_label.pack(anchor="w")
         self.subtitle_label = self._label(
             brand_block, "CAPITAL  /  GLOBAL TRADING CLOCK", fg="muted", font=("Consolas", 8, "bold")
@@ -477,7 +484,7 @@ class VeltrixTradingClock:
         self.local_heading.pack(anchor="w", pady=(8, 2))
         self.home_time_label = self._label(info_side, "--:--:--", bg="panel", fg="bright", font=("Consolas", 27, "bold"))
         self.home_time_label.pack(anchor="w")
-        self.home_date_label = self._label(info_side, "Loading date...", bg="panel", fg="text", font=("Segoe UI", 9))
+        self.home_date_label = self._label(info_side, "Loading date...", bg="panel", fg="text", font=("Segoe UI", 10))
         self.home_date_label.pack(anchor="w", pady=(1, 12))
         self.next_alarm_label = self._label(info_side, "◉  NEXT ALARM: NONE", bg="panel", fg="muted", font=("Consolas", 9, "bold"), wraplength=340, justify="left")
         self.next_alarm_label.pack(anchor="w", pady=(3, 0))
@@ -620,13 +627,13 @@ class VeltrixTradingClock:
         controls.grid(row=1, column=0, sticky="w")
         spin_options = {
             "font": ("Consolas", 11, "bold"), "justify": "center", "relief": "flat", "bd": 0,
-            "highlightthickness": 1, "width": 4,
+            "highlightthickness": 0, "width": 4,
         }
         self.hour_spin = tk.Spinbox(controls, from_=1, to=12, format="%02.0f", textvariable=self.hour_var, **spin_options)
         self.minute_spin = tk.Spinbox(controls, from_=0, to=59, format="%02.0f", textvariable=self.minute_var, **spin_options)
         self.period_spin = tk.Spinbox(controls, values=("AM", "PM"), textvariable=self.period_var,
                                       font=("Consolas", 11, "bold"), justify="center", relief="flat", bd=0,
-                                      highlightthickness=1, width=4)
+                                      highlightthickness=0, width=4)
         self.hour_spin.pack(side="left", padx=(0, 5))
         self.minute_spin.pack(side="left", padx=(0, 5))
         self.period_spin.pack(side="left", padx=(0, 12))
@@ -650,7 +657,7 @@ class VeltrixTradingClock:
         self.footer_note = self._label(
             footer,
             "Session hours are configurable conventions. Public holidays, broker hours and instrument-specific hours are not yet modelled.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w", justify="left", wraplength=1050,
+            bg="panel", fg="muted", font=("Segoe UI", 9), anchor="w", justify="left", wraplength=1050,
         )
         self.footer_note.pack(fill="x", pady=(4, 0))
 
@@ -1211,7 +1218,7 @@ class VeltrixTradingClock:
         self._label(
             shell,
             "Set local open/close times and active weekdays for each market. Times use each market's own timezone.",
-            fg="muted", font=("Segoe UI", 8),
+            fg="muted", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(4, 12))
 
         weekdays = (("Mon", 0), ("Tue", 1), ("Wed", 2), ("Thu", 3),
@@ -1472,7 +1479,7 @@ class VeltrixTradingClock:
         self.focus_daily_progress_label.pack(anchor="w")
         self._label(
             daily_card, "Timer intervals are recorded locally.\nA running timer continues across app restarts.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=300,
+            bg="panel", fg="muted", font=("Segoe UI", 9), justify="left", wraplength=300,
         ).pack(anchor="w", pady=(14, 0))
 
         history_card = self._frame(self.focus_content, bg="panel", padx=14, pady=11)
@@ -1501,7 +1508,7 @@ class VeltrixTradingClock:
         self._label(
             goals_header,
             "Set a deadline, break the outcome into milestones, and track the days remaining.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(3, 0))
         self.focus_goal_countdown_label = self._label(
             goals_header, "SELECT A GOAL TO VIEW ITS LIVE DEADLINE COUNTDOWN",
@@ -2019,7 +2026,7 @@ class VeltrixTradingClock:
         self._label(
             settings_panel,
             "Choose which market transitions should generate an in-app alert.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(2, 8))
 
         toggles = self._frame(settings_panel, bg="panel")
@@ -2082,7 +2089,7 @@ class VeltrixTradingClock:
         self._label(
             settings_panel,
             "Each market has independent lead times, initially set to the global default values.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(0, 5))
         self.session_lead_vars = {}
         self.session_lead_spins = []
@@ -2129,7 +2136,7 @@ class VeltrixTradingClock:
         self._label(
             risk_panel,
             "Schedule-based cautions for opening/closing windows and exchange holiday-adjacent conditions. These are not live liquidity measurements.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), wraplength=1050,
+            bg="panel", fg="muted", font=("Segoe UI", 9), wraplength=1050,
             justify="left",
         ).pack(anchor="w", pady=(2, 8))
         risk_toggles = self._frame(risk_panel, bg="panel")
@@ -2195,7 +2202,7 @@ class VeltrixTradingClock:
         self._label(
             event_panel,
             f"Add events manually. Times are interpreted in {self.home_zone.key} (your control timezone).",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(2, 8))
 
         event_form = self._frame(event_panel, bg="panel")
@@ -2271,7 +2278,7 @@ class VeltrixTradingClock:
         self._label(
             connection,
             "ShowMyTrades public calendar · 9 major currencies · No API key · 15-minute refresh floor.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(2, 8))
         source_row = self._frame(connection, bg="panel")
         source_row.pack(fill="x")
@@ -2287,7 +2294,7 @@ class VeltrixTradingClock:
         self.refresh_calendar_button.pack(side="right")
         self.calendar_freshness_label = self._label(
             connection, "Loading cached calendar data...",
-            bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w",
+            bg="panel", fg="muted", font=("Segoe UI", 9), anchor="w",
         )
         self.calendar_freshness_label.pack(fill="x", pady=(7, 0))
         if self.calendar_last_updated:
@@ -2392,7 +2399,7 @@ class VeltrixTradingClock:
         attribution = self.calendar_payload.get("attribution", {})
         self.calendar_attribution_label = self._label(
             table_panel, str(attribution.get("text", "Economic calendar by ShowMyTrades")) + "  ·  VIEW SOURCE",
-            bg="panel", fg="muted", font=("Segoe UI", 7, "underline"), anchor="w", cursor="hand2",
+            bg="panel", fg="muted", font=("Segoe UI", 8, "underline"), anchor="w", cursor="hand2",
         )
         self.calendar_attribution_label.pack(fill="x", pady=(5, 0))
         self.calendar_attribution_label.bind("<Button-1>", lambda _event: self._open_calendar_source())
@@ -2433,7 +2440,7 @@ class VeltrixTradingClock:
                     font=("Consolas", 10, "bold")).pack(anchor="w")
         self.market_description_label = self._label(
             header, "5m realised volatility (√Σr²) · Daily Wilder ATR(14) · 20-session 1σ move",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 9),
         )
         self.market_description_label.pack(anchor="w", pady=(2, 7))
         top_row = self._frame(header, bg="panel")
@@ -2448,7 +2455,7 @@ class VeltrixTradingClock:
         self.refresh_market_button.pack(side="right")
         self.market_freshness_label = self._label(
             header, "Yahoo Finance legacy fallback · Unofficial feed · Price timing may vary · Provider validation pending",
-            bg="panel", fg="muted", font=("Segoe UI", 7), anchor="w",
+            bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w",
         )
         self.market_freshness_label.pack(fill="x", pady=(6, 0))
 
@@ -2472,7 +2479,7 @@ class VeltrixTradingClock:
             atr.pack(anchor="w", pady=(5, 0))
             expected = self._label(card, "1D EXPECTED MOVE: N/A", bg="panel", fg="muted", font=("Consolas", 8, "bold"))
             expected.pack(anchor="w", pady=(2, 0))
-            quote_time = self._label(card, "No quote loaded", bg="panel", fg="muted", font=("Segoe UI", 7))
+            quote_time = self._label(card, "No quote loaded", bg="panel", fg="muted", font=("Segoe UI", 8))
             quote_time.pack(anchor="w", pady=(4, 0))
             self.market_asset_cards[str(instrument["key"])] = {
                 "frame": card, "name": name, "symbol": symbol, "price": price,
@@ -2702,7 +2709,7 @@ class VeltrixTradingClock:
             parent=self.root,
             title="Export daily session-performance and overlap rows",
             defaultextension=".csv",
-            initialfile="veltrix_session_performance_v10_11.csv",
+            initialfile="veltrix_session_performance_v10_12.csv",
             filetypes=(("CSV files", "*.csv"),),
         )
         if not path:
@@ -2938,7 +2945,7 @@ class VeltrixTradingClock:
         self._label(
             methodology,
             "METHODOLOGY: Each bar is classified using only its own and earlier completed OHLC bars. Efficiency ratio measures net displacement / total path; trend slope is normalised by slow ATR; volatility shocks use fast/slow ATR and current true range versus prior slow ATR. Forward returns are calculated only after labels are fixed and are historical conditional outcomes, not predictions or trade signals. Thresholds are research parameters, not universal gold constants. Results depend on feed, symbol, bar construction, interval, missing data and transaction-cost assumptions.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=980,
+            bg="panel", fg="muted", font=("Segoe UI", 9), justify="left", wraplength=980,
         ).pack(fill="x")
         self._apply_regime_tree_theme()
 
@@ -3427,7 +3434,7 @@ class VeltrixTradingClock:
         if hasattr(self, "regime_canvas"):
             self.regime_canvas.configure(bg=palette["bg"])
         if hasattr(self, "regime_chart_canvas"):
-            self.regime_chart_canvas.configure(bg=palette["panel"], highlightbackground=palette["border"])
+            self.regime_chart_canvas.configure(bg=palette["panel"], highlightthickness=0, bd=0)
         tags = {
             "range": palette["bright"], "trend_up": palette["success"],
             "trend_down": palette["error"], "volatility_shock": palette["warning"],
@@ -4198,7 +4205,7 @@ class VeltrixTradingClock:
         country.pack(side="left", padx=(8, 0))
         status = self._label(top, "CHECKING", bg="raised", fg="muted", font=("Consolas", 8, "bold"), padx=8, pady=3)
         status.pack(side="right")
-        city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 8))
+        city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 9))
         city.grid(row=1, column=0, sticky="w", pady=(3, 1))
         analog_canvas = tk.Canvas(
             card, width=240, height=240, bg=THEMES[self.theme_name]["panel"],
@@ -4219,7 +4226,7 @@ class VeltrixTradingClock:
         divider.grid(row=6, column=0, sticky="ew", pady=(0, 6))
         transition = self._label(card, "Calculating next transition...", bg="card", fg="text", font=("Consolas", 9, "bold"))
         transition.grid(row=7, column=0, sticky="w")
-        transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 8))
+        transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 9))
         transition_at.grid(row=8, column=0, sticky="w", pady=(2, 0))
         risk = self._label(
             card, "SESSION RISK · NORMAL", bg="card", fg="muted",
@@ -4547,11 +4554,11 @@ class VeltrixTradingClock:
         if hasattr(self, "session_performance_chart_canvas"):
             self.session_performance_chart_canvas.configure(bg=palette["panel"])
         for tile in (self.summary_open, self.summary_overlap, self.summary_next):
-            tile["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            tile["frame"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
             tile["title"].configure(bg=palette["panel"], fg=palette["muted"])
             tile["value"].configure(bg=palette["panel"], fg=palette["text"])
         for widgets in self.cards.values():
-            widgets["card"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            widgets["card"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
             widgets["top"].configure(bg=palette["panel"])
             widgets["analog"].configure(bg=palette["panel"])
             for key in ("name", "city", "time", "zone", "session_progress", "transition", "transition_at", "risk"):
@@ -4568,7 +4575,7 @@ class VeltrixTradingClock:
             widgets["divider"].configure(bg=palette["border"])
 
         for card in self.market_asset_cards.values():
-            card["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            card["frame"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
 
         for widget in (self.hour_spin, self.minute_spin, self.period_spin):
             widget.configure(
