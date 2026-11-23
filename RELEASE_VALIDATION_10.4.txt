@@ -1,0 +1,39 @@
+VELTRIX TRADING CLOCK v10.4 — EXCHANGE CALENDAR INTELLIGENCE VALIDATION
+
+Implemented
+- Bundled source-attributed exception calendars for ASX cash, Tokyo Stock Exchange / JPX, London Stock Exchange and NYSE.
+- Calendar overlay is opt-in and defaults to disabled.
+- Full-day closures suppress session states, timeline windows and regular open/close alerts.
+- ASX/NYSE early-close times shorten the session state/timeline and adjust pre-close/close alerts.
+- LSE 12:30 half-day notice is modelled as a closing-process marker only; it does not force the market closed at 12:30.
+- Venue-specific coverage checks mark unknown dates OUT OF PUBLISHED RANGE.
+- Weekly scheduled hours and historical overlap analytics use the same optional exchange exception overlay.
+- Added exchange calendar source report with date coverage and product limitations.
+- Updated README, desktop guide, quick start, Windows metadata and CI artifact name.
+
+Bundled data source coverage
+- ASX cash-market: 2026-01-01 through 2027-12-31.
+- Tokyo Stock Exchange / JPX market holidays: 2026-01-01 through 2027-12-31.
+- NYSE: 2026-01-01 through 2027-12-31.
+- London Stock Exchange: 2026-08-31 through 2027-12-31.
+- Checked 23 November 2026. See EXCHANGE_CALENDAR_SOURCES_10.4.md for exact URLs and limitations.
+
+Required automated checks
+1. Run: python -m compileall -q .
+2. Run: python -m unittest discover -s tests -v
+3. Run the Python 3.10, 3.11 and 3.12 GitHub Actions matrix.
+4. Build the Windows desktop package and verify the executable / artifact upload.
+
+Required manual Windows checks
+1. Confirm the exchange overlay is OFF on first launch and survives restart after being enabled.
+2. Confirm enabling the overlay on a non-equities profile displays the explicit warning.
+3. Check Tokyo's 23 November 2026 published closure.
+4. Check NYSE Thanksgiving 26 November 2026 and 13:00 Eastern early close on 27 November 2026.
+5. Check ASX 14:10 Sydney early closes on 24 and 31 December 2026.
+6. Check LSE 12:30 closing-process marker on 24 and 31 December 2026; confirm the clock does not report the LSE closed at that marker solely because the process begins.
+7. Test normal session and early-close alerts, and confirm full holidays suppress ordinary open/close alerts.
+8. Test weekly hours and 7/30/90-day reports with the overlay both OFF and ON.
+9. Change all six themes and inspect all four session cards, timeline, profile controls, calendar labels and analytics.
+10. Test the Global Sessions scroll area at normal and minimum supported window sizes.
+
+No claim of live exchange status, complete broker holiday coverage, or trading profitability is made.
