@@ -9,6 +9,8 @@ GLOBAL SESSIONS INTERFACE
 - Kept all six application themes and existing alert/session calculations.
 
 ENGINEERING
+- Added GitHub Actions CI for Python 3.10/3.11/3.12 compilation and unit-test checks.
+- Added a Windows PyInstaller build job that uploads the packaged desktop application after the test matrix passes.
 - Added session_clock.py with pure analog-hand geometry calculations.
 - Added unit tests for hand positions at known clock times, smooth fractional-second movement and invalid radius handling.
 - Extended Core Edition workspace regression tests to cover the analog/digital Global Sessions interface.
