@@ -1,6 +1,6 @@
-# Veltrix Trading Clock v10.2 — Core Edition
+# Veltrix Trading Clock v10.3 — Core Edition
 
-The Core Edition is a smaller standalone desktop clock for Windows 10/11. The Global Sessions dashboard displays four timezone-aware neon analog clocks with compact digital local-time readouts beneath each dial, followed by a UTC-aligned 24-hour map of scheduled trading windows and market overlaps. It retains global sessions, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
+The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes selectable market-hours profiles, editable custom local schedules, weekly scheduled-hours summaries and 7/30/90-day reconstructed overlap reports. The Global Sessions dashboard displays four timezone-aware neon analog clocks with compact digital local-time readouts beneath each dial, followed by a UTC-aligned 24-hour map of scheduled trading windows and market overlaps. It retains global sessions, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
 
 The Research Lab, Strategy Lab, Tick Research and Data Center workspaces are removed. No provider API keys, tick-bar construction, strategy backtesting, MT5 connection or order execution are required.
 
