@@ -1,135 +1,60 @@
-# Veltrix Trading Clock v9.6 — Windows Desktop Edition
+# Veltrix Trading Clock v10.0 — Core Edition
 
-This package adds Phase 12 Causal Market Regime Research to the v9.5 Windows desktop-builder
-application. It creates a standalone, windowed executable, installs it for the
-current Windows user, and creates Desktop and Start-menu shortcuts. Once built,
-Veltrix launches without opening VS Code and does not require a separate Python
-installation to run.
+The Core Edition is a smaller standalone desktop clock for Windows 10/11. It retains global sessions, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
 
-## Important build note
+The Research Lab, Strategy Lab, Tick Research and Data Center workspaces are removed. No provider API keys, tick-bar construction, strategy backtesting, MT5 connection or order execution are required.
 
-PyInstaller cannot cross-compile a Windows executable from Linux. This package
-therefore contains the Windows packaging configuration and one-click builder,
-not a prebuilt `.exe`. Run `BUILD_AND_INSTALL.bat` on the target Windows 10/11
-PC; it builds the executable locally and installs it automatically. Package
-versions and hashes are pinned in the checked-in lock files.
+## One-time Windows installation
 
-## One-time installation
+1. Extract the complete source package to a normal folder.
+2. Install 64-bit Python 3.10 or newer. Python is required only for the one-time build.
+3. Double-click BUILD_AND_INSTALL.bat.
+4. When prompted, enter the path to your previous Veltrix project folder or the existing %LOCALAPPDATA%\Veltrix Trading Clock data folder. The installer migrates settings, calendar/market caches, the legacy OHLC research cache (for Regime Lab migration), the Regime dataset file, alarm state, Focus & Goals database and alarm audio when the destination does not already exist.
+5. Launch **Veltrix Trading Clock** using the new Desktop or Start-menu shortcut.
 
-1. Extract the complete `veltrix_trading_clock_v9_6_regime_lab.zip` to a
-   normal folder, for example `Documents\Veltrix Desktop Builder`.
-2. Make sure 64-bit Python 3.10 or newer is installed. Python is needed only
-   for the one-time build step. VS Code is not required.
-3. Double-click `BUILD_AND_INSTALL.bat`. When prompted, enter the full path to
-   your existing v9.5 project folder (containing `main.py`) or installed AppData folder (containing `config.json`) so
-   your configuration, caches, `.env`, focus database, imported tick files and alarm
-   audio can be migrated. Close the old Veltrix instance before copying its
-   SQLite focus database. Press Enter only when there is no previous project data to
-   migrate.
-4. Allow the builder to finish. It creates an
-   isolated `.venv-build`, installs hash-verified build/runtime dependencies,
-   packages the app with PyInstaller, installs it under `%LOCALAPPDATA%\Programs`, and
-   creates a Desktop shortcut plus a Start-menu entry.
-5. Launch **Veltrix Trading Clock** from the Desktop or Start menu.
+The build creates a standalone one-folder executable under:
 
-The build needs an internet connection once to retrieve Python packages. It
-runs without administrator rights because it installs only for the current
-Windows user. Keep the builder folder until the build has completed.
+    %LOCALAPPDATA%\Programs\Veltrix Trading Clock
 
-## Where the app and user data live
+No administrator rights, VS Code or separate Python installation are required to run the installed application.
 
-- Program files: `%LOCALAPPDATA%\Programs\Veltrix Trading Clock`
-- Writable application data: `%LOCALAPPDATA%\Veltrix Trading Clock`
-- API credentials: `%LOCALAPPDATA%\Veltrix Trading Clock\.env`
-- Configuration, `alarm_state.json`, caches and `focus_goals.sqlite3`: the same writable application data folder
-- Imported tick files: `%LOCALAPPDATA%\Veltrix Trading Clock\tick_data`
+## User data and migration
 
-The app-data directory is intentionally separate from the executable. This
-means that updating the program does not overwrite your settings, API keys,
-research history, calendar/market caches, imported ticks or alarm audio.
+Writable application data is stored separately under:
 
-Scheduled and snoozed alarms persist in `alarm_state.json` across application
-restarts. Veltrix must be open to ring. If an alarm passes while the app is
-closed, the next launch reports it as missed rather than ringing late.
+    %LOCALAPPDATA%\Veltrix Trading Clock
 
-## Phase 11 — Focus & Goals Center (v9.5)
+The installer preserves existing destination files and copies legacy files only when the destination does not already exist. The main files include:
 
-The new **FOCUS & GOALS** workspace is a local-first personal productivity area:
+- config.json
+- calendar_cache.json
+- market_cache.json
+- research_cache.json (read once to migrate compatible fixed-interval OHLC datasets)
+- regime_data.json
+- alarm_state.json
+- focus_goals.sqlite3
+- alarm.mp3 (when present)
 
-- Stopwatch and countdown timers with start, pause, resume and stop controls. Countdown durations range from one second to 24 hours.
-- The active timer is persisted in SQLite. A running stopwatch continues counting elapsed wall-clock time while the app is closed; a countdown expires at its stored deadline and is reconciled on the next launch. Paused time is excluded from focus totals.
-- Daily focus totals use the configured IANA home timezone. Focus intervals are split at local midnight for daily reporting, including daylight-saving transitions.
-- Goals support title, description, category, start date, deadline, status and manual progress. Each selected goal displays a live days/hours/minutes/seconds deadline countdown.
-- Milestones can be added, completed, reopened and removed. When a goal has milestones, its displayed progress is calculated from completed milestones; otherwise manual progress is used.
-- Recent focus sessions show their mode, label, duration and status.
-- Data is stored in `focus_goals.sqlite3` under the writable application-data directory and is not placed in the executable bundle.
+The migration does not delete the previous research_cache.json, raw tick-data folders or old source project. Tick-derived datasets are not imported into the Core Edition's Regime Lab library. Existing old .env files are not copied or read by the Core Edition; the app no longer needs provider API credentials.
 
-Use ISO dates (`YYYY-MM-DD`) for goal dates. The daily focus target defaults to four hours and can be adjusted in the workspace.
+## Regime Lab
 
-## Phase 12 — Causal Market Regime Research (v9.6)
+Open **REGIME LAB** and choose **IMPORT OHLC CSV**. Name the dataset when prompted. Naive timestamps are interpreted in the configured home timezone, Africa/Nairobi by default, then stored as UTC.
 
-The new **REGIME LAB** uses datasets already loaded into Research Lab. It does not trade. Each completed OHLC bar is classified using current and past data only; forward returns are calculated separately as historical outcome diagnostics. The workspace provides regime frequency, transition counts, price-path visualization, recent-bar diagnostics and CSV export. The new `regime_engine.py` module has no additional third-party runtime dependency.
+Imported datasets are saved locally in regime_data.json. The first Core Edition launch can migrate compatible regular OHLC datasets from the previous research_cache.json. Tick-derived and variable-interval datasets are deliberately excluded.
 
-The first-release thresholds are configurable research defaults, not an optimised strategy. Review feed semantics, interval, sample size and out-of-sample behaviour before interpreting results.
+Regime labels are causal: each completed bar uses only current and previous data. Forward returns are separate historical outcome diagnostics, not forecasts or trading signals.
 
-## API keys
+## Market monitoring limitations
 
-The installer copies a `.env` file from the existing project folder you
-selected during setup into the application data directory only if the
-destination does not already exist.
-If no `.env` was migrated, copy `.env.example` to `.env` in:
+The Volatility Lab retains the unofficial public Yahoo Finance chart integration. Data may be delayed, limited or unavailable. Confirm important market prices with your broker or a licensed data provider.
 
-`%LOCALAPPDATA%\Veltrix Trading Clock`
-
-Then add your keys:
-
-```ini
-MASSIVE_API_KEY=your_massive_key
-TWELVE_DATA_API_KEY=your_twelve_data_key
-```
-
-Never put real API keys in the build scripts, source files, ZIP package, or
-screenshots. Existing Windows user environment variables still take priority
-over `.env` values.
-On Windows, Veltrix protects a plaintext `.env` file with DPAPI for the current
-Windows user the first time it loads the file. To rotate keys, delete the
-protected `.env`, create a new text `.env`, and restart Veltrix; it will protect
-the replacement. Non-Windows source runs leave `.env` as plaintext.
+Session hours are configurable weekday conventions, not complete exchange calendars. Verify important economic releases with official issuers.
 
 ## Upgrading
 
-Run `BUILD_AND_INSTALL.bat` from a newer source package. It replaces only the
-installed program files. Existing data in `%LOCALAPPDATA%\Veltrix Trading Clock`
-is preserved. The install script also migrates source-folder personal files on
-first install, and never overwrites a file already present in the app-data
-folder.
+Run BUILD_AND_INSTALL.bat from the newer source package. The installer replaces the program files while preserving existing application-data files. Your imported Regime datasets, settings, alarms and focus history remain outside the executable folder.
 
 ## Uninstalling
 
-Close Veltrix, delete the `Veltrix Trading Clock` folder under
-`%LOCALAPPDATA%\Programs`, and remove its Desktop/Start-menu shortcuts. Keep
-`%LOCALAPPDATA%\Veltrix Trading Clock` if you want to preserve your user data.
-Delete that data folder separately only when you deliberately want to remove
-settings, caches, imported ticks and the local `.env` file.
-
-## Security and Windows notices
-
-- The app runs as a normal user; it does not need administrator privileges.
-- The build does not embed `.env` or API credentials.
-- On Windows, API keys in `.env` are encrypted at rest with the current user's
-  DPAPI key. This does not protect against malware running as that user, and
-  non-Windows source runs keep `.env` as plaintext.
-- The executable is not code-signed. Windows SmartScreen or antivirus software
-  may show a first-run reputation warning. Verify that the executable came from
-  your own local build folder before allowing it.
-- No background auto-start is enabled. The Desktop/Start-menu shortcut is the
-  explicit launch mechanism; Windows login startup can be added separately if
-  requested later.
-
-## Packaging files
-
-- `veltrix_windows.spec` — PyInstaller one-folder build configuration.
-- `BUILD_AND_INSTALL.bat` — one-time Windows build and install launcher.
-- `installer/Install-Veltrix.ps1` — user-level installation and shortcut setup.
-- `assets/veltrix.ico` — multi-resolution Windows application icon.
-- `app_paths.py` — separation of bundled resources from writable user data.
+Close Veltrix, delete the Veltrix Trading Clock program folder under %LOCALAPPDATA%\Programs, and remove the Desktop/Start-menu shortcuts. Keep %LOCALAPPDATA%\Veltrix Trading Clock to preserve settings, Regime datasets, caches, alarms and focus history. Delete the data folder separately only when you deliberately want to remove that information.
