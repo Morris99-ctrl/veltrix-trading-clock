@@ -1,4 +1,4 @@
-VELTRIX TRADING CLOCK v10.4 — CORE EDITION
+VELTRIX TRADING CLOCK v10.5 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
@@ -9,6 +9,13 @@ VELTRIX TRADING CLOCK v10.4 — CORE EDITION
    Focus & Goals database and alarm audio where present.
 4. Close the old Veltrix instance before copying its SQLite focus database.
 5. When setup finishes, launch Veltrix from its Desktop or Start-menu icon.
+
+SESSION RISK AWARENESS
+Each global session card shows NORMAL, CAUTION or HIGH schedule-risk flags.
+Open Alerts & Events to configure separate pre-open/pre-close reminders for each
+market and the opening/closing caution windows. Holiday-liquidity flags are
+calendar heuristics only, not live volume/spread/order-book measurements.
+Use SAVE ALERT SETTINGS to persist your choices.
 
 VS Code is NOT required. Python 3.10+ (64-bit) is needed only for this
 one-time local build. The installed app includes its Python runtime.
