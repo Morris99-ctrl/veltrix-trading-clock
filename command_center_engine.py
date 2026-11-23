@@ -114,22 +114,26 @@ def build_command_center_snapshot(
             "fresh": bool(market_is_fresh),
         })
 
-    for asset_key, reports in market_reports.items():
-        for report in reports:
-            if (
-                str(report.get("state", "")).upper() == "LIVE SESSION"
-                and str(report.get("regime", "")).upper() == "EXPANSION"
-            ):
-                risks.append({
-                    "severity": "CAUTION",
-                    "source": str(report.get("asset_name") or asset_key),
-                    "label": "LIVE SESSION VOLATILITY EXPANSION",
-                    "detail": (
-                        "Realised volatility is "
-                        f"{float(report.get('ratio') or 0.0):.2f}x the same-time historical median. "
-                        "Descriptive monitoring only, not a trade signal."
-                    ),
-                })
+    # A cached snapshot may contain a report labelled LIVE SESSION from the last
+    # application run. Only a successful market fetch in this run can promote that
+    # observation into the active live-volatility attention list.
+    if market_is_fresh:
+        for asset_key, reports in market_reports.items():
+            for report in reports:
+                if (
+                    str(report.get("state", "")).upper() == "LIVE SESSION"
+                    and str(report.get("regime", "")).upper() == "EXPANSION"
+                ):
+                    risks.append({
+                        "severity": "CAUTION",
+                        "source": str(report.get("asset_name") or asset_key),
+                        "label": "LIVE SESSION VOLATILITY EXPANSION",
+                        "detail": (
+                            "Realised volatility is "
+                            f"{float(report.get('ratio') or 0.0):.2f}x the same-time historical median. "
+                            "Descriptive monitoring only, not a trade signal."
+                        ),
+                    })
 
     severity_order = {"HIGH": 0, "CAUTION": 1}
     risks.sort(key=lambda item: (severity_order.get(item["severity"], 2), item["source"], item["label"]))
