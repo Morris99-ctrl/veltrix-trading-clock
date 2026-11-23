@@ -1,4 +1,4 @@
-VELTRIX TRADING CLOCK v10.3 — CORE EDITION
+VELTRIX TRADING CLOCK v10.4 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
@@ -17,6 +17,9 @@ The Core Edition retains Global Sessions, Alerts & Events, Economic Calendar,
 Volatility Lab, Regime Lab, Focus & Goals and the original alarm clock.
 Global Sessions has four timezone-aware analog clocks with small digital time
 displays, plus a 24-hour UTC session map, overlap bands and upcoming transitions.
+An optional cash-exchange calendar overlay applies published ASX, Tokyo, LSE
+and NYSE closures/early closes to clocks, timeline and alerts. It is OFF by
+default; see EXCHANGE_CALENDAR_SOURCES_10.4.md for date coverage and limitations.
 Choose Current Configuration, Forex Standard, Equities Cash or Extended Monitoring,
 or edit a Custom profile with local open/close times and active weekdays. The
 dashboard also shows weekly scheduled hours and reconstructed 7/30/90-day
