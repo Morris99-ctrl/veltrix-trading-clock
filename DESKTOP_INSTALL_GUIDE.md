@@ -1,8 +1,14 @@
-# Veltrix Trading Clock v10.6 — Core Edition
+# Veltrix Trading Clock v10.7 — Core Edition
 
-The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes selectable market-hours profiles, editable custom local schedules, weekly scheduled-hours summaries and 7/30/90-day reconstructed overlap reports. The Global Sessions dashboard displays four timezone-aware instrument-style analog clocks with detailed bezels, hour numerals, graduated minute tracks, layered hands and smooth 50 ms second-hand sweeps, followed by a UTC-aligned 24-hour map of scheduled trading windows and market overlaps. It retains global sessions, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
+The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes four detailed timezone-aware instrument clocks, live session-progress rings, actual UTC-offset readouts, a concentric 24-hour World Session Dial and an interactive UTC session map with click-and-drag time probing. It retains selectable market-hours profiles, editable local schedules, weekly scheduled-hours summaries, historical overlap reconstruction, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
 
 The Research Lab, Strategy Lab, Tick Research and Data Center workspaces are removed. No provider API keys, tick-bar construction, strategy backtesting, MT5 connection or order execution are required.
+
+## Global Sessions Instrument Panels (v10.7)
+
+Each market clock has a 24-hour session-window ring. A subdued arc shows the configured local open-to-close window; the highlighted portion advances with elapsed session time. Opening and closing markers remain distinct from the traditional 12-hour hands. The card also shows the current IANA timezone, its actual UTC offset and a DAY/NIGHT CYCLE label. DAY is defined as 06:00–17:59 local time and NIGHT as 18:00–05:59; this is a display convention, not a sunrise/sunset calculation.
+
+The World Session Dial uses concentric UTC tracks for Sydney, Tokyo, London and New York, with a live UTC pointer. The horizontal timeline uses the same session definitions. Click or drag across it to place a time probe; the line and text below the map identify which configured sessions are open at the selected UTC minute. The probe is temporary and clears when the UTC calendar day changes. The visualisations inherit the selected session profile and optional exchange-calendar overlay; they do not add a market-data feed or infer unlisted venue closures.
 
 ## One-time Windows installation
 

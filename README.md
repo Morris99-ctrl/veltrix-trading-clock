@@ -1,12 +1,12 @@
-# Veltrix Trading Clock — v10.6 Core Edition
+# Veltrix Trading Clock — v10.7 Core Edition
 
-Veltrix v10.6 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.7 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
 ## Included workspaces
 
-- **Global Sessions** — four individual neon analog clocks for Sydney, Tokyo, London and New York, each with a compact digital local-time display beneath it, open/closed status, next-transition countdowns, a UTC-aligned 24-hour session map, live overlap summaries and optional official cash-exchange holiday/early-close overlays.
+- **Global Sessions** — four instrument-style analog clocks with session-progress rings, opening/closing markers, local UTC offsets and day/night-cycle labels; a concentric world-session dial; and an interactive UTC map with click-and-drag time probing, live overlap summaries and optional official cash-exchange holiday/early-close overlays.
 - **Alerts & Events** — configurable session opening/closing alerts, overlap warnings and personal economic-event reminders.
 - **Economic Calendar** — third-party public calendar feed, impact filters, cached results and high-impact reminders.
 - **Volatility Lab** — indicative Yahoo Finance market monitoring, ATR, one-day historical expected move and session volatility observations.
@@ -18,9 +18,9 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 
 The Global Sessions dashboard presents four separate analog dials in a two-by-two layout. Each dial uses the timezone of its own market centre and has a mini digital clock directly beneath it, so the time can be read precisely without losing the visual character of an analog face.
 
-The dials now use a layered instrument-style case and glass bezel, a recessed minute track, all 60 graduated minute marks, clear 1–12 hour numerals, diagonal bezel fasteners and a small Veltrix dial signature. Layered hour and minute hands use shadow and highlight strokes; the seconds hand has a rear counterweight and raised centre hub. The face is rendered once per size/theme and its retained Canvas objects are reused.
+The dials use a layered instrument-style case and glass bezel, a recessed minute track, all 60 graduated minute marks, clear 1–12 hour numerals, diagonal bezel fasteners and a small Veltrix dial signature. Layered hour and minute hands use shadow and highlight strokes; the seconds hand has a rear counterweight and raised centre hub. A 24-hour session-window ring marks the configured opening and closing positions and fills as the session progresses. Faces are rendered once per size/theme/schedule and their retained Canvas objects are reused.
 
-A dedicated 50 ms animation loop advances each dial using sub-second local time. That makes the seconds hand sweep smoothly and lets the minute/hour hands progress continuously, independently of the slower session-status refresh. The four dials still use their own IANA timezones and retain the existing digital readout, status, countdown and risk information.
+A dedicated 50 ms animation loop advances each dial using sub-second local time. That makes the seconds hand sweep smoothly and lets the minute/hour hands progress continuously, independently of the slower session-status refresh. The four dials still use their own IANA timezones and retain the existing digital readout, status, countdown and risk information. Each card also displays the actual UTC offset for that instant, including daylight-saving changes, and a DAY/NIGHT CYCLE label based on a 06:00–18:00 local wall-clock convention. The cycle label is not a sunrise/sunset or astronomical daylight calculation. A published early-close time shortens the progress calculation when the exchange-calendar overlay supplies one.
 
 Each card also shows its city, timezone, OPEN/CLOSED state and the countdown to its next scheduled opening or closing. An open session receives a highlighted card border. The six application themes recolour the dials and hands consistently.
 
@@ -32,7 +32,7 @@ Each market has its own lane showing its scheduled local trading window converte
 
 The map honours each session's IANA timezone and weekday schedule, including daylight-saving changes. It represents configured weekday hours only; exchange holidays, emergency closures, broker-specific hours and overnight schedules are not inferred. It is a schedule visualisation, not a live exchange-status feed.
 
-The Global Sessions page is vertically scrollable so the clock cards, 24-hour map and footer remain accessible on shorter displays.
+The Global Sessions page is vertically scrollable so the clock cards, world dial, 24-hour map and footer remain accessible on shorter displays. The World Session Dial plots Sydney, Tokyo, London and New York windows as four concentric UTC tracks and rotates a live UTC pointer around the 24-hour face. The horizontal timeline accepts click-and-drag probing: select any minute in the current UTC day to inspect which configured sessions are open at that instant. The probe is temporary and resets when the UTC day changes. The dial and timeline use the same session definitions and optional exchange-calendar overlay.
 
 ## Market Session Intelligence (v10.3)
 
@@ -119,7 +119,7 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
-The v10.5 final validation run passed all 165 tests and compileall on Python 3.10, 3.11 and 3.12. The Windows PyInstaller build, executable verification and artifact upload also succeeded. Download the `Veltrix-Trading-Clock-v10.5-Windows` artifact from [successful workflow run 190](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45250759234). A manual interactive Windows GUI check is still recommended; see RELEASE_VALIDATION_10.5.txt.
+The previous v10.6 validation run passed all 167 tests and compileall on Python 3.10, 3.11 and 3.12. Its Windows PyInstaller build, executable verification and artifact upload also succeeded. The v10.7 workflow repeats these checks for the expanded instrument clocks and interactive timeline. A manual interactive Windows GUI check remains required for native rendering and pointer interaction; see RELEASE_VALIDATION_10.7.txt.
 
 The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
