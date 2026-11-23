@@ -8,6 +8,7 @@ from typing import Iterable
 
 from session_engine import SessionDefinition
 from session_timeline import build_session_timeline
+from exchange_calendar import EXCHANGE_BY_SESSION, get_exchange_event
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ def _aware_utc(value: datetime) -> datetime:
 def weekly_session_hours(
     sessions: Iterable[SessionDefinition],
     reference_utc: datetime,
+    *,
+    apply_exchange_calendar: bool = False,
 ) -> tuple[WeeklySessionHours, ...]:
     """Calculate Monday-Sunday scheduled hours in each session's own local timezone."""
     session_list = list(sessions)
@@ -55,8 +58,18 @@ def weekly_session_hours(
             local_date = local_monday + timedelta(days=offset)
             if local_date.weekday() not in session.weekdays:
                 continue
+            event = (
+                get_exchange_event(EXCHANGE_BY_SESSION[session.key], local_date)
+                if apply_exchange_calendar and session.key in EXCHANGE_BY_SESSION else None
+            )
+            if event and event.status == "CLOSED":
+                continue
+            close_time = (
+                event.close_time if event and event.status == "EARLY_CLOSE"
+                else session.closes
+            )
             local_open = datetime.combine(local_date, session.opens, tzinfo=session.tz)
-            local_close = datetime.combine(local_date, session.closes, tzinfo=session.tz)
+            local_close = datetime.combine(local_date, close_time, tzinfo=session.tz)
             open_utc = local_open.astimezone(timezone.utc)
             close_utc = local_close.astimezone(timezone.utc)
             if close_utc > open_utc:
@@ -77,6 +90,7 @@ def historical_overlap_report(
     end_utc: datetime,
     *,
     days: int = 30,
+    apply_exchange_calendar: bool = False,
 ) -> HistoricalOverlapReport:
     """Reconstruct scheduled overlap over the prior 7/30/90 UTC calendar days.
 
@@ -98,7 +112,10 @@ def historical_overlap_report(
     while chunk_start < end:
         chunk_end = min(end, chunk_start + timedelta(days=7))
         chunk_hours = int((chunk_end - chunk_start).total_seconds() // 3600)
-        timeline = build_session_timeline(session_list, chunk_start, hours=chunk_hours)
+        timeline = build_session_timeline(
+            session_list, chunk_start, hours=chunk_hours,
+            apply_exchange_calendar=apply_exchange_calendar,
+        )
         for overlap in timeline.overlaps:
             cursor = overlap.starts_at
             while cursor < overlap.ends_at:
