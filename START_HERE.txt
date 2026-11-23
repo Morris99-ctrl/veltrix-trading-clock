@@ -1,4 +1,4 @@
-VELTRIX TRADING CLOCK v10.9 — CORE EDITION
+VELTRIX TRADING CLOCK v10.10 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
@@ -10,14 +10,13 @@ VELTRIX TRADING CLOCK v10.9 — CORE EDITION
 4. Close the old Veltrix instance before copying its SQLite focus database.
 5. When setup finishes, launch Veltrix from its Desktop or Start-menu icon.
 
-SESSION PERFORMANCE INTELLIGENCE (v10.9)
+SESSION PERFORMANCE INTELLIGENCE (v10.10)
 Import OHLC CSV once in REGIME LAB, then select the same local dataset in
-SESSION PERFORMANCE. The study reports per-session return, observed range,
-realised volatility, positive-day rate, sample count and estimated bar coverage.
-It also measures pairwise overlap behaviour. The analysis follows the active
-session profile, uses bar-open timestamps and exports daily session/overlap
-rows. It is descriptive history, not a forecast or trading signal. See
-RELEASE_VALIDATION_10.9.txt for the manual desktop checklist.
+SESSION PERFORMANCE. v10.10 adds trailing rolling returns, compounded return,
+maximum drawdown, a signed consistency score and sample-gated session rankings.
+It also groups session-day results by the dominant causal Regime Lab label.
+The ranking score is descriptive, not risk-adjusted and not a forecast.
+See RELEASE_VALIDATION_10.10.txt for the manual desktop checklist.
 
 MARKET WATCH & ALERTS (v10.8)
 Alerts & Events now opens a terminal-style Market Watch dashboard with the

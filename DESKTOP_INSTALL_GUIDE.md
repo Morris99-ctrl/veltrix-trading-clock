@@ -1,21 +1,27 @@
-# Veltrix Trading Clock v10.9 — Core Edition
+# Veltrix Trading Clock v10.10 — Core Edition
 
 The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes four detailed timezone-aware instrument clocks, live session-progress rings, actual UTC-offset readouts, a concentric 24-hour World Session Dial and an interactive UTC session map with click-and-drag time probing. Alerts & Events now opens a Market Watch command centre with a 24-hour session map, current market status, a searchable FX reference watchlist and a filtered macro-news calendar. The new Session Performance workspace reuses Regime Lab's local OHLC datasets to measure per-session and pairwise-overlap behaviour. Existing alert rules remain available in an expandable settings area. The app retains selectable market-hours profiles, editable local schedules, weekly scheduled-hours summaries, historical overlap reconstruction, alarms, calendar, volatility monitoring, Regime Lab and Focus & Goals.
 
 The Research Lab, Strategy Lab, Tick Research and Data Center workspaces are removed. No provider API keys, tick-bar construction, strategy backtesting, MT5 connection or order execution are required.
 
-## Session Performance Intelligence (v10.9)
+## Session Performance Intelligence (v10.10)
 
 1. Open **Regime Lab** and select **IMPORT OHLC CSV**.
 2. Import a fixed-interval OHLC CSV with timestamp (or date/time), open, high, low and close columns. Naive timestamps are interpreted in the selected home IANA timezone during import; timestamps containing UTC offsets are converted using those offsets.
-3. Open **SESSION PERFORMANCE** and choose the imported dataset. No second import is needed.
-4. Confirm the active session profile and set the minimum bars per session day and minimum estimated coverage. Defaults are 3 bars and 50%.
-5. Select **RUN SESSION STUDY**. The computation runs in a background worker. Session rows and pairwise overlap rows show the qualifying sample count and summary metrics.
-6. Select **EXPORT DAILY CSV** to export the daily session and overlap observations, including excluded rows and their exclusion reasons.
+3. Open **SESSION PERFORMANCE** and select the imported dataset. No second import is needed.
+4. Confirm the active session profile. Set the minimum bars per session day and minimum estimated coverage (defaults: 3 bars and 50%). Set the rolling window (default: 20 qualifying session observations), minimum sample to rank (default: 10), and minimum regime coverage (default: 50%).
+5. Select **RUN SESSION STUDY**. The background worker computes session metrics and causal Regime Lab labels from the same OHLC history.
+6. Inspect the rolling ranking table for trailing mean return, positive-day rate, consistency score, compounded return and maximum drawdown. Ranks are withheld until the minimum sample has been met.
+7. Inspect **SESSION RESULTS BY DOMINANT CAUSAL MARKET REGIME**. Each session day is assigned to its most frequent classified bar regime; ties go to the latest classified bar. WARMUP or low-coverage days are excluded from this breakdown.
+8. Select **EXPORT DAILY CSV** to export session and overlap rows, including rolling fields, regime attribution, rejected rows and exclusion reasons.
 
-The analysis uses bar-open timestamps against each session's configured local [open, close) schedule and weekday list. Returns are gross observed historical returns; range is the observed high-low movement as a percentage of the first observed open; realised volatility is the root-sum-square of observed bar log returns and is not annualised. Pairwise overlap returns compound each selected OHLC bar's open-to-close return without stitching gaps. Coverage is an estimate based on observed versus expected bars using the dataset's median interval.
+Rolling statistics use only current and prior qualifying session observations. The consistency score is 50 + 50 × mean(return) / mean(abs(return)), bounded to 0–100. It is a signed directional-consistency measure, not a Sharpe ratio or risk-adjusted profitability score. Maximum drawdown is calculated from the compounded gross return path within the rolling window.
 
-The active session profile is used. If the dataset or profile changes, previously displayed results are cleared. The study does not apply a separate exchange-holiday calendar, model broker-specific trading hours or adjust returns for transaction costs. It is descriptive research, not a signal, forecast or profitability claim. The source, interval, sample counts and limitations should be considered before comparing markets.
+The classifier is the existing causal Regime Lab engine. Session Performance reads only its bar-level regime labels, whose indicators use current and previous completed OHLC bars. Its forward-return outcome field is ignored. The regime coverage threshold is the percentage of session-day bars with a classified regime label.
+
+Session assignment uses bar-open timestamps against the active profile's local [open, close) schedule and weekday list. Returns are gross observed historical returns; range is observed high-low movement as a percentage of the first observed open; realised volatility is the root-sum-square of observed bar log returns and is not annualised. Pairwise overlap returns compound each selected OHLC bar's open-to-close return without stitching gaps.
+
+If the dataset or profile changes, previously displayed results are cleared. The study does not apply a separate exchange-holiday calendar, model broker-specific trading hours or adjust returns for transaction costs. It is descriptive research, not a signal, forecast or profitability claim. Consider the source, interval, sample counts, score definition and limitations before comparing markets.
 
 ## Market Watch & Alerts (v10.8)
 

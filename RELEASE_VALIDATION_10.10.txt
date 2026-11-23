@@ -1,0 +1,47 @@
+VELTRIX TRADING CLOCK v10.10 — RELEASE VALIDATION
+
+AUTOMATED VALIDATION
+- Compileall and full unittest suite on Python 3.10, 3.11 and 3.12.
+- 214 tests in the v10.10 suite, including regression coverage for rolling
+  metrics, sample-gated rankings, compounded return, maximum drawdown,
+  consistency-score behaviour and causal regime attribution.
+- Windows job builds the PyInstaller package, verifies
+  VeltrixTradingClock.exe and uploads Veltrix-Trading-Clock-v10.10-Windows.
+- Successful latest-head workflow URL and artifact ID are added after CI completes.
+
+MANUAL WINDOWS GUI CHECKLIST
+[ ] Launch v10.10 and confirm the application file version is 10.10.0.
+[ ] Open SESSION PERFORMANCE and inspect the added rolling/ranking/regime areas.
+[ ] Import or select an OHLC CSV already present in Regime Lab.
+[ ] Run with the default rolling window=20, rank minimum=10 and regime coverage=50%.
+[ ] Verify ranks are withheld when fewer than 10 qualifying observations exist.
+[ ] Verify the score definition and sample count shown alongside each rank.
+[ ] Check rolling compounded return and peak-to-trough drawdown.
+[ ] Check session-by-dominant-regime rows, including WARMUP / low-coverage cases.
+[ ] Change session profile or dataset and confirm old results are invalidated.
+[ ] Export CSV and inspect rolling and regime attribution columns.
+[ ] Switch all six themes and inspect ranking/regime trees and controls.
+[ ] Confirm Regime Lab classification, CSV export and other v10.9 features remain usable.
+[ ] Resize and scroll the workspace to check the complete layout.
+
+DATA / METHODOLOGY LIMITATIONS
+- Session returns use first observed bar open to last observed close.
+- Rolling windows count qualifying session observations; excluded days are not
+  included in the rolling sample.
+- Consistency score = 50 + 50 * mean(return) / mean(abs(return)), bounded 0..100.
+- It is not a Sharpe ratio, risk-adjusted statistic, profitability probability,
+  forecast or trading signal.
+- Regime labels use causal current/past OHLC classification. Regime Lab
+  forward-return outcomes are not used for attribution.
+- A session day is assigned to its most frequent classified bar label; ties go
+  to its latest classified bar. Insufficient regime coverage and WARMUP days are
+  not included in the regime summary.
+- Coverage estimates are bar-count ratios based on the imported median interval.
+- The configured weekday/session profile is used; exchange exceptions, broker
+  hours, costs and execution effects are not separately applied.
+
+RELEASE STATUS
+- Automated validation: pending final CI confirmation.
+- Windows package: pending final CI confirmation.
+- Manual native Windows GUI verification: pending.
+- Keep this release in draft until the checklist has been completed.
