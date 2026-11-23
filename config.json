@@ -147,5 +147,13 @@
   },
   "exchange_calendar": {
     "enabled": false
+  },
+  "session_risk": {
+    "enabled": true,
+    "notifications_enabled": true,
+    "holiday_liquidity_flags": true,
+    "opening_window_minutes": 15,
+    "closing_window_minutes": 15,
+    "pre_open_window_minutes": 15
   }
 }
