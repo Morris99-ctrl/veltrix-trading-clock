@@ -56,6 +56,35 @@ class SessionAlertTests(unittest.TestCase):
         self.assertEqual(len(alerts), 1)
         self.assertIn("TOKYO CLOSE IN 10 MIN", alerts[0].title)
 
+    def test_per_session_preopen_override_takes_precedence_over_global_lead(self):
+        now = datetime(2026, 11, 11, 7, 35, tzinfo=timezone.utc)
+        alerts = due_session_alerts(
+            [self.by_key["london"]], now,
+            self.settings(
+                pre_open_minutes=15,
+                session_lead_overrides={
+                    "london": {"pre_open_minutes": 30, "pre_close_minutes": 10}
+                },
+            ),
+            set(),
+        )
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("LONDON OPEN IN 30 MIN", alerts[0].title)
+
+    def test_session_override_can_use_shorter_preclose_lead(self):
+        now = datetime(2026, 11, 11, 8, 30, tzinfo=timezone.utc)
+        alerts = due_session_alerts(
+            [self.by_key["london"]], now,
+            self.settings(
+                pre_close_minutes=60,
+                session_lead_overrides={
+                    "london": {"pre_open_minutes": 15, "pre_close_minutes": 10}
+                },
+            ),
+            set(),
+        )
+        self.assertEqual(alerts, [])
+
     def test_no_preopen_when_disabled(self):
         now = datetime(2026, 11, 11, 7, 50, tzinfo=timezone.utc)
         alerts = due_session_alerts(
