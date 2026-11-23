@@ -46,6 +46,19 @@ class SessionIntelligenceTests(unittest.TestCase):
         self.assertEqual(hours["london"], 42.5)
         self.assertEqual(hours["new_york"], 32.5)
 
+    def test_weekly_hours_can_apply_official_exchange_holidays_and_early_closes(self):
+        result = weekly_session_hours(
+            self.sessions,
+            datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc),
+            apply_exchange_calendar=True,
+        )
+        hours = {item.session_key: item.scheduled_hours for item in result}
+
+        self.assertEqual(hours["sydney"], 45.0)
+        self.assertEqual(hours["tokyo"], 36.0)
+        self.assertEqual(hours["london"], 45.0)
+        self.assertEqual(hours["new_york"], 32.0)
+
     def test_historical_overlap_report_reconstructs_pair_hours(self):
         report = historical_overlap_report(
             self.sessions, datetime(2026, 11, 30, 0, 0, tzinfo=timezone.utc), days=7
