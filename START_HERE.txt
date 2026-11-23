@@ -1,23 +1,27 @@
-VELTRIX TRADING CLOCK v9.6 — WINDOWS DESKTOP SETUP
+VELTRIX TRADING CLOCK v10.0 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
 3. When prompted for an existing Veltrix project/AppData folder, enter:
    %LOCALAPPDATA%\Veltrix Trading Clock
-   This migrates your existing configuration, API credentials, research caches,
-   focus database, imported tick files and alarm audio where present. If your
-   current data lives in a source project folder instead, select that folder.
+   This migrates retained settings, market/calendar caches, your legacy OHLC
+   research cache for the standalone Regime Lab, the Regime dataset file,
+   Focus & Goals database and alarm audio where present.
 4. Close the old Veltrix instance before copying its SQLite focus database.
 5. When setup finishes, launch Veltrix from its Desktop or Start-menu icon.
 
 VS Code is NOT required. Python 3.10+ (64-bit) is needed only for this
 one-time local build. The installed app includes its Python runtime.
 
-Phase 12 adds REGIME LAB for causal market-regime research. Load/import
-historical OHLC data in Research Lab before running it. It classifies bars
-using only current and prior data; forward returns are separate historical
-outcomes, not forecasts or trading signals.
+The Core Edition retains Global Sessions, Alerts & Events, Economic Calendar,
+Volatility Lab, Regime Lab, Focus & Goals and the original alarm clock.
+Research Lab, Strategy Lab, Tick Research and Data Center are removed.
 
-Do not place real API keys in the release ZIP or share your .env file. The
-installer migrates .env into the per-user AppData folder. See
-DESKTOP_INSTALL_GUIDE.md for complete instructions and data locations.
+Regime Lab has its own IMPORT OHLC CSV workflow. Existing regular OHLC
+datasets can be migrated from the old research_cache.json. Tick-derived
+datasets are left in the old cache and are not imported into Regime Lab.
+The old research cache and raw tick-data folder are not deleted.
+
+Provider API keys are no longer required by the Core Edition. The installer
+does not copy .env files or raw tick-data folders. See
+DESKTOP_INSTALL_GUIDE.md for complete migration and data-location details.
