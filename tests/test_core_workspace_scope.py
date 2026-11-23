@@ -43,14 +43,6 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("self._draw_session_timeline(now_utc, states)", MAIN_SOURCE)
         self.assertIn("self.sessions_canvas", MAIN_SOURCE)
 
-    def test_global_session_intelligence_uses_the_session_engine_and_scrollable_map(self):
-        self.assertIn("from session_timeline import build_session_timeline", MAIN_SOURCE)
-        self.assertIn("def _build_session_timeline", MAIN_SOURCE)
-        self.assertIn("def _draw_session_timeline", MAIN_SOURCE)
-        self.assertIn("build_session_timeline(self.sessions, start_utc, hours=24)", MAIN_SOURCE)
-        self.assertIn("self._draw_session_timeline(now_utc, states)", MAIN_SOURCE)
-        self.assertIn("self.sessions_canvas", MAIN_SOURCE)
-
     def test_market_session_intelligence_and_profiles_are_wired_into_global_sessions(self):
         for symbol in (
             "from session_intelligence import historical_overlap_report, weekly_session_hours",
