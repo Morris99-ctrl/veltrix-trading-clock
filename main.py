@@ -54,6 +54,11 @@ from alerts_dashboard import (
     build_alerts_dashboard, refresh_alerts_dashboard,
     apply_alerts_tree_theme, update_recent_alerts, toggle_alert_settings,
 )
+from session_performance import analyse_session_performance, export_session_performance_csv
+from session_performance_ui import (
+    build_session_performance_page, refresh_session_performance_dataset_choices,
+    render_session_performance_result, apply_session_performance_theme,
+)
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -72,7 +77,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.8"
+APP_VERSION = "10.9"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 50
 
@@ -368,6 +373,13 @@ class VeltrixTradingClock:
         self.regime_result_queue: queue.Queue[tuple[str, dict, dict | None, str | None]] = queue.Queue()
         self.regime_queue_job: str | None = None
 
+        # Historical session-performance research uses the same local OHLC library.
+        self.session_performance_result: dict[str, Any] | None = None
+        self.session_performance_result_metadata: dict[str, Any] = {}
+        self.session_performance_in_progress = False
+        self.session_performance_result_queue: queue.Queue[tuple[str, dict, dict | None, str | None]] = queue.Queue()
+        self.session_performance_queue_job: str | None = None
+
         self._initialise_audio()
         self._build_interface()
         self.apply_theme()
@@ -384,6 +396,9 @@ class VeltrixTradingClock:
         self.regime_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_results)
         self.regime_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_cache_load_results)
         self.regime_import_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_import_results)
+        self.session_performance_queue_job = self.root.after(
+            UI_QUEUE_POLL_MS, self._drain_session_performance_results
+        )
         self.focus_tick_job = self.root.after(1000, self._focus_timer_tick)
         self.regime_cache_writer_thread = threading.Thread(
             target=self._regime_cache_writer_loop, name="VeltrixRegimeCacheWriter", daemon=False
@@ -476,7 +491,12 @@ class VeltrixTradingClock:
             nav, text="GLOBAL SESSIONS", command=lambda: self.show_page("sessions"),
             font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
-        self.sessions_nav_button.pack(side="left", padx=(0, 6))
+        self.sessions_nav_button.pack(side="left", padx=(0, 5))
+        self.session_performance_nav_button = tk.Button(
+            nav, text="SESSION PERFORMANCE", command=lambda: self.show_page("session_performance"),
+            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+        )
+        self.session_performance_nav_button.pack(side="left", padx=(0, 5))
         self.alerts_nav_button = tk.Button(
             nav, text="ALERTS & EVENTS", command=lambda: self.show_page("alerts"),
             font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
@@ -506,6 +526,7 @@ class VeltrixTradingClock:
         self.page_host = self._frame(self.outer)
         self.page_host.pack(fill="both", expand=True)
         self.sessions_view = self._frame(self.page_host)
+        self.session_performance_view = self._frame(self.page_host)
         self.alerts_view = self._frame(self.page_host)
         self.calendar_view = self._frame(self.page_host)
         self.volatility_view = self._frame(self.page_host)
@@ -585,6 +606,7 @@ class VeltrixTradingClock:
         self._build_calendar_page()
         self._build_market_page()
         self._build_regime_page()
+        build_session_performance_page(self)
         self._build_focus_page()
         self.show_page("sessions")
 
@@ -2514,6 +2536,145 @@ class VeltrixTradingClock:
         self.market_alert_listbox.pack(fill="x", pady=(4, 0))
         self.market_alert_listbox.insert("end", "No expansion or contraction alerts have been recorded this run.")
 
+    def run_session_performance(self) -> None:
+        """Run historical session/overlap performance calculations off the Tk thread."""
+        if self.session_performance_in_progress:
+            return
+        if self.regime_cache_loading:
+            self.session_performance_status_label.configure(
+                text="LOCAL OHLC DATA LIBRARY IS STILL LOADING · RETRY IN A MOMENT",
+                fg=THEMES[self.theme_name]["warning"],
+            )
+            return
+        key = self.session_performance_dataset_label_to_key.get(
+            self.session_performance_dataset_var.get(), ""
+        )
+        dataset = self.regime_datasets.get(key)
+        if not isinstance(dataset, dict) or not dataset.get("bars"):
+            self.session_performance_status_label.configure(
+                text="NO DATASET SELECTED · IMPORT A COMPLETED OHLC CSV IN REGIME LAB FIRST",
+                fg=THEMES[self.theme_name]["warning"],
+            )
+            return
+        metadata = dataset.get("metadata", {}) if isinstance(dataset.get("metadata"), dict) else {}
+        if (
+            dataset.get("variable_interval_bars")
+            or metadata.get("variable_interval_bars")
+            or metadata.get("bar_construction")
+        ):
+            self.session_performance_status_label.configure(
+                text="UNSUPPORTED DATA · THIS STUDY REQUIRES FIXED-INTERVAL OHLC BARS, NOT TICK / VARIABLE BARS",
+                fg=THEMES[self.theme_name]["error"],
+            )
+            return
+        try:
+            interval = float(dataset.get("bar_interval_minutes") or 0)
+            minimum_bars = int(self.session_performance_min_bars_var.get())
+            minimum_coverage = float(self.session_performance_min_coverage_var.get())
+            if minimum_bars < 1 or minimum_bars > 500:
+                raise ValueError("Minimum bars must be from 1 to 500.")
+            if not 0 <= minimum_coverage <= 100:
+                raise ValueError("Minimum coverage must be from 0 to 100.")
+            if interval <= 0:
+                raise ValueError("Dataset does not contain a valid median bar interval.")
+        except (ValueError, tk.TclError) as exc:
+            self.session_performance_status_label.configure(
+                text=f"INVALID STUDY PARAMETERS · {exc}",
+                fg=THEMES[self.theme_name]["error"],
+            )
+            return
+
+        bars = tuple(dict(item) for item in dataset.get("bars", []) if isinstance(item, dict))
+        sessions = tuple(self.sessions)
+        study_metadata = {
+            "key": key,
+            "name": str(dataset.get("name") or key),
+            "source": str(dataset.get("source") or "Unknown source"),
+            "symbol": str(dataset.get("symbol") or ""),
+            "bar_interval_minutes": interval,
+            "session_profile": str(self.active_session_profile),
+        }
+        self.session_performance_result = None
+        self.session_performance_result_metadata = {}
+        self.session_performance_export_button.configure(state="disabled")
+        self.session_performance_in_progress = True
+        self.session_performance_run_button.configure(state="disabled", text="ANALYSING...")
+        self.session_performance_status_label.configure(
+            text=f"ANALYSING {len(bars):,} OHLC BARS · {study_metadata['name']} · BACKGROUND TASK",
+            fg=THEMES[self.theme_name]["warning"],
+        )
+
+        def worker() -> None:
+            try:
+                result = analyse_session_performance(
+                    bars, sessions,
+                    bar_interval_minutes=interval,
+                    minimum_bars_per_session=minimum_bars,
+                    minimum_coverage_pct=minimum_coverage,
+                )
+                self.session_performance_result_queue.put((key, study_metadata, result, None))
+            except Exception as exc:
+                self.session_performance_result_queue.put((key, study_metadata, None, str(exc)))
+
+        threading.Thread(
+            target=worker, name="VeltrixSessionPerformance", daemon=True
+        ).start()
+
+    def _drain_session_performance_results(self) -> None:
+        if self.is_closing:
+            return
+        try:
+            while True:
+                key, metadata, result, error = self.session_performance_result_queue.get_nowait()
+                self.session_performance_in_progress = False
+                self.session_performance_run_button.configure(state="normal", text="RUN SESSION STUDY")
+                selected_key = self.session_performance_dataset_label_to_key.get(
+                    self.session_performance_dataset_var.get(), ""
+                )
+                if key != selected_key:
+                    self.session_performance_status_label.configure(
+                        text="STUDY FINISHED FOR A PREVIOUS DATASET SELECTION · SELECT IT AGAIN TO VIEW",
+                        fg=THEMES[self.theme_name]["warning"],
+                    )
+                    continue
+                if error:
+                    self.session_performance_result = None
+                    self.session_performance_export_button.configure(state="disabled")
+                    self.session_performance_status_label.configure(
+                        text=f"SESSION STUDY FAILED · {error[:220]}",
+                        fg=THEMES[self.theme_name]["error"],
+                    )
+                    continue
+                render_session_performance_result(self, metadata, result)
+        except queue.Empty:
+            pass
+        if not self.is_closing:
+            self.session_performance_queue_job = self.root.after(
+                UI_QUEUE_POLL_MS, self._drain_session_performance_results
+            )
+
+    def export_session_performance(self) -> None:
+        if not self.session_performance_result:
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export daily session-performance and overlap rows",
+            defaultextension=".csv",
+            initialfile="veltrix_session_performance.csv",
+            filetypes=(("CSV files", "*.csv"),),
+        )
+        if not path:
+            return
+        try:
+            export_session_performance_csv(path, self.session_performance_result)
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror("Session performance export failed", str(exc), parent=self.root)
+            return
+        self.session_performance_status_label.configure(
+            text=f"DAILY SESSION / OVERLAP ROWS EXPORTED · {Path(path).name}",
+            fg=THEMES[self.theme_name]["success"],
+        )
+
     def _build_regime_page(self) -> None:
         """Build Phase 12 causal market-regime research workspace."""
         self.regime_canvas = tk.Canvas(self.regime_view, highlightthickness=0, bd=0)
@@ -2829,6 +2990,7 @@ class VeltrixTradingClock:
             target = labels[0]
         self.regime_asset_var.set(target)
         self.regime_settings["selected_asset"] = mapping.get(target, "")
+        refresh_session_performance_dataset_choices(self)
 
     def import_regime_csv(self) -> None:
         if self.regime_cache_loading or self.regime_import_in_progress:
@@ -3472,6 +3634,7 @@ class VeltrixTradingClock:
     def show_page(self, page: str) -> None:
         page_map = {
             "sessions": (self.sessions_view, self.sessions_nav_button),
+            "session_performance": (self.session_performance_view, self.session_performance_nav_button),
             "alerts": (self.alerts_view, self.alerts_nav_button),
             "calendar": (self.calendar_view, self.calendar_nav_button),
             "volatility": (self.volatility_view, self.volatility_nav_button),
@@ -3481,8 +3644,8 @@ class VeltrixTradingClock:
         if page not in page_map:
             page = "sessions"
         for view in (
-            self.sessions_view, self.alerts_view, self.calendar_view,
-            self.volatility_view, self.regime_view, self.focus_view,
+            self.sessions_view, self.session_performance_view, self.alerts_view,
+            self.calendar_view, self.volatility_view, self.regime_view, self.focus_view,
         ):
             view.pack_forget()
         active_view, active_button = page_map[page]
@@ -3499,6 +3662,8 @@ class VeltrixTradingClock:
         if page == "regime" and hasattr(self, "regime_canvas"):
             self.regime_canvas.yview_moveto(0.0)
             self._draw_regime_chart()
+        if page == "session_performance" and hasattr(self, "session_performance_canvas"):
+            self.session_performance_canvas.yview_moveto(0.0)
         if page == "focus" and hasattr(self, "focus_canvas"):
             self.focus_canvas.yview_moveto(0.0)
             self._refresh_focus_workspace()
@@ -4335,6 +4500,10 @@ class VeltrixTradingClock:
         if hasattr(self, "world_dial_canvas"):
             self.world_dial_canvas.configure(bg=palette["panel"])
             self.world_dial_signature = None
+        if hasattr(self, "session_performance_canvas"):
+            self.session_performance_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "session_performance_chart_canvas"):
+            self.session_performance_chart_canvas.configure(bg=palette["panel"])
         for tile in (self.summary_open, self.summary_overlap, self.summary_next):
             tile["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
             tile["title"].configure(bg=palette["panel"], fg=palette["muted"])
@@ -4370,8 +4539,11 @@ class VeltrixTradingClock:
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
         for button in (
-            self.sessions_nav_button, self.alerts_nav_button, self.calendar_nav_button,
+            self.sessions_nav_button, self.session_performance_nav_button,
+            self.alerts_nav_button, self.calendar_nav_button,
             self.volatility_nav_button, self.regime_nav_button, self.focus_nav_button,
+            self.session_performance_import_button, self.session_performance_run_button,
+            self.session_performance_export_button,
             self.alerts_search_button, self.alerts_clear_button, self.alerts_sort_up_button,
             self.alerts_sort_down_button, self.alert_config_toggle,
             self.alerts_news_previous_button, self.alerts_news_today_button,
@@ -4397,6 +4569,7 @@ class VeltrixTradingClock:
             self.calendar_reminder_spin, self.market_expansion_spin, self.market_contraction_spin,
             self.risk_opening_window_spin, self.risk_closing_window_spin,
             self.risk_pre_open_window_spin, *self.session_lead_spins,
+            self.session_performance_min_bars_spin, self.session_performance_min_coverage_spin,
         ):
             spin.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
                            buttonbackground=palette["button_bg"], highlightbackground=palette["border"])
@@ -4414,6 +4587,7 @@ class VeltrixTradingClock:
         self._apply_market_tree_theme()
         apply_alerts_tree_theme(self)
         self._apply_regime_tree_theme()
+        apply_session_performance_theme(self)
         # Apply shared ttk styles globally: standard controls, all Treeviews,
         # tabs, headers, scrollbars, progress bars and every named selector.
         apply_veltrix_ttk_palette(self.ttk_style, palette, self.root)
