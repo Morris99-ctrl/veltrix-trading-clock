@@ -100,7 +100,7 @@ def build_command_center_page(app) -> None:
     app._label(heading_left, "TRADING COMMAND CENTER", fg="bright",
                font=("Segoe UI", 17, "bold")).pack(anchor="w")
     app.command_center_subtitle = app._label(
-        heading_left, "A live overview of market sessions, scheduled events, volatility and preparation.",
+        heading_left, "Live session context, scheduled events and indicative market data in one place.",
         fg="muted", font=("Segoe UI", 9),
     )
     app.command_center_subtitle.pack(anchor="w", pady=(2, 0))
@@ -306,6 +306,17 @@ def refresh_command_center_sources(app) -> None:
     app.refresh_market_data(silent=False)
 
 
+
+
+def _format_source_timestamp(value: Any, home_zone) -> str:
+    try:
+        timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if timestamp.tzinfo is None:
+            return "TIME UNKNOWN"
+        return timestamp.astimezone(home_zone).strftime("%d %b %H:%M %Z")
+    except (TypeError, ValueError, OverflowError):
+        return "TIME UNKNOWN"
+
 def refresh_command_center(app, now_utc: datetime | None = None) -> None:
     """Refresh dashboard labels from the app's latest in-memory state."""
     if not hasattr(app, "command_center_metrics"):
@@ -342,14 +353,14 @@ def refresh_command_center(app, now_utc: datetime | None = None) -> None:
     metrics["events"]["value"].configure(text=str(snapshot["event_count_next_24h"]))
     metrics["events"]["detail"].configure(text="Upcoming provider events within 24 hours")
     if snapshot["market_is_fresh"] and snapshot["calendar_is_fresh"]:
-        feed_status, feed_colour = "LIVE", palette["success"]
+        feed_status, feed_colour = "UPDATED", palette["success"]
     elif snapshot["market_is_fresh"] or snapshot["calendar_is_fresh"]:
         feed_status, feed_colour = "PARTIAL", palette["warning"]
     else:
         feed_status, feed_colour = "CACHED", palette["warning"]
     metrics["feeds"]["value"].configure(text=feed_status, fg=feed_colour)
     metrics["feeds"]["detail"].configure(
-        text=("Market + calendar refreshed this run" if feed_status == "LIVE"
+        text=("Both providers refreshed successfully this run" if feed_status == "UPDATED"
               else "Cached/offline feeds are labelled, not treated as live")
     )
 
@@ -370,6 +381,10 @@ def refresh_command_center(app, now_utc: datetime | None = None) -> None:
             status_text, colour = "EXCHANGE HOLIDAY", palette["error"]
         elif item["calendar_status"] in {"OUT_OF_RANGE", "NO_VENUE_MAPPING"}:
             status_text, colour = "SCHEDULE ONLY · VENUE UNVERIFIED", palette["warning"]
+        elif item["calendar_status"] == "CLOSING_PROCESS" and item["transition_kind"] == "CLOSE_PROCESS":
+            status_text, colour = "CLOSING PROCESS", palette["warning"]
+        elif item["calendar_status"] == "EARLY_CLOSE" and item["is_open"]:
+            status_text, colour = "EARLY CLOSE DAY", palette["warning"]
         elif item["is_open"]:
             status_text, colour = "OPEN", palette["success"]
         else:
@@ -391,7 +406,7 @@ def refresh_command_center(app, now_utc: datetime | None = None) -> None:
                 palette["warning"] if impact == "MEDIUM" else palette["muted"]
             )
             countdown = format_countdown(event["seconds_until"])
-            status_note = f" · {event['status'].upper()}" if event["status"] not in {"scheduled", "moved"} else ""
+            status_note = f" · {event['status'].upper()}" if event["status"] != "scheduled" else ""
             widgets["title"].configure(
                 text=f"{event['currency']}  ·  {event['title']}  ·  {impact}{status_note}",
                 fg=impact_colour,
@@ -406,8 +421,9 @@ def refresh_command_center(app, now_utc: datetime | None = None) -> None:
                 fg=palette["muted"],
             )
             widgets["meta"].configure(text="")
+    calendar_time = _format_source_timestamp(snapshot["calendar_fetched_at"], app.home_zone)
     app.command_center_event_source_label.configure(
-        text=("CALENDAR PROVIDER UPDATED THIS RUN · VERIFY HIGH-IMPORTANCE RELEASES WITH THE OFFICIAL SOURCE"
+        text=(f"CALENDAR PROVIDER UPDATED THIS RUN · {calendar_time} · VERIFY HIGH-IMPORTANCE RELEASES WITH THE OFFICIAL SOURCE"
               if snapshot["calendar_is_fresh"]
               else "CACHED / UNVERIFIED CALENDAR · REFRESH OR VERIFY IMPORTANT RELEASE TIMES")
     )
@@ -429,13 +445,15 @@ def refresh_command_center(app, now_utc: datetime | None = None) -> None:
             atr_text = f"ATR(14): {float(atr):,.2f}" if atr is not None else "ATR(14): N/A"
             move_text = (f"HISTORICAL 1D 1σ: ±{float(move):,.2f} ({float(pct):.2f}%)"
                          if move is not None and pct is not None else "HISTORICAL 1D 1σ: N/A")
-            widgets["detail"].configure(text=f"{atr_text} {item['unit']}  ·  {move_text}")
+            bar_time = _format_source_timestamp(summary.get("quote_time", ""), app.home_zone)
+            widgets["detail"].configure(text=f"{atr_text} {item['unit']}  ·  {move_text}  ·  BAR {bar_time}")
         else:
             widgets["name"].configure(text="")
             widgets["price"].configure(text="")
             widgets["detail"].configure(text="")
+    market_time = _format_source_timestamp(snapshot["market_fetched_at"], app.home_zone)
     app.command_center_market_source_label.configure(
-        text=("YAHOO FINANCE CHART DATA · REFRESHED THIS RUN · INDICATIVE ONLY"
+        text=(f"YAHOO FINANCE CHART DATA · FETCHED {market_time} · INDICATIVE ONLY"
               if snapshot["market_is_fresh"]
               else "YAHOO FINANCE CHART DATA · CACHED / UNVERIFIED THIS RUN · INDICATIVE ONLY")
     )
