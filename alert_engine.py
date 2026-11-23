@@ -7,6 +7,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 
 from session_engine import SessionDefinition
+from exchange_calendar import EXCHANGE_BY_SESSION, get_exchange_event
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ def due_session_alerts(
     *,
     days_ahead: int = 9,
     transition_grace_seconds: int = 90,
+    apply_exchange_calendar: bool = False,
 ) -> list[MarketAlert]:
     """Return session alerts due now, marking each event key as fired once.
 
@@ -51,9 +53,22 @@ def due_session_alerts(
             if session_date.weekday() not in session.weekdays:
                 continue
 
+            exchange_event = (
+                get_exchange_event(EXCHANGE_BY_SESSION[session.key], session_date)
+                if apply_exchange_calendar and session.key in EXCHANGE_BY_SESSION else None
+            )
+            if exchange_event and exchange_event.status == "CLOSED":
+                continue
+
+            close_time = (
+                exchange_event.close_time
+                if exchange_event and exchange_event.status == "EARLY_CLOSE"
+                else session.closes
+            )
+            close_name = "EARLY_CLOSE" if exchange_event and exchange_event.status == "EARLY_CLOSE" else "CLOSE"
             events = (
                 ("OPEN", session.opens, "session_open", "notify_open", pre_open_minutes, "notify_pre_open"),
-                ("CLOSE", session.closes, "session_close", "notify_close", pre_close_minutes, "notify_pre_close"),
+                (close_name, close_time, "session_close", "notify_close", pre_close_minutes, "notify_pre_close"),
             )
             for event_name, event_time, exact_category, exact_setting, lead_minutes, lead_setting in events:
                 event_local = datetime.combine(session_date, event_time, tzinfo=session.tz)
@@ -69,9 +84,18 @@ def due_session_alerts(
                         alerts.append(
                             MarketAlert(
                                 key=lead_key,
-                                title=f"{session.name} {event_name} IN {lead_minutes} MIN",
-                                message=f"{session.city} is scheduled to {event_name.lower()} at "
-                                        f"{event_local.strftime('%H:%M %Z')}.",
+                                title=(
+                                    f"{session.name} EARLY CLOSE PROCESS IN {lead_minutes} MIN"
+                                    if event_name == "EARLY_CLOSE"
+                                    else f"{session.name} {event_name} IN {lead_minutes} MIN"
+                                ),
+                                message=(
+                                    f"{session.city} has an exchange early-close event at "
+                                    f"{event_local.strftime('%H:%M %Z')}."
+                                    if event_name == "EARLY_CLOSE"
+                                    else f"{session.city} is scheduled to {event_name.lower()} at "
+                                         f"{event_local.strftime('%H:%M %Z')}."
+                                ),
                                 category="warning",
                             )
                         )
@@ -84,8 +108,16 @@ def due_session_alerts(
                     alerts.append(
                         MarketAlert(
                             key=exact_key,
-                            title=f"{session.name} SESSION {event_name}ED",
-                            message=f"{session.city} scheduled hours have reached {event_name.lower()}.",
+                            title=(
+                                f"{session.name} EXCHANGE EARLY-CLOSE PROCESS STARTED"
+                                if event_name == "EARLY_CLOSE"
+                                else f"{session.name} SESSION {event_name}ED"
+                            ),
+                            message=(
+                                f"{session.city} has reached the published early-close process time."
+                                if event_name == "EARLY_CLOSE"
+                                else f"{session.city} scheduled hours have reached {event_name.lower()}."
+                            ),
                             category="transition",
                         )
                     )
