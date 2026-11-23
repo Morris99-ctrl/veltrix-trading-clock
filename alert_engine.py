@@ -46,7 +46,18 @@ def due_session_alerts(
     pre_open_minutes = max(0, int(settings.get("pre_open_minutes", 15)))
     pre_close_minutes = max(0, int(settings.get("pre_close_minutes", 10)))
 
+    raw_overrides = settings.get("session_lead_overrides", {})
+    overrides = raw_overrides if isinstance(raw_overrides, dict) else {}
+
     for session in sessions:
+        override = overrides.get(session.key, {})
+        if not isinstance(override, dict):
+            override = {}
+        try:
+            session_pre_open = max(0, min(180, int(override.get("pre_open_minutes", pre_open_minutes))))
+            session_pre_close = max(0, min(180, int(override.get("pre_close_minutes", pre_close_minutes))))
+        except (TypeError, ValueError):
+            session_pre_open, session_pre_close = pre_open_minutes, pre_close_minutes
         local_today = now_utc.astimezone(session.tz).date()
         for offset in range(days_ahead + 1):
             session_date: date = local_today + timedelta(days=offset)
@@ -71,8 +82,8 @@ def due_session_alerts(
                 else "CLOSE"
             )
             events = (
-                ("OPEN", session.opens, "session_open", "notify_open", pre_open_minutes, "notify_pre_open"),
-                (close_name, close_time, "session_close", "notify_close", pre_close_minutes, "notify_pre_close"),
+                ("OPEN", session.opens, "session_open", "notify_open", session_pre_open, "notify_pre_open"),
+                (close_name, close_time, "session_close", "notify_close", session_pre_close, "notify_pre_close"),
             )
             for event_name, event_time, exact_category, exact_setting, lead_minutes, lead_setting in events:
                 event_local = datetime.combine(session_date, event_time, tzinfo=session.tz)
