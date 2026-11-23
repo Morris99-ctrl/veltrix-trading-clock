@@ -41,6 +41,7 @@ from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
 from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
 from session_clock import session_clock_hand_endpoints
+from session_timeline import build_session_timeline
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -431,8 +432,47 @@ class VeltrixTradingClock:
         self.focus_view = self._frame(self.page_host)
         self.sessions_view.pack(fill="both", expand=True)
 
+        # The Global Sessions page is vertically scrollable so the four clocks,
+        # 24-hour map and market summary remain usable on shorter displays.
+        sessions_scroll_shell = self._frame(self.sessions_view)
+        sessions_scroll_shell.pack(fill="both", expand=True)
+        self.sessions_canvas = tk.Canvas(
+            sessions_scroll_shell, bg=THEMES[self.theme_name]["bg"],
+            highlightthickness=0, bd=0,
+        )
+        self.sessions_scrollbar = ttk.Scrollbar(
+            sessions_scroll_shell, orient="vertical", command=self.sessions_canvas.yview,
+        )
+        self.sessions_canvas.configure(yscrollcommand=self.sessions_scrollbar.set)
+        self.sessions_canvas.pack(side="left", fill="both", expand=True)
+        self.sessions_scrollbar.pack(side="right", fill="y")
+        self.sessions_content = self._frame(self.sessions_canvas)
+        self.sessions_content_window = self.sessions_canvas.create_window(
+            (0, 0), window=self.sessions_content, anchor="nw",
+        )
+        self.sessions_content.bind(
+            "<Configure>", lambda _event: self.sessions_canvas.configure(
+                scrollregion=self.sessions_canvas.bbox("all")
+            )
+        )
+        self.sessions_canvas.bind(
+            "<Configure>", lambda event: self.sessions_canvas.itemconfigure(
+                self.sessions_content_window, width=event.width
+            )
+        )
+        self.sessions_canvas.bind(
+            "<MouseWheel>",
+            lambda event: self.sessions_canvas.yview_scroll(int(-event.delta / 120), "units"),
+        )
+        self.sessions_canvas.bind(
+            "<Button-4>", lambda _event: self.sessions_canvas.yview_scroll(-1, "units"),
+        )
+        self.sessions_canvas.bind(
+            "<Button-5>", lambda _event: self.sessions_canvas.yview_scroll(1, "units"),
+        )
+
         # Global session summary.
-        summary = self._frame(self.sessions_view)
+        summary = self._frame(self.sessions_content)
         summary.pack(fill="x", pady=(0, 10))
         for column in range(3):
             summary.grid_columnconfigure(column, weight=1, uniform="summary")
@@ -440,7 +480,7 @@ class VeltrixTradingClock:
         self.summary_overlap = self._summary_tile(summary, 1, "ACTIVE OVERLAPS", "NONE")
         self.summary_next = self._summary_tile(summary, 2, "NEXT TRANSITION", "Calculating")
 
-        section = self._frame(self.sessions_view)
+        section = self._frame(self.sessions_content)
         section.pack(fill="x", pady=(4, 8))
         self.section_title = self._label(section, "GLOBAL MARKET SESSIONS", fg="bright", font=("Consolas", 11, "bold"))
         self.section_title.pack(side="left")
@@ -448,7 +488,7 @@ class VeltrixTradingClock:
         self.section_hint.pack(side="right")
 
         # Four independent session cards.
-        self.session_grid = self._frame(self.sessions_view)
+        self.session_grid = self._frame(self.sessions_content)
         self.session_grid.pack(fill="x")
         for column in range(2):
             self.session_grid.grid_columnconfigure(column, weight=1, uniform="session")
@@ -457,6 +497,8 @@ class VeltrixTradingClock:
         for index, session in enumerate(self.sessions):
             row, column = divmod(index, 2)
             self._build_session_card(session, row, column)
+
+        self._build_session_timeline(self.sessions_content)
 
         self._build_alerts_page()
         self._build_calendar_page()
@@ -498,7 +540,7 @@ class VeltrixTradingClock:
         self.status_label.grid(row=2, column=0, sticky="w", pady=(9, 0))
 
         # Market intelligence footer.
-        footer = self._frame(self.sessions_view, bg="panel", padx=14, pady=9)
+        footer = self._frame(self.sessions_content, bg="panel", padx=14, pady=9)
         footer.pack(fill="x", pady=(10, 0))
         self.overlap_label = self._label(footer, "Checking session alignment...", bg="panel", fg="bright", font=("Consolas", 9, "bold"), anchor="w", justify="left")
         self.overlap_label.pack(fill="x")
@@ -508,6 +550,172 @@ class VeltrixTradingClock:
             bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w", justify="left", wraplength=1050,
         )
         self.footer_note.pack(fill="x", pady=(4, 0))
+
+    def _build_session_timeline(self, parent: tk.Widget) -> None:
+        """Build the UTC 24-hour map and its live overlap/transition summaries."""
+        panel = self._frame(parent, bg="panel", padx=14, pady=10)
+        panel.pack(fill="x", pady=(2, 10))
+        header = self._frame(panel, bg="panel")
+        header.pack(fill="x")
+        self.timeline_title = self._label(
+            header, "24-HOUR GLOBAL SESSION MAP", bg="panel", fg="bright",
+            font=("Consolas", 10, "bold"),
+        )
+        self.timeline_title.pack(side="left")
+        self.timeline_utc_label = self._label(
+            header, "UTC · MIDNIGHT TO MIDNIGHT", bg="panel", fg="muted",
+            font=("Consolas", 8, "bold"),
+        )
+        self.timeline_utc_label.pack(side="right")
+
+        self.session_timeline_canvas = tk.Canvas(
+            panel, height=166, bg=THEMES[self.theme_name]["panel"],
+            highlightthickness=0, bd=0,
+        )
+        self.session_timeline_canvas.pack(fill="x", expand=True, pady=(5, 2))
+        self.session_timeline_signature: tuple[int, int, str, str] | None = None
+
+        self.timeline_overlap_label = self._label(
+            panel, "OVERLAPS · CALCULATING", bg="panel", fg="success",
+            font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=1050,
+        )
+        self.timeline_overlap_label.pack(fill="x", pady=(2, 3))
+        self.timeline_upcoming_label = self._label(
+            panel, "NEXT TRANSITIONS · CALCULATING", bg="panel", fg="muted",
+            font=("Consolas", 8), anchor="w", justify="left", wraplength=1050,
+        )
+        self.timeline_upcoming_label.pack(fill="x")
+
+    def _draw_session_timeline(self, now_utc: datetime, states: list) -> None:
+        """Render today's UTC session windows, shared overlap bands and current-time marker."""
+        canvas = self.session_timeline_canvas
+        palette = THEMES[self.theme_name]
+        start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_utc = start_utc + timedelta(hours=24)
+        snapshot = build_session_timeline(self.sessions, start_utc, hours=24)
+
+        width = max(620, canvas.winfo_width())
+        height = 166
+        signature = (width, height, self.theme_name, start_utc.date().isoformat())
+        left, right = 92.0, float(width - 15)
+        span = right - left
+        top, lane_step, lane_height = 31.0, 23.0, 12.0
+
+        if self.session_timeline_signature != signature:
+            canvas.delete("all")
+            canvas.configure(bg=palette["panel"])
+            for hour in range(0, 25, 3):
+                x = left + span * hour / 24
+                canvas.create_line(
+                    x, top - 7, x, top + lane_step * (len(self.sessions) + 1),
+                    fill=palette["dim"], width=1, tags="timeline-static",
+                )
+                anchor = "center"
+                if hour == 0:
+                    anchor = "w"
+                elif hour == 24:
+                    anchor = "e"
+                canvas.create_text(
+                    x, 10, text=f"{hour:02d}:00", fill=palette["muted"],
+                    anchor=anchor, font=("Consolas", 7), tags="timeline-static",
+                )
+            for index, session in enumerate(self.sessions):
+                y = top + index * lane_step
+                canvas.create_text(
+                    left - 9, y + lane_height / 2, text=session.name,
+                    fill=palette["text"], anchor="e", font=("Consolas", 7, "bold"),
+                    tags="timeline-static",
+                )
+                canvas.create_rectangle(
+                    left, y, right, y + lane_height,
+                    fill=palette["bg"], outline=palette["dim"], width=1,
+                    tags="timeline-static",
+                )
+            overlap_y = top + len(self.sessions) * lane_step + 4
+            canvas.create_text(
+                left - 9, overlap_y + lane_height / 2, text="OVERLAP",
+                fill=palette["bright"], anchor="e", font=("Consolas", 7, "bold"),
+                tags="timeline-static",
+            )
+            canvas.create_rectangle(
+                left, overlap_y, right, overlap_y + lane_height,
+                fill=palette["bg"], outline=palette["dim"], width=1,
+                tags="timeline-static",
+            )
+            self.session_timeline_signature = signature
+        else:
+            canvas.delete("timeline-dynamic")
+
+        total_seconds = (end_utc - start_utc).total_seconds()
+
+        def x_at(moment: datetime) -> float:
+            seconds = (moment.astimezone(timezone.utc) - start_utc).total_seconds()
+            return left + span * seconds / total_seconds
+
+        session_colours = (
+            palette["success"], palette["bright"], palette["warning"], palette["error"],
+        )
+        for index, session in enumerate(self.sessions):
+            colour = session_colours[index % len(session_colours)]
+            y = top + index * lane_step
+            for window in snapshot.windows:
+                if window.session_key != session.key:
+                    continue
+                x1, x2 = x_at(window.starts_at), x_at(window.ends_at)
+                canvas.create_rectangle(
+                    x1, y + 1, max(x1 + 1, x2), y + lane_height - 1,
+                    fill=colour, outline=colour, tags="timeline-dynamic",
+                )
+
+        overlap_y = top + len(self.sessions) * lane_step + 4
+        for overlap in snapshot.overlaps:
+            x1, x2 = x_at(overlap.starts_at), x_at(overlap.ends_at)
+            canvas.create_rectangle(
+                x1, overlap_y + 1, max(x1 + 1, x2), overlap_y + lane_height - 1,
+                fill=palette["error"], outline=palette["error"], tags="timeline-dynamic",
+            )
+
+        if start_utc <= now_utc < end_utc:
+            marker_x = x_at(now_utc)
+            canvas.create_line(
+                marker_x, top - 12, marker_x, overlap_y + lane_height + 5,
+                fill=palette["bright"], width=2, dash=(4, 2), tags="timeline-dynamic",
+            )
+            canvas.create_oval(
+                marker_x - 3, top - 15, marker_x + 3, top - 9,
+                fill=palette["bright"], outline=palette["bright"], tags="timeline-dynamic",
+            )
+
+        if snapshot.overlaps:
+            overlap_text = "  |  ".join(
+                f"{' + '.join(item.session_names)} {item.starts_at.strftime('%H:%M')}–{item.ends_at.strftime('%H:%M')} UTC"
+                for item in snapshot.overlaps
+            )
+            total_overlap = sum(
+                (item.ends_at - item.starts_at).total_seconds() for item in snapshot.overlaps
+            )
+            overlap_hours, remainder = divmod(int(total_overlap), 3600)
+            overlap_minutes = remainder // 60
+            self.timeline_overlap_label.configure(
+                text=f"OVERLAPS TODAY · {overlap_hours}h {overlap_minutes:02d}m TOTAL  |  {overlap_text}",
+                fg=palette["success"],
+            )
+        else:
+            self.timeline_overlap_label.configure(
+                text="OVERLAPS TODAY · NONE SCHEDULED", fg=palette["muted"],
+            )
+
+        upcoming = sorted(states, key=lambda state: state.seconds_to_transition)[:3]
+        items = [
+            f"{state.definition.name} {state.transition_kind} "
+            f"{state.transition_at.strftime('%H:%M')} {state.transition_at.tzname()} "
+            f"({format_countdown(state.seconds_to_transition)})"
+            for state in upcoming
+        ]
+        self.timeline_upcoming_label.configure(
+            text="NEXT TRANSITIONS · " + ("  |  ".join(items) if items else "NONE"),
+            fg=palette["muted"],
+        )
 
     def _build_focus_page(self) -> None:
         """Build the personal stopwatch, countdown and long-term goals workspace."""
@@ -3097,6 +3305,11 @@ class VeltrixTradingClock:
         )
 
         self.digital_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "sessions_canvas"):
+            self.sessions_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "session_timeline_canvas"):
+            self.session_timeline_canvas.configure(bg=palette["panel"])
+            self.session_timeline_signature = None
         for tile in (self.summary_open, self.summary_overlap, self.summary_next):
             tile["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
             tile["title"].configure(bg=palette["panel"], fg=palette["muted"])
@@ -3324,6 +3537,7 @@ class VeltrixTradingClock:
 
         overlaps = self._find_overlaps(open_states)
         self.summary_overlap["value"].configure(text=overlaps if overlaps else "NONE")
+        self._draw_session_timeline(now_utc, states)
         palette = THEMES[self.theme_name]
         for state in states:
             widgets = self.cards[state.definition.key]
