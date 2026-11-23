@@ -130,8 +130,8 @@ def apply_veltrix_classic_widget_palette(
                             insertbackground=palette["bright"],
                             selectbackground=palette["button_active"],
                             selectforeground=palette["bright"],
-                            highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"],
+                            highlightbackground=palette["panel"],
+                            highlightcolor=palette["panel"], highlightthickness=0, highlightthickness=0,
                             disabledbackground=palette["panel"],
                             disabledforeground=palette["muted"],
                         )
@@ -153,8 +153,8 @@ def apply_veltrix_classic_widget_palette(
                             bg=parent_bg, fg=palette["text"],
                             selectbackground=palette["button_active"],
                             selectforeground=palette["bright"],
-                            highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"],
+                            highlightbackground=palette["panel"],
+                            highlightcolor=palette["panel"],
                         )
                     elif widget_class == "Text":
                         options.update(
@@ -162,8 +162,8 @@ def apply_veltrix_classic_widget_palette(
                             insertbackground=palette["bright"],
                             selectbackground=palette["button_active"],
                             selectforeground=palette["bright"],
-                            highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"],
+                            highlightbackground=palette["panel"],
+                            highlightcolor=palette["panel"],
                         )
                     elif widget_class == "Menu":
                         options.update(
@@ -171,20 +171,20 @@ def apply_veltrix_classic_widget_palette(
                             activebackground=palette["button_active"],
                             activeforeground=palette["bright"],
                             disabledforeground=palette["muted"],
-                            bd=1, relief="solid",
+                            bd=0, relief="flat",
                         )
                     elif widget_class == "Scale":
                         options.update(
                             bg=parent_bg, fg=palette["text"],
                             troughcolor=palette["dim"],
                             activebackground=palette["bright"],
-                            highlightbackground=palette["border"],
+                            highlightbackground=palette["panel"],
                         )
                     elif widget_class == "Scrollbar":
                         options.update(
                             bg=palette["button_bg"], troughcolor=palette["bg"],
                             activebackground=palette["button_active"],
-                            highlightbackground=palette["border"],
+                            highlightbackground=palette["panel"],
                         )
                     if options:
                         try:
