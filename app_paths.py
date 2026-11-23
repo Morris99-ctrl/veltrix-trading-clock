@@ -1,8 +1,6 @@
 """Runtime paths for source and frozen Veltrix desktop installations.
 
-When running from source, personal files stay beside main.py for backwards
-compatibility. In a PyInstaller build, writable files live under the current
-Windows user's LocalAppData directory, separate from the installed binaries.
+Personal settings and caches stay separate from bundled program resources.
 """
 from __future__ import annotations
 
@@ -53,19 +51,17 @@ def resource_path(relative_path: str | Path) -> Path:
 
 
 def initialize_app_data(app_data_dir: str | Path | None = None) -> Path:
-    """Create the writable data directory and seed safe first-run defaults.
+    """Create the writable application directory and seed first-run config.
 
-    Existing user files are never overwritten. The real .env file is never
-    generated or bundled; only the non-secret .env.example template is copied.
+    Existing user files are never overwritten. The Core Edition does not load
+    provider API credentials or create a raw tick-data workspace.
     """
     data_dir = Path(app_data_dir).expanduser() if app_data_dir is not None else APP_DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    for filename in ("config.json", ".env.example"):
-        source = resource_path(filename)
-        destination = data_dir / filename
-        if source.is_file() and not destination.exists():
-            shutil.copy2(source, destination)
+    source = resource_path("config.json")
+    destination = data_dir / "config.json"
+    if source.is_file() and not destination.exists():
+        shutil.copy2(source, destination)
 
-    (data_dir / "tick_data").mkdir(parents=True, exist_ok=True)
     return data_dir
