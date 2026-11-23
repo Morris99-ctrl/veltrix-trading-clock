@@ -10,6 +10,11 @@ Implemented
 - Extended Core Edition scope tests to assert that the new timeline is wired into the UI.
 - Updated README, desktop guide, quick start, changelog and Windows executable metadata.
 
+First v10.2 GitHub Actions run
+- Python 3.10, 3.11 and 3.12 passed dependency installation, compileall and all 127 unit tests.
+- The Windows desktop package job is still in progress at the time of this update.
+- The v10.2 run is linked from the pull request and the repository Actions page.
+
 Previous release baseline
 - v10.1 completed GitHub Actions successfully: Python 3.10/3.11/3.12 unit tests and compile checks passed, and the Windows PyInstaller package job succeeded.
 
