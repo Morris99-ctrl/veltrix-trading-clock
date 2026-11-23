@@ -1,13 +1,13 @@
 VELTRIX TRADING CLOCK v10.10 — RELEASE VALIDATION
 
 AUTOMATED VALIDATION
-- Compileall and full unittest suite on Python 3.10, 3.11 and 3.12.
-- 214 tests in the v10.10 suite, including regression coverage for rolling
-  metrics, sample-gated rankings, compounded return, maximum drawdown,
-  consistency-score behaviour and causal regime attribution.
-- Windows job builds the PyInstaller package, verifies
-  VeltrixTradingClock.exe and uploads Veltrix-Trading-Clock-v10.10-Windows.
-- Successful latest-head workflow URL and artifact ID are added after CI completes.
+- Compileall and all **214 tests passed** on Python 3.10, 3.11 and 3.12.
+- Latest successful workflow: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45271034244
+- Regression coverage includes trailing-only metrics, sample-gated rankings,
+  compounded return, maximum drawdown, consistency score, dominant-regime
+  allocation, latest-bar tie-breaking and WARMUP / insufficient-coverage handling.
+- Windows PyInstaller build, executable verification and artifact upload succeeded.
+- Artifact: Veltrix-Trading-Clock-v10.10-Windows (ID 14864108413; 15.5 MB).
 
 MANUAL WINDOWS GUI CHECKLIST
 [ ] Launch v10.10 and confirm the application file version is 10.10.0.
@@ -41,7 +41,7 @@ DATA / METHODOLOGY LIMITATIONS
   hours, costs and execution effects are not separately applied.
 
 RELEASE STATUS
-- Automated validation: pending final CI confirmation.
-- Windows package: pending final CI confirmation.
+- Automated tests: 214 passed across Python 3.10/3.11/3.12; compileall passed.
+- Windows standalone package: build, executable verification and upload passed.
 - Manual native Windows GUI verification: pending.
 - Keep this release in draft until the checklist has been completed.

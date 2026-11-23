@@ -152,9 +152,9 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
-The v10.9 baseline passed 208 tests. The v10.10 suite adds regression coverage for rolling metrics, compounding, drawdown, score/ranking gates and causal regime attribution. Full v10.10 validation on Python 3.10, 3.11 and 3.12 plus Windows packaging is recorded in [the v10.10 Actions run](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions); manual native Windows GUI review remains required. See RELEASE_VALIDATION_10.10.txt.
+The v10.9 baseline passed 208 tests. The v10.10 release passed **214 tests** on Python 3.10, 3.11 and 3.12; the Windows PyInstaller build, executable verification and artifact upload also succeeded in [workflow run 45271034244](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45271034244). Manual native Windows GUI review remains required. See RELEASE_VALIDATION_10.10.txt.
 
-The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
+The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, rolling session metrics, compounded return, maximum drawdown, sample-gated rankings, dominant-regime attribution and score behaviour, focus persistence, alarm persistence, app paths and theme behaviour.
 
 A passing unit suite does not prove live provider uptime, native Windows rendering, data licensing or trading profitability.
 

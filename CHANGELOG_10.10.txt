@@ -54,5 +54,6 @@ VALIDATION
 - Automated tests cover trailing-only calculations, compounding, max drawdown,
   rank eligibility, dominant-regime allocation, tie-breaking and warm-up /
   insufficient-coverage handling.
-- Full Python matrix and Windows packaging results are recorded in CI.
+- **214 tests passed** on Python 3.10, 3.11 and 3.12; Windows PyInstaller build,
+  executable verification and artifact upload succeeded in CI.
 - Manual Windows GUI review remains required.
