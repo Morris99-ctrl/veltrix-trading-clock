@@ -921,7 +921,10 @@ class VeltrixTradingClock:
         parts = []
         for event in events[:5]:
             info = EXCHANGE_CALENDARS[event.exchange_key]
-            label = "EARLY CLOSE" if event.status == "EARLY_CLOSE" else "CLOSED"
+            label = {
+                "EARLY_CLOSE": "EARLY CLOSE",
+                "CLOSE_PROCESS": "CLOSING PROCESS",
+            }.get(event.status, "CLOSED")
             local_date = event.event_date.strftime("%d %b")
             close_note = f" {event.close_time.strftime('%H:%M')} {info.timezone_name}" if event.close_time else ""
             parts.append(f"{info.name} {local_date} {event.title} [{label}{close_note}]")
@@ -3761,6 +3764,10 @@ class VeltrixTradingClock:
         ):
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
+        self.exchange_calendar_toggle.configure(
+            bg=palette["panel"], fg=palette["text"], selectcolor=palette["dim"],
+            activebackground=palette["panel"], activeforeground=palette["bright"],
+        )
         for check in self.alert_checkbuttons:
             check.configure(bg=palette["panel"], fg=palette["text"], selectcolor=palette["dim"],
                             activebackground=palette["panel"], activeforeground=palette["bright"])
@@ -3965,6 +3972,15 @@ class VeltrixTradingClock:
             if state.calendar_status == "EXCHANGE_HOLIDAY":
                 widgets["status"].configure(text="● HOLIDAY", fg=palette["error"])
                 transition_text = f"EXCHANGE CLOSED · OPENS IN {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status == "CLOSING_PROCESS" and state.transition_kind == "CLOSE_PROCESS":
+                widgets["status"].configure(text="● CLOSING PROCESS", fg=palette["warning"])
+                transition_text = f"PROCESS STARTS IN  {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status == "CLOSING_PROCESS" and not state.is_open:
+                widgets["status"].configure(text="● EARLY CLOSE DAY", fg=palette["warning"])
+                transition_text = f"OPENS IN  {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status == "CLOSING_PROCESS_PASSED" and state.is_open:
+                widgets["status"].configure(text="● OPEN", fg=palette["success"])
+                transition_text = f"CLOSES IN  {format_countdown(state.seconds_to_transition)}"
             elif state.calendar_status in {"EARLY_CLOSE", "EARLY_CLOSE_PASSED"}:
                 if state.is_open:
                     widgets["status"].configure(text="● EARLY CLOSE", fg=palette["warning"])
@@ -3983,8 +3999,12 @@ class VeltrixTradingClock:
                 transition_text = f"OPENS IN  {format_countdown(state.seconds_to_transition)}"
             widgets["transition"].configure(text=transition_text)
             widgets["transition_at"].configure(
-                text=f"{state.transition_kind.title()} at {state.transition_at.strftime('%H:%M')} "
-                     f"{state.transition_at.tzname()}  ·  {state.transition_at.strftime('%a, %d %b')}"
+                text=(
+                    f"{'CLOSING PROCESS START' if state.transition_kind == 'CLOSE_PROCESS' else state.transition_kind.title()} "
+                    f"at {state.transition_at.strftime('%H:%M')} {state.transition_at.tzname()}  ·  "
+                    f"{state.transition_at.strftime('%a, %d %b')}"
+                    + (f"  ·  {state.calendar_event}" if state.calendar_event else "")
+                )
             )
 
         if len(open_states) >= 2:
