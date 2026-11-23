@@ -33,7 +33,17 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn('font=("Consolas", 15, "bold")', MAIN_SOURCE)
         self.assertIn('widgets["analog"].configure(bg=palette["panel"])', MAIN_SOURCE)
         self.assertIn('canvas.coords(clock_state["hands"][hand_name]', MAIN_SOURCE)
+        self.assertIn('canvas.create_text(', MAIN_SOURCE)
+        self.assertIn('text="VELTRIX"', MAIN_SOURCE)
+        self.assertIn('"second_counterweight"', MAIN_SOURCE)
         self.assertIn('widgets["card"].configure(', MAIN_SOURCE)
+
+    def test_session_clock_hands_sweep_independently_of_the_status_refresh(self):
+        self.assertIn("SESSION_CLOCK_FRAME_MS = 50", MAIN_SOURCE)
+        self.assertIn("def _animate_session_clocks", MAIN_SOURCE)
+        self.assertIn("SESSION_CLOCK_FRAME_MS, self._animate_session_clocks", MAIN_SOURCE)
+        self.assertIn("self.session_animation_job", MAIN_SOURCE)
+
 
     def test_global_session_intelligence_uses_the_session_engine_and_scrollable_map(self):
         self.assertIn("from session_timeline import build_session_timeline", MAIN_SOURCE)

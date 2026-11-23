@@ -42,6 +42,17 @@ class SessionClockGeometryTests(unittest.TestCase):
         self.assertNotEqual(first["second"], second["second"])
         self.assertNotEqual(second["second"], smooth["second"])
 
+    def test_hour_and_minute_hands_progress_between_whole_seconds(self):
+        first = session_clock_hand_endpoints(
+            datetime(2026, 11, 23, 3, 15, 0), center_x=0, center_y=0, radius=100
+        )
+        later = session_clock_hand_endpoints(
+            datetime(2026, 11, 23, 3, 15, 0, 500_000), center_x=0, center_y=0, radius=100
+        )
+
+        self.assertNotEqual(first["hour"], later["hour"])
+        self.assertNotEqual(first["minute"], later["minute"])
+
     def test_invalid_radius_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "positive"):
             session_clock_hand_endpoints(

@@ -1,6 +1,6 @@
-# Veltrix Trading Clock — v10.5 Core Edition
+# Veltrix Trading Clock — v10.6 Core Edition
 
-Veltrix v10.5 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.6 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -18,7 +18,9 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 
 The Global Sessions dashboard presents four separate analog dials in a two-by-two layout. Each dial uses the timezone of its own market centre and has a mini digital clock directly beneath it, so the time can be read precisely without losing the visual character of an analog face.
 
-The dials use a dark face, concentric rings, 60 minute marks, four red cardinal markers and contrasting hour, minute and second hands. The static face is rendered once per theme/size; subsequent clock updates move the existing hand objects rather than rebuilding the whole dial. This keeps the four clocks lightweight while the session state refreshes.
+The dials now use a layered instrument-style case and glass bezel, a recessed minute track, all 60 graduated minute marks, clear 1–12 hour numerals, diagonal bezel fasteners and a small Veltrix dial signature. Layered hour and minute hands use shadow and highlight strokes; the seconds hand has a rear counterweight and raised centre hub. The face is rendered once per size/theme and its retained Canvas objects are reused.
+
+A dedicated 50 ms animation loop advances each dial using sub-second local time. That makes the seconds hand sweep smoothly and lets the minute/hour hands progress continuously, independently of the slower session-status refresh. The four dials still use their own IANA timezones and retain the existing digital readout, status, countdown and risk information.
 
 Each card also shows its city, timezone, OPEN/CLOSED state and the countdown to its next scheduled opening or closing. An open session receives a highlighted card border. The six application themes recolour the dials and hands consistently.
 

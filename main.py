@@ -64,8 +64,9 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.5"
+APP_VERSION = "10.6"
 UI_QUEUE_POLL_MS = 500
+SESSION_CLOCK_FRAME_MS = 50
 
 DIGIT_SEGMENTS = {
     "0": "abcdef",
@@ -174,6 +175,7 @@ class VeltrixTradingClock:
                 )
         self.alarm_window: tk.Toplevel | None = None
         self.clock_job: str | None = None
+        self.session_animation_job: str | None = None
         self.alarm_job: str | None = None
         self.bell_job: str | None = None
         self.audio_available = False
@@ -359,6 +361,7 @@ class VeltrixTradingClock:
         self.apply_theme()
         self._render_market_snapshot()
         self.update_clock()
+        self.session_animation_job = self.root.after(SESSION_CLOCK_FRAME_MS, self._animate_session_clocks)
         self.check_alarm()
         self.calendar_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_calendar_results)
         self.calendar_startup_fetch_job = self.root.after(700, lambda: self.refresh_live_calendar(silent=True))
@@ -3760,7 +3763,7 @@ class VeltrixTradingClock:
         city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 8))
         city.grid(row=1, column=0, sticky="w", pady=(3, 1))
         analog_canvas = tk.Canvas(
-            card, width=224, height=224, bg=THEMES[self.theme_name]["panel"],
+            card, width=240, height=240, bg=THEMES[self.theme_name]["panel"],
             highlightthickness=0, bd=0,
         )
         analog_canvas.grid(row=2, column=0, sticky="n", pady=(4, 0))
@@ -3787,7 +3790,7 @@ class VeltrixTradingClock:
         }
 
     def _draw_session_analog_clock(self, clock_state: dict, local_now: datetime) -> None:
-        """Create the neon dial once, then move only its three hands each update."""
+        """Render a detailed instrument-style dial and update its retained hands."""
         canvas: tk.Canvas = clock_state["canvas"]
         palette = THEMES[self.theme_name]
         width = max(150, canvas.winfo_width())
@@ -3803,45 +3806,126 @@ class VeltrixTradingClock:
             face = palette["bg"]
             accent = palette["error"]
 
-            # Static dial: concentric rings and 60 minute marks are created once.
+            # Layered case and glass rings give the dial depth without raster assets.
             canvas.create_oval(
                 cx-radius, cy-radius, cx+radius, cy+radius,
-                fill=face, outline=palette["border"], width=2, tags="clock-face",
+                fill=palette["dim"], outline=palette["border"], width=3, tags="clock-face",
             )
             canvas.create_oval(
-                cx-radius+7, cy-radius+7, cx+radius-7, cy+radius-7,
+                cx-radius+4, cy-radius+4, cx+radius-4, cy+radius-4,
+                fill=face, outline=palette["muted"], width=1, tags="clock-face",
+            )
+            canvas.create_oval(
+                cx-radius+9, cy-radius+9, cx+radius-9, cy+radius-9,
                 outline=palette["dim"], width=1, tags="clock-face",
             )
+            canvas.create_oval(
+                cx-radius*0.93, cy-radius*0.93, cx+radius*0.93, cy+radius*0.93,
+                outline=palette["border"], width=1, tags="clock-face",
+            )
+            canvas.create_oval(
+                cx-radius*0.55, cy-radius*0.55, cx+radius*0.55, cy+radius*0.55,
+                outline=palette["dim"], width=1, tags="clock-face",
+            )
+
+            # Sixty graduation marks: five-minute marks are longer and brighter.
             for tick in range(60):
                 angle = math.radians(tick * 6 - 90)
                 cardinal = tick % 15 == 0
                 major = tick % 5 == 0
-                outer = radius - 10
-                inner = outer - (13 if cardinal else 9 if major else 4)
-                x1, y1 = cx + math.cos(angle)*inner, cy + math.sin(angle)*inner
-                x2, y2 = cx + math.cos(angle)*outer, cy + math.sin(angle)*outer
-                colour = accent if cardinal else palette["muted"] if major else palette["dim"]
+                outer = radius * 0.89
+                inner = outer - (radius * 0.105 if cardinal else radius * 0.080 if major else radius * 0.038)
+                x1, y1 = cx + math.cos(angle) * inner, cy + math.sin(angle) * inner
+                x2, y2 = cx + math.cos(angle) * outer, cy + math.sin(angle) * outer
+                colour = palette["bright"] if cardinal else palette["muted"] if major else palette["dim"]
                 canvas.create_line(
                     x1, y1, x2, y2, fill=colour,
-                    width=2.5 if cardinal else 1.5 if major else 1,
+                    width=2.2 if cardinal else 1.55 if major else 0.8,
+                    capstyle=tk.ROUND, tags="clock-face",
+                )
+
+            # Readable hour numerals sit inside the minute track.
+            number_radius = radius * 0.69
+            for hour in range(1, 13):
+                angle = math.radians(hour * 30 - 90)
+                x = cx + math.cos(angle) * number_radius
+                y = cy + math.sin(angle) * number_radius
+                cardinal = hour in (12, 3, 6, 9)
+                canvas.create_text(
+                    x, y, text=str(hour),
+                    fill=palette["bright"] if cardinal else palette["text"],
+                    font=("Segoe UI", 11 if cardinal else 9, "bold"),
                     tags="clock-face",
                 )
 
-            # Hand items are retained and their coordinates are updated in place.
+            # Small dial signatures add instrument character without competing
+            # with the live hands or the local digital readout below the dial.
+            canvas.create_text(
+                cx, cy - radius * 0.30, text="VELTRIX",
+                fill=palette["muted"], font=("Consolas", 7, "bold"),
+                tags="clock-face",
+            )
+            canvas.create_text(
+                cx, cy - radius * 0.20, text="WORLD TIME",
+                fill=palette["dim"], font=("Consolas", 5, "bold"),
+                tags="clock-face",
+            )
+
+            # Four recessed bezel fasteners at diagonal positions.
+            for degrees in (45, 135, 225, 315):
+                angle = math.radians(degrees - 90)
+                sx = cx + math.cos(angle) * radius * 0.95
+                sy = cy + math.sin(angle) * radius * 0.95
+                screw_r = max(2.0, radius * 0.022)
+                canvas.create_oval(
+                    sx-screw_r, sy-screw_r, sx+screw_r, sy+screw_r,
+                    fill=palette["panel"], outline=palette["muted"], width=1,
+                    tags="clock-face",
+                )
+                canvas.create_line(
+                    sx-screw_r*0.55, sy, sx+screw_r*0.55, sy,
+                    fill=palette["dim"], width=1, tags="clock-face",
+                )
+
+            # Shadowed, layered hands: retained Canvas objects avoid redraw flicker.
             hands = {
-                "hour": canvas.create_line(cx, cy, cx, cy, fill=palette["bright"],
-                                           width=4, capstyle=tk.ROUND, tags="clock-hands"),
-                "minute": canvas.create_line(cx, cy, cx, cy, fill=palette["bright"],
-                                             width=3, capstyle=tk.ROUND, tags="clock-hands"),
-                "second": canvas.create_line(cx, cy, cx, cy, fill=accent,
-                                             width=1.5, capstyle=tk.ROUND, tags="clock-hands"),
+                "hour_shadow": canvas.create_line(
+                    cx, cy, cx, cy, fill=palette["dim"], width=7,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "minute_shadow": canvas.create_line(
+                    cx, cy, cx, cy, fill=palette["border"], width=5.2,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "hour": canvas.create_line(
+                    cx, cy, cx, cy, fill=palette["bright"], width=4.0,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "minute": canvas.create_line(
+                    cx, cy, cx, cy, fill=palette["bright_edge"], width=2.6,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "second": canvas.create_line(
+                    cx, cy, cx, cy, fill=accent, width=1.35,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "second_tail": canvas.create_line(
+                    cx, cy, cx, cy, fill=accent, width=2.6,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "second_counterweight": canvas.create_oval(
+                    cx-2, cy-2, cx+2, cy+2, fill=accent,
+                    outline=accent, tags="clock-hands",
+                ),
             }
             canvas.create_oval(
-                cx-5, cy-5, cx+5, cy+5, fill=accent, outline=accent, tags="clock-hands",
+                cx-6, cy-6, cx+6, cy+6, fill=palette["panel"],
+                outline=accent, width=1.5, tags="clock-hands",
             )
             canvas.create_oval(
-                cx-2, cy-2, cx+2, cy+2, fill=palette["bright"],
-                outline=palette["bright"], tags="clock-hands",
+                cx-2.6, cy-2.6, cx+2.6, cy+2.6,
+                fill=palette["bright"], outline=palette["bright"],
+                tags="clock-hands",
             )
             clock_state.update({
                 "signature": signature, "hands": hands,
@@ -3857,6 +3941,35 @@ class VeltrixTradingClock:
         cx, cy = clock_state["center_x"], clock_state["center_y"]
         for hand_name, (x, y) in endpoints.items():
             canvas.coords(clock_state["hands"][hand_name], cx, cy, x, y)
+            if hand_name in ("hour", "minute"):
+                canvas.coords(clock_state["hands"][f"{hand_name}_shadow"], cx, cy, x, y)
+
+        # The seconds hand has a short rear counterweight, like a mechanical dial.
+        second_x, second_y = endpoints["second"]
+        tail_x = cx - (second_x - cx) * 0.18
+        tail_y = cy - (second_y - cy) * 0.18
+        canvas.coords(clock_state["hands"]["second_tail"], tail_x, tail_y, cx, cy)
+        counterweight_radius = max(1.8, clock_state["radius"] * 0.022)
+        canvas.coords(
+            clock_state["hands"]["second_counterweight"],
+            tail_x-counterweight_radius, tail_y-counterweight_radius,
+            tail_x+counterweight_radius, tail_y+counterweight_radius,
+        )
+
+    def _animate_session_clocks(self) -> None:
+        """Sweep all four session dials independently of the slower status poll."""
+        if self.is_closing:
+            return
+        now_utc = datetime.now(timezone.utc)
+        for session in self.sessions:
+            widgets = self.cards.get(session.key)
+            if widgets is None:
+                continue
+            local_now = now_utc.astimezone(ZoneInfo(session.timezone_name))
+            self._draw_session_analog_clock(widgets["analog_clock"], local_now)
+        self.session_animation_job = self.root.after(
+            SESSION_CLOCK_FRAME_MS, self._animate_session_clocks
+        )
 
     # ------------------------------------------------------------------
     # Theme and visual clock
@@ -4453,7 +4566,7 @@ class VeltrixTradingClock:
     def on_close(self) -> None:
         self.is_closing = True
         for job in (
-            self.clock_job, self.alarm_job, self.bell_job,
+            self.clock_job, self.session_animation_job, self.alarm_job, self.bell_job,
             self.calendar_auto_refresh_job, self.calendar_startup_fetch_job, self.calendar_queue_job,
             self.market_auto_refresh_job, self.market_startup_fetch_job, self.market_queue_job,
             self.regime_queue_job, self.regime_cache_load_job, self.regime_import_queue_job,
