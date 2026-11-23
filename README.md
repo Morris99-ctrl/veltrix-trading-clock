@@ -68,7 +68,14 @@ See DESKTOP_INSTALL_GUIDE.md for migration, upgrade and uninstall details.
 
 ## Tests
 
+Run the local suite with:
+
+    python -m compileall -q .
     python -m unittest discover -s tests -v
+
+GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 and 3.12 for pushes and pull requests. Once the test matrix passes, a Windows runner builds the standalone desktop package and uploads it as a workflow artifact.
+
+Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
 The automated suite covers session/DST handling, analog-clock hand geometry, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
