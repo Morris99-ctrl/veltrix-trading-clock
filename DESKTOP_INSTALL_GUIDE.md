@@ -1,8 +1,18 @@
-# Veltrix Trading Clock v10.7 — Core Edition
+# Veltrix Trading Clock v10.8 — Core Edition
 
-The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes four detailed timezone-aware instrument clocks, live session-progress rings, actual UTC-offset readouts, a concentric 24-hour World Session Dial and an interactive UTC session map with click-and-drag time probing. It retains selectable market-hours profiles, editable local schedules, weekly scheduled-hours summaries, historical overlap reconstruction, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
+The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes four detailed timezone-aware instrument clocks, live session-progress rings, actual UTC-offset readouts, a concentric 24-hour World Session Dial and an interactive UTC session map with click-and-drag time probing. Alerts & Events now opens a Market Watch command centre with a 24-hour session map, current market status, a searchable FX reference watchlist and a filtered macro-news calendar. Existing alert rules remain available in an expandable settings area. The app retains selectable market-hours profiles, editable local schedules, weekly scheduled-hours summaries, historical overlap reconstruction, alarms, calendar, volatility monitoring, Regime Lab and Focus & Goals.
 
 The Research Lab, Strategy Lab, Tick Research and Data Center workspaces are removed. No provider API keys, tick-bar construction, strategy backtesting, MT5 connection or order execution are required.
+
+## Market Watch & Alerts (v10.8)
+
+The **Alerts & Events** tab now opens the Market Watch command centre. The upper section shows the local control clock, the four configured market-session lanes on a UTC 24-hour map, and current OPEN/CLOSED states. The lower left is a searchable, sortable reference FX watchlist. The lower right is the economic calendar with previous/today/next date controls and high/medium/all-impact filtering. The news ticker highlights the next loaded high- or medium-impact event. The recent alert activity feed remains visible.
+
+The reference watchlist contains 28 standard major/cross FX pairs. It is a schedule reference, not a broker quote feed. Its weekly reference is Sunday 17:00 to Friday 17:00 New York time (America/New_York). The countdown follows New York daylight-saving rules and calculates real elapsed seconds. Broker-specific hours, daily rollover breaks, bank holidays and symbol availability are not represented. Do not interpret OPEN as a live broker quote or a guarantee that an instrument can be traded at a particular broker.
+
+The news calendar reuses the existing ShowMyTrades client. A fresh successful fetch is labelled as live for the current app run; older disk-cache data is labelled cached and should be checked before trading. The public feed's successful-fetch cache floor remains 15 minutes.
+
+Expand **ALERT RULES / PREFERENCES** to edit session pre-open/pre-close alerts, notification channels, per-market lead times, session-risk settings and manual economic-event reminders. The previous alert rules and notification engine remain in place.
 
 ## Global Sessions Instrument Panels (v10.7)
 

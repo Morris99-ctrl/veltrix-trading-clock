@@ -1,4 +1,4 @@
-VELTRIX TRADING CLOCK v10.7 — CORE EDITION
+VELTRIX TRADING CLOCK v10.8 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
@@ -9,6 +9,16 @@ VELTRIX TRADING CLOCK v10.7 — CORE EDITION
    Focus & Goals database and alarm audio where present.
 4. Close the old Veltrix instance before copying its SQLite focus database.
 5. When setup finishes, launch Veltrix from its Desktop or Start-menu icon.
+
+MARKET WATCH & ALERTS (v10.8)
+Alerts & Events now opens a terminal-style Market Watch dashboard with the
+UTC session-hours map, current session status, searchable 28-pair FX reference
+watchlist and a date/impact-filtered economic news calendar. The FX table uses
+a generic New York Sunday 17:00–Friday 17:00 reference week, not broker quotes
+or execution hours. New York DST is accounted for in the countdown.
+Older calendar snapshots are labelled cached, not live. Open ALERT RULES /
+PREFERENCES to reach the original session alerts, lead times, risk settings
+and manual event reminders.
 
 SESSION RISK AWARENESS
 Each global session card shows NORMAL, CAUTION or HIGH schedule-risk flags.

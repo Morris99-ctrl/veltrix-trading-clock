@@ -1,0 +1,46 @@
+VELTRIX TRADING CLOCK v10.8 — MARKET WATCH & ALERTS REDESIGN
+Release date: 23 November 2026
+
+MARKET WATCH COMMAND CENTRE
+- Reorganised Alerts & Events around a compact trading-hours dashboard inspired
+  by the supplied Market Watch reference layout.
+- Added a local system-time block, 24-hour UTC session-hours map and current
+  OPEN/CLOSED status panel for Sydney, Tokyo, London and New York.
+- Added combined search across symbols and calendar event titles, clear search,
+  alphabetical ascending/descending controls, and a next-news ticker.
+- Added a split lower workspace with the FX reference watchlist on the left and
+  a date/impact-filtered macro news calendar on the right.
+- Added date navigation and High + Medium / High only / Medium only / All impacts
+  filters to the compact calendar.
+- Added a visible recent alert activity strip.
+
+FX REFERENCE WATCHLIST
+- Added 28 standard USD majors and non-USD crosses.
+- The status/countdown uses a transparent New York reference week:
+  Sunday 17:00 to Friday 17:00 America/New_York.
+- Countdown elapsed seconds are calculated in UTC, while local weekly boundaries
+  are constructed with the IANA New York zone so DST changes are respected.
+- The table is explicitly a schedule reference, not a live quote feed or broker
+  execution-status service. Broker-specific hours, daily rollover breaks,
+  holidays, symbol availability and liquidity are not inferred.
+
+ECONOMIC NEWS CALENDAR
+- The right-side calendar reuses the existing ShowMyTrades public feed/cache.
+- Fresh successful-fetch data is labelled separately from a cached/offline
+  snapshot. The 15-minute provider cache floor is unchanged.
+- The next loaded high/medium event appears in the ticker with its local time
+  and countdown.
+
+PRESERVED
+- Previous alert rules, session lead-time overrides, sound/Windows toasts,
+  session-risk preferences and manual event reminders remain available under
+  ALERT RULES / PREFERENCES.
+- Existing session engine, IANA timezone definitions, exchange calendar,
+  economic-calendar client, notification delivery and Global Sessions workspace
+  are retained.
+
+VALIDATION / RELEASE
+- New regression tests cover 24/5 week boundaries, DST countdown arithmetic,
+  naive timestamp rejection and Market Watch workspace wiring.
+- GitHub Actions records Python 3.10/3.11/3.12 tests and Windows packaging.
+- Manual visual review of native Windows rendering remains required.

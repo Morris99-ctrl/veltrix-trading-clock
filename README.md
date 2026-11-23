@@ -1,13 +1,13 @@
-# Veltrix Trading Clock — v10.7 Core Edition
+# Veltrix Trading Clock — v10.8 Core Edition
 
-Veltrix v10.7 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.8 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
 ## Included workspaces
 
 - **Global Sessions** — four instrument-style analog clocks with session-progress rings, opening/closing markers, local UTC offsets and day/night-cycle labels; a concentric world-session dial; and an interactive UTC map with click-and-drag time probing, live overlap summaries and optional official cash-exchange holiday/early-close overlays.
-- **Alerts & Events** — configurable session opening/closing alerts, overlap warnings and personal economic-event reminders.
+- **Alerts & Events / Market Watch** — a terminal-style dashboard with a 24-hour UTC market-hours map, current-session status, searchable 28-pair FX reference watchlist, weekend countdowns, news ticker and high/medium impact calendar; all existing alert rules remain available in an expandable preferences area.
 - **Economic Calendar** — third-party public calendar feed, impact filters, cached results and high-impact reminders.
 - **Volatility Lab** — indicative Yahoo Finance market monitoring, ATR, one-day historical expected move and session volatility observations.
 - **Regime Lab** — import completed OHLC history from a CSV, classify bars as range, trend-up, trend-down, volatility shock or transition, inspect historical conditional outcomes and export classifications.
@@ -33,6 +33,16 @@ Each market has its own lane showing its scheduled local trading window converte
 The map honours each session's IANA timezone and weekday schedule, including daylight-saving changes. It represents configured weekday hours only; exchange holidays, emergency closures, broker-specific hours and overnight schedules are not inferred. It is a schedule visualisation, not a live exchange-status feed.
 
 The Global Sessions page is vertically scrollable so the clock cards, world dial, 24-hour map and footer remain accessible on shorter displays. The World Session Dial plots Sydney, Tokyo, London and New York windows as four concentric UTC tracks and rotates a live UTC pointer around the 24-hour face. The horizontal timeline accepts click-and-drag probing: select any minute in the current UTC day to inspect which configured sessions are open at that instant. The probe is temporary and resets when the UTC day changes. The dial and timeline use the same session definitions and optional exchange-calendar overlay.
+
+## Market Watch & Alerts (v10.8)
+
+The Alerts & Events workspace has been reorganised as a compact Market Watch terminal. Its upper strip combines the local system clock, a UTC-aligned map of the four configured trading centres and a live OPEN/CLOSED status list. A search/control row and next-news ticker sit above a split lower workspace: the FX reference watchlist on the left and a date/impact-filtered economic calendar on the right.
+
+The symbol table contains 28 standard USD majors and non-USD crosses. It deliberately shows a **reference trading-week schedule**, not broker quotes or execution availability. The reference week is Sunday 17:00 to Friday 17:00 in America/New_York; countdowns use the IANA timezone and calculate elapsed seconds in UTC so New York daylight-saving transitions do not distort the remaining time. Broker trading hours, daily rollover/maintenance breaks, symbol availability, holidays and liquidity conditions can differ.
+
+The calendar panel displays events already loaded by the existing ShowMyTrades public economic-calendar client. It supports local-date navigation, high/medium or all-impact filters and combined symbol/event search. A cached snapshot is clearly labelled as cached; the dashboard does not silently call old data live. The ticker highlights the next loaded high/medium event. The provider still observes its 15-minute successful-fetch cache floor.
+
+The previous session pre-open/open/pre-close/close/overlap rules, sound and Windows notification switches, independent per-market lead times, session-risk controls and manual event reminders remain available under **ALERT RULES / PREFERENCES**. The recent alert activity feed stays visible below the market board.
 
 ## Market Session Intelligence (v10.3)
 
@@ -119,7 +129,7 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
-The previous v10.6 validation run passed all 167 tests and compileall on Python 3.10, 3.11 and 3.12. Its Windows PyInstaller build, executable verification and artifact upload also succeeded. The v10.7 workflow repeats these checks for the expanded instrument clocks and interactive timeline. A manual interactive Windows GUI check remains required for native rendering and pointer interaction; see RELEASE_VALIDATION_10.7.txt.
+The v10.7 baseline passed 180 tests and compileall on Python 3.10, 3.11 and 3.12, with Windows packaging successful. The v10.8 workflow validates the Market Watch UI wiring, FX reference-week/DST calculations and the Windows standalone package. See the latest GitHub Actions run and RELEASE_VALIDATION_10.8.txt; manual native Windows GUI review remains required.
 
 The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
@@ -128,6 +138,7 @@ A passing unit suite does not prove live provider uptime, native Windows renderi
 ## Project structure
 
 - main.py — integrated Tkinter interface and orchestration.
+- alerts_dashboard.py / market_watch.py — Market Watch UI, FX reference-week schedule and economic-news panel.
 - session_engine.py / session_clock.py / session_timeline.py / session_intelligence.py / session_profiles.py / exchange_calendar.py / risk_engine.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, historical overlap analytics, selectable profiles, exchange exceptions, session-risk flags and alert scheduling.
 - calendar_engine.py — public calendar client, cache and reminders.
 - market_data.py / volatility_engine.py — indicative market monitoring, ATR and expected-move calculations.
