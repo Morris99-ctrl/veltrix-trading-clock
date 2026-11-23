@@ -1085,23 +1085,30 @@ class VeltrixTradingClock:
             (item.key, item.timezone_name, item.opens.isoformat(), item.closes.isoformat(), item.weekdays)
             for item in self.sessions
         )
+        exchange_overlay = bool(self.exchange_calendar_enabled_var.get())
         cache_key = (
             now_utc.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M"),
             period,
             self.active_session_profile,
             schedule_signature,
+            exchange_overlay,
         )
         if not force and cache_key == self.session_intelligence_cache_key:
             return
 
-        weekly = weekly_session_hours(self.sessions, now_utc)
-        history = historical_overlap_report(self.sessions, now_utc, days=period)
+        weekly = weekly_session_hours(
+            self.sessions, now_utc, apply_exchange_calendar=exchange_overlay
+        )
+        history = historical_overlap_report(
+            self.sessions, now_utc, days=period, apply_exchange_calendar=exchange_overlay
+        )
         weekly_parts = [
             f"{item.session_name} {item.scheduled_hours:.1f}H/{item.active_days}D"
             for item in weekly
         ]
+        weekly_title = "WEEKLY EXCHANGE-ADJUSTED HOURS" if exchange_overlay else "WEEKLY SCHEDULED HOURS"
         self.weekly_session_hours_label.configure(
-            text="WEEKLY SCHEDULED HOURS · LOCAL MON–SUN  |  " + "  ·  ".join(weekly_parts)
+            text=f"{weekly_title} · LOCAL MON–SUN  |  " + "  ·  ".join(weekly_parts)
         )
         busiest = (
             f"{history.busiest_utc_date} {history.busiest_day_hours:.1f}H"
@@ -1109,7 +1116,7 @@ class VeltrixTradingClock:
         )
         self.historical_overlap_label.configure(
             text=(
-                f"PAST {period}D SCHEDULED OVERLAP · {history.total_overlap_hours:.1f}H TOTAL"
+                f"PAST {period}D {'EXCHANGE-ADJUSTED' if exchange_overlay else 'SCHEDULED'} OVERLAP · {history.total_overlap_hours:.1f}H TOTAL"
                 f"  ·  {history.average_daily_overlap_hours:.2f}H/DAY AVG"
                 f"  ·  BUSIEST UTC DAY {busiest}"
             )
