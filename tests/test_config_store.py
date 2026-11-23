@@ -39,6 +39,23 @@ class ConfigStoreTests(unittest.TestCase):
             self.assertEqual(load_config(path)["sessions"], config["sessions"])
             self.assertEqual(list(Path(temp).glob(".config.json.*.tmp")), [])
 
+    def test_session_profiles_must_be_a_mapping_and_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "config.json"
+            config = self.valid_config()
+            config["session_profiles"] = {
+                "selected": "Equities Cash",
+                "base_sessions": config["sessions"],
+                "custom": {},
+            }
+            save_config(path, config)
+            self.assertEqual(load_config(path)["session_profiles"]["selected"], "Equities Cash")
+
+            config["session_profiles"] = ["invalid"]
+            save_config(path, config)
+            with self.assertRaisesRegex(RuntimeError, "session_profiles.*JSON object"):
+                load_config(path)
+
     def test_failed_serialization_preserves_existing_file(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.json"
