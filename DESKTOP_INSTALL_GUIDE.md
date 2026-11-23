@@ -1,4 +1,4 @@
-# Veltrix Trading Clock v10.3 — Core Edition
+# Veltrix Trading Clock v10.4 — Core Edition
 
 The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes selectable market-hours profiles, editable custom local schedules, weekly scheduled-hours summaries and 7/30/90-day reconstructed overlap reports. The Global Sessions dashboard displays four timezone-aware neon analog clocks with compact digital local-time readouts beneath each dial, followed by a UTC-aligned 24-hour map of scheduled trading windows and market overlaps. It retains global sessions, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
 
@@ -50,6 +50,18 @@ In **Global Sessions**, use the Profile selector and **APPLY** to choose one of 
 Use **EDIT CUSTOM** to change each market's open time, close time and active weekdays. All times are entered in that market's own IANA timezone. The selected profile, custom schedules and original baseline are saved in config.json and restored on restart. The presets are editable schedule templates, not official exchange calendars.
 
 The Market Session Intelligence panel shows scheduled hours for each market's local Monday-Sunday week and a reconstructed overlap report for the prior 7, 30 or 90 days. The report is calculated from the currently selected profile and timezone rules. It does not know unconfigured public holidays, emergency closures or broker-specific hours, so it must not be interpreted as observed exchange history.
+
+## Exchange Calendar Intelligence
+
+The Global Sessions panel includes an optional **CASH EXCHANGE HOLIDAYS / EARLY CLOSES** switch. It applies the bundled published ASX cash-market, Tokyo Stock Exchange / JPX, London Stock Exchange and NYSE cash-market exceptions to the corresponding session cards, UTC timeline, alerts and session analytics.
+
+The overlay is disabled by default. Enable it only when you intend the clocks to reflect the tracked cash-exchange venues; it does not convert a generic forex schedule into an official cash-market session. The selected session profile still determines the configured opening/closing hours.
+
+The bundled data was checked on 23 November 2026. Coverage is venue-specific: ASX, JPX and NYSE have published 2026–2027 entries; the LSE entries begin on 31 August 2026 and run through 2027. Dates beyond the published coverage are labelled OUT OF PUBLISHED RANGE.
+
+NYSE and ASX actual early-close times shorten the session state. For the LSE dates marked as half-days, the exchange says the closing process commences from 12:30 London time; Veltrix displays this as a closing-process marker and does not force the market closed at 12:30.
+
+See [EXCHANGE_CALENDAR_SOURCES_10.4.md](EXCHANGE_CALENDAR_SOURCES_10.4.md) for source links, covered dates, product scope and limitations. The bundled snapshot is offline and does not receive automatic exchange amendments.
 
 ## Regime Lab
 
