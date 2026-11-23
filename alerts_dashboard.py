@@ -560,8 +560,9 @@ def refresh_alerts_dashboard(
         )
         event_id = str(event.get("event_id", f"event-{index}"))
         iid = f"{event_id}-{int(event.get('timestamp_utc', 0))}"
+        time_label = "TBD" if status == "TENTATIVE" else event_local.strftime("%H:%M")
         values = (
-            event_local.strftime("%H:%M"), str(event.get("currency", "")),
+            time_label, str(event.get("currency", "")),
             impact.upper(), title, countdown,
         )
         tag = impact if impact in {"high", "medium", "low", "holiday"} else "low"
@@ -593,11 +594,18 @@ def refresh_alerts_dashboard(
         event_time = datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone(app.home_zone)
         impact = str(event.get("impact", "unknown")).upper()
         title = str(event.get("title", "UPCOMING EVENT"))
-        countdown = format_countdown(max(0, timestamp - int(now_utc.timestamp())))
-        ticker_text = (
-            f"●  NEXT NEWS ({event_time.strftime('%a %d %b %H:%M')}) · "
-            f"{event.get('currency', '')} {impact} · {title} · {countdown}"
-        )
+        event_status = str(event.get("status", "scheduled")).upper()
+        if event_status == "TENTATIVE":
+            ticker_text = (
+                f"●  NEXT NEWS · {event_time.strftime('%a %d %b')} · "
+                f"{event.get('currency', '')} {impact} · {title} · TENTATIVE / TIME UNCONFIRMED"
+            )
+        else:
+            countdown = format_countdown(max(0, timestamp - int(now_utc.timestamp())))
+            ticker_text = (
+                f"●  NEXT NEWS ({event_time.strftime('%a %d %b %H:%M')}) · "
+                f"{event.get('currency', '')} {impact} · {title} · {countdown}"
+            )
         ticker_colour = palette["warning"] if impact == "HIGH" else palette["bright"]
     else:
         ticker_text = "●  NEXT NEWS · NO UPCOMING HIGH / MEDIUM EVENTS IN THE LOADED CALENDAR"

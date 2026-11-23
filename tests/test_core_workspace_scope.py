@@ -118,9 +118,9 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
             "SYMBOL WATCHLIST · 28 MAJOR / CROSS FX PAIRS",
             "NEWS CALENDAR · HIGH / MEDIUM IMPACT",
             "REFERENCE SCHEDULE ONLY",
-            "ALERT RULES / PREFERENCES",
         ):
             self.assertIn(symbol, ALERT_DASHBOARD_SOURCE)
+        self.assertIn("ALERT RULES / PREFERENCES", MAIN_SOURCE)
 
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
