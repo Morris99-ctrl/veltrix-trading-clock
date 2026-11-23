@@ -42,6 +42,8 @@ from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_an
 from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
 from session_clock import session_clock_hand_endpoints
 from session_timeline import build_session_timeline
+from session_intelligence import historical_overlap_report, weekly_session_hours
+from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -91,7 +93,38 @@ class VeltrixTradingClock:
         self.config.pop("backtest", None)
         if isinstance(self.config.get("regime_lab"), dict):
             self.config["regime_lab"].pop("selected_asset", None)
-        self.sessions = load_session_definitions(self.config["sessions"])
+        profile_settings = self.config.get("session_profiles", {})
+        if not isinstance(profile_settings, dict):
+            profile_settings = {}
+        self.session_profile_base_sessions = [
+            dict(item) for item in profile_settings.get("base_sessions", self.config["sessions"])
+        ]
+        self.custom_session_schedules = {
+            str(key): dict(value)
+            for key, value in profile_settings.get("custom", {}).items()
+            if isinstance(value, dict)
+        }
+        self.active_session_profile = str(
+            profile_settings.get("selected", "Current Configuration")
+        )
+        try:
+            applied_schedules = build_profile_sessions(
+                self.session_profile_base_sessions,
+                self.active_session_profile,
+                self.custom_session_schedules,
+            )
+        except (ValueError, TypeError):
+            self.active_session_profile = "Current Configuration"
+            applied_schedules = build_profile_sessions(
+                self.session_profile_base_sessions, "Current Configuration"
+            )
+        self.config["sessions"] = applied_schedules
+        self.config["session_profiles"] = {
+            "selected": self.active_session_profile,
+            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
+            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
+        self.sessions = load_session_definitions(applied_schedules)
         self.home_zone = ZoneInfo(self.config.get("home_timezone", "Africa/Nairobi"))
         self.refresh_ms = max(1000, min(5000, int(self.config.get("refresh_milliseconds", 1000))))
         self.theme_name = self.config.get("theme", "CYAN")
@@ -143,6 +176,9 @@ class VeltrixTradingClock:
         self.minute_var = tk.StringVar(value="00")
         self.period_var = tk.StringVar(value="AM")
         self.theme_var = tk.StringVar(value=self.theme_name)
+        self.session_profile_var = tk.StringVar(value=self.active_session_profile)
+        self.session_history_period_var = tk.StringVar(value="30")
+        self.session_intelligence_cache_key: tuple | None = None
         self.cards: dict[str, dict[str, tk.Widget]] = {}
         self.theme_items: list[tuple[tk.Widget, str, str | None]] = []
         self.clock_canvas_signature: tuple[int, int, str] | None = None
@@ -568,6 +604,30 @@ class VeltrixTradingClock:
         )
         self.timeline_utc_label.pack(side="right")
 
+        profile_controls = self._frame(panel, bg="panel")
+        profile_controls.pack(fill="x", pady=(8, 2))
+        self.session_profile_label = self._label(
+            profile_controls, "PROFILE", bg="panel", fg="muted",
+            font=("Consolas", 7, "bold"),
+        )
+        self.session_profile_label.pack(side="left", padx=(0, 6))
+        self.session_profile_combo = ttk.Combobox(
+            profile_controls, textvariable=self.session_profile_var,
+            values=PROFILE_NAMES, state="readonly", width=19, style="TCombobox",
+        )
+        self.session_profile_combo.pack(side="left", padx=(0, 6))
+        self.apply_session_profile_button = tk.Button(
+            profile_controls, text="APPLY", command=self._apply_selected_session_profile,
+            font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        )
+        self.apply_session_profile_button.pack(side="left", padx=(0, 5))
+        self.edit_custom_session_profile_button = tk.Button(
+            profile_controls, text="EDIT CUSTOM", command=self.edit_custom_session_profile,
+            font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        )
+        self.edit_custom_session_profile_button.pack(side="left")
+
+
         self.session_timeline_canvas = tk.Canvas(
             panel, height=166, bg=THEMES[self.theme_name]["panel"],
             highlightthickness=0, bd=0,
@@ -585,6 +645,49 @@ class VeltrixTradingClock:
             font=("Consolas", 8), anchor="w", justify="left", wraplength=1050,
         )
         self.timeline_upcoming_label.pack(fill="x")
+
+        analytics = self._frame(panel, bg="panel")
+        analytics.pack(fill="x", pady=(8, 0))
+        analytics_header = self._frame(analytics, bg="panel")
+        analytics_header.pack(fill="x")
+        self.session_analytics_title = self._label(
+            analytics_header, "MARKET SESSION INTELLIGENCE", bg="panel", fg="bright",
+            font=("Consolas", 9, "bold"),
+        )
+        self.session_analytics_title.pack(side="left")
+        self.session_history_period_combo = ttk.Combobox(
+            analytics_header, textvariable=self.session_history_period_var,
+            values=("7", "30", "90"), state="readonly", width=5, style="TCombobox",
+        )
+        self.session_history_period_combo.pack(side="right")
+        self.session_history_period_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._refresh_session_intelligence(
+                datetime.now(timezone.utc), force=True
+            ),
+        )
+        self.session_history_period_label = self._label(
+            analytics_header, "HISTORY DAYS", bg="panel", fg="muted",
+            font=("Consolas", 7, "bold"),
+        )
+        self.session_history_period_label.pack(side="right", padx=(0, 6))
+        self.weekly_session_hours_label = self._label(
+            analytics, "WEEKLY SCHEDULED HOURS · CALCULATING",
+            bg="panel", fg="text", font=("Consolas", 8, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.weekly_session_hours_label.pack(fill="x", pady=(7, 3))
+        self.historical_overlap_label = self._label(
+            analytics, "HISTORICAL SCHEDULED OVERLAP · CALCULATING",
+            bg="panel", fg="success", font=("Consolas", 8, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.historical_overlap_label.pack(fill="x", pady=(2, 3))
+        self.historical_pair_label = self._label(
+            analytics, "OVERLAP BREAKDOWN · CALCULATING",
+            bg="panel", fg="muted", font=("Consolas", 8),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.historical_pair_label.pack(fill="x")
 
     def _draw_session_timeline(self, now_utc: datetime, states: list) -> None:
         """Render today's UTC session windows, shared overlap bands and current-time marker."""
@@ -716,6 +819,194 @@ class VeltrixTradingClock:
             text="NEXT TRANSITIONS · " + ("  |  ".join(items) if items else "NONE"),
             fg=palette["muted"],
         )
+
+    def _apply_selected_session_profile(self) -> None:
+        """Apply a preset or saved custom market-hours profile."""
+        selected = self.session_profile_var.get().strip()
+        try:
+            schedules = build_profile_sessions(
+                self.session_profile_base_sessions,
+                selected,
+                self.custom_session_schedules,
+            )
+            sessions = load_session_definitions(schedules)
+        except (ValueError, TypeError) as exc:
+            messagebox.showerror("Invalid session profile", str(exc), parent=self.root)
+            self.session_profile_var.set(self.active_session_profile)
+            return
+
+        self.sessions = sessions
+        self.config["sessions"] = schedules
+        self.active_session_profile = selected
+        self.config["session_profiles"] = {
+            "selected": selected,
+            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
+            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
+        self.session_timeline_signature = None
+        self.session_intelligence_cache_key = None
+        self._refresh_session_intelligence(datetime.now(timezone.utc), force=True)
+        self._save_config()
+        self._set_alert_banner(
+            f"SESSION PROFILE APPLIED · {selected.upper()} · CLOCKS AND TIMELINE UPDATED",
+            "success",
+        )
+
+    def edit_custom_session_profile(self) -> None:
+        """Open a small editor for each session's local open/close times and weekdays."""
+        window = tk.Toplevel(self.root)
+        window.title("Veltrix · Custom Market Session Profile")
+        window.transient(self.root)
+        window.geometry("930x455")
+        window.minsize(850, 410)
+        window.configure(bg=THEMES[self.theme_name]["bg"])
+
+        shell = self._frame(window, padx=16, pady=14)
+        shell.pack(fill="both", expand=True)
+        self._label(
+            shell, "CUSTOM MARKET SESSION PROFILE", fg="bright",
+            font=("Consolas", 12, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            shell,
+            "Set local open/close times and active weekdays for each market. Times use each market's own timezone.",
+            fg="muted", font=("Segoe UI", 8),
+        ).pack(anchor="w", pady=(4, 12))
+
+        weekdays = (("Mon", 0), ("Tue", 1), ("Wed", 2), ("Thu", 3),
+                    ("Fri", 4), ("Sat", 5), ("Sun", 6))
+        grid = self._frame(shell)
+        grid.pack(fill="both", expand=True)
+        headings = (("MARKET", 0), ("OPEN", 1), ("CLOSE", 2))
+        for title, column in headings:
+            self._label(
+                grid, title, fg="muted", font=("Consolas", 8, "bold"),
+            ).grid(row=0, column=column, sticky="w", padx=(0, 8), pady=(0, 8))
+        for index, (label, _day) in enumerate(weekdays, start=3):
+            self._label(
+                grid, label.upper(), fg="muted", font=("Consolas", 7, "bold"),
+            ).grid(row=0, column=index, padx=2, pady=(0, 8))
+
+        controls: dict[str, dict[str, Any]] = {}
+        for row, session in enumerate(self.sessions, start=1):
+            default = {
+                "open": session.opens.strftime("%H:%M"),
+                "close": session.closes.strftime("%H:%M"),
+                "weekdays": list(session.weekdays),
+            }
+            saved = self.custom_session_schedules.get(session.key, default)
+            open_var = tk.StringVar(value=str(saved.get("open", default["open"])))
+            close_var = tk.StringVar(value=str(saved.get("close", default["close"])))
+            day_vars = {
+                day: tk.BooleanVar(value=day in saved.get("weekdays", default["weekdays"]))
+                for _label, day in weekdays
+            }
+            self._label(
+                grid, session.name, fg="text", font=("Consolas", 8, "bold"),
+            ).grid(row=row, column=0, sticky="w", padx=(0, 9), pady=6)
+            ttk.Entry(grid, textvariable=open_var, width=8, justify="center").grid(
+                row=row, column=1, padx=(0, 7), pady=6,
+            )
+            ttk.Entry(grid, textvariable=close_var, width=8, justify="center").grid(
+                row=row, column=2, padx=(0, 7), pady=6,
+            )
+            for column, (_label, day) in enumerate(weekdays, start=3):
+                ttk.Checkbutton(grid, variable=day_vars[day]).grid(
+                    row=row, column=column, padx=2, pady=6,
+                )
+            controls[session.key] = {
+                "open": open_var, "close": close_var, "weekdays": day_vars,
+                "name": session.name,
+            }
+
+        footer = self._frame(shell)
+        footer.pack(fill="x", pady=(12, 0))
+
+        def save_custom() -> None:
+            candidate: dict[str, dict[str, Any]] = {}
+            try:
+                for key, fields in controls.items():
+                    schedule = validate_session_schedule({
+                        "open": fields["open"].get(),
+                        "close": fields["close"].get(),
+                        "weekdays": [
+                            day for day, variable in fields["weekdays"].items()
+                            if variable.get()
+                        ],
+                    }, name=fields["name"])
+                    candidate[key] = schedule
+            except ValueError as exc:
+                messagebox.showerror("Invalid custom schedule", str(exc), parent=window)
+                return
+
+            self.custom_session_schedules = candidate
+            self.session_profile_var.set("Custom")
+            window.destroy()
+            self._apply_selected_session_profile()
+
+        tk.Button(
+            footer, text="SAVE & APPLY CUSTOM PROFILE", command=save_custom,
+            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=13, pady=8,
+            bg=THEMES[self.theme_name]["button_active"], fg=THEMES[self.theme_name]["bright"],
+            cursor="hand2",
+        ).pack(side="right")
+        tk.Button(
+            footer, text="CANCEL", command=window.destroy,
+            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=13, pady=8,
+            bg=THEMES[self.theme_name]["button_bg"], fg=THEMES[self.theme_name]["button_fg"],
+            cursor="hand2",
+        ).pack(side="right", padx=(0, 7))
+        window.grab_set()
+
+    def _refresh_session_intelligence(
+        self, now_utc: datetime, *, force: bool = False
+    ) -> None:
+        """Refresh weekly scheduled hours and reconstructed historical overlap on demand."""
+        try:
+            period = int(self.session_history_period_var.get())
+        except (AttributeError, TypeError, ValueError):
+            period = 30
+        schedule_signature = tuple(
+            (item.key, item.timezone_name, item.opens.isoformat(), item.closes.isoformat(), item.weekdays)
+            for item in self.sessions
+        )
+        cache_key = (
+            now_utc.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            period,
+            self.active_session_profile,
+            schedule_signature,
+        )
+        if not force and cache_key == self.session_intelligence_cache_key:
+            return
+
+        weekly = weekly_session_hours(self.sessions, now_utc)
+        history = historical_overlap_report(self.sessions, now_utc, days=period)
+        weekly_parts = [
+            f"{item.session_name} {item.scheduled_hours:.1f}H/{item.active_days}D"
+            for item in weekly
+        ]
+        self.weekly_session_hours_label.configure(
+            text="WEEKLY HOURS · MON–SUN UTC  |  " + "  ·  ".join(weekly_parts)
+        )
+        busiest = (
+            f"{history.busiest_utc_date} {history.busiest_day_hours:.1f}H"
+            if history.busiest_utc_date else "NONE"
+        )
+        self.historical_overlap_label.configure(
+            text=(
+                f"PAST {period}D SCHEDULED OVERLAP · {history.total_overlap_hours:.1f}H TOTAL"
+                f"  ·  {history.average_daily_overlap_hours:.2f}H/DAY AVG"
+                f"  ·  BUSIEST UTC DAY {busiest}"
+            )
+        )
+        pair_parts = [
+            f"{left} + {right} {hours:.1f}H"
+            for left, right, hours in history.pair_overlap_hours
+        ]
+        self.historical_pair_label.configure(
+            text="PAIR BREAKDOWN · " + ("  |  ".join(pair_parts) if pair_parts else "NO SCHEDULED OVERLAPS")
+        )
+        self.session_intelligence_cache_key = cache_key
 
     def _build_focus_page(self) -> None:
         """Build the personal stopwatch, countdown and long-term goals workspace."""
@@ -3351,6 +3642,7 @@ class VeltrixTradingClock:
             self.save_calendar_preferences_button, self.refresh_market_button,
             self.save_market_settings_button, self.regime_import_button,
             self.regime_run_button, self.regime_export_button, self.regime_save_button,
+            self.apply_session_profile_button, self.edit_custom_session_profile_button,
         ):
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
@@ -3538,6 +3830,7 @@ class VeltrixTradingClock:
         overlaps = self._find_overlaps(open_states)
         self.summary_overlap["value"].configure(text=overlaps if overlaps else "NONE")
         self._draw_session_timeline(now_utc, states)
+        self._refresh_session_intelligence(now_utc)
         palette = THEMES[self.theme_name]
         for state in states:
             widgets = self.cards[state.definition.key]
@@ -3821,6 +4114,20 @@ class VeltrixTradingClock:
         self.config["calendar"] = dict(self.calendar_settings)
         self.config["market_data"] = dict(self.market_settings)
         self.config["market_instruments"] = list(self.market_instruments)
+        self.config["sessions"] = [
+            {
+                **dict(item),
+                "open": item.opens.strftime("%H:%M"),
+                "close": item.closes.strftime("%H:%M"),
+                "weekdays": list(item.weekdays),
+            }
+            for item in self.sessions
+        ]
+        self.config["session_profiles"] = {
+            "selected": self.active_session_profile,
+            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
+            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
         try:
             self.regime_settings.update(asdict(self._collect_regime_config()))
             self.regime_settings["selected_asset"] = self._selected_regime_asset_key()
