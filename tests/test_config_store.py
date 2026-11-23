@@ -56,6 +56,19 @@ class ConfigStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "session_profiles.*JSON object"):
                 load_config(path)
 
+    def test_exchange_calendar_setting_must_be_a_mapping_and_round_trips(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "config.json"
+            config = self.valid_config()
+            config["exchange_calendar"] = {"enabled": False}
+            save_config(path, config)
+            self.assertFalse(load_config(path)["exchange_calendar"]["enabled"])
+
+            config["exchange_calendar"] = True
+            save_config(path, config)
+            with self.assertRaisesRegex(RuntimeError, "exchange_calendar.*JSON object"):
+                load_config(path)
+
     def test_failed_serialization_preserves_existing_file(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.json"
