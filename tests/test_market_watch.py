@@ -63,6 +63,17 @@ class FXReferenceWeekTests(unittest.TestCase):
         self.assertEqual(winter.next_transition_at.utcoffset().total_seconds(), -5 * 3600)
         self.assertEqual(summer.next_transition_at.utcoffset().total_seconds(), -4 * 3600)
 
+    def test_spring_dst_transition_uses_real_elapsed_seconds(self):
+        now = datetime(2026, 3, 7, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+        state = fx_reference_week_state(now)
+        self.assertEqual(state.next_transition_at, datetime(2026, 3, 8, 17, 0, tzinfo=ZoneInfo("America/New_York")))
+        self.assertEqual(state.seconds_to_transition, 28 * 3600)
+
+    def test_autumn_dst_transition_uses_real_elapsed_seconds(self):
+        now = datetime(2026, 10, 31, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+        state = fx_reference_week_state(now)
+        self.assertEqual(state.seconds_to_transition, 30 * 3600)
+
     def test_naive_datetime_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "timezone-aware"):
             fx_reference_week_state(datetime(2026, 11, 23, 10))

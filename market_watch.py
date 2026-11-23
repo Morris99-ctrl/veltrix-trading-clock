@@ -37,7 +37,7 @@ class FXReferenceWeekState:
 
     @property
     def seconds_to_transition(self) -> int:
-        return max(0, int((self.next_transition_at - self.now_new_york).total_seconds()))
+        return max(0, int((self.next_transition_at.astimezone(timezone.utc) - self.now_new_york.astimezone(timezone.utc)).total_seconds()))
 
 
 def fx_reference_week_state(now: datetime) -> FXReferenceWeekState:
