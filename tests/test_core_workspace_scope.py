@@ -70,6 +70,18 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         ):
             self.assertIn(symbol, MAIN_SOURCE)
 
+    def test_session_risk_awareness_is_wired_into_cards_alerts_and_preferences(self):
+        for symbol in (
+            "from risk_engine import assess_session_risk, due_session_risk_alerts",
+            "SESSION-SPECIFIC REMINDER OVERRIDES",
+            "SESSION RISK AWARENESS",
+            "def _poll_session_risk_alerts",
+            "SESSION RISK · {assessment.level}",
+            "CLOSING CAUTION MIN",
+            "risk_alerted_keys",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
