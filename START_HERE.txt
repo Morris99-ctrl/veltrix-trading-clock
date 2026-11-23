@@ -1,4 +1,11 @@
-VELTRIX TRADING CLOCK v10.10 — CORE EDITION
+TRADING COMMAND CENTER (v10.14)
+The Command Center is the default landing page. It brings together the four
+market-session states, next transitions, upcoming economic releases, indicative
+market/ATR/expected-move snapshots, schedule/volatility cautions and a daily
+pre-market checklist. Quick links open the original detailed workspaces.
+The checklist is saved locally for each home-timezone date.
+
+VELTRIX TRADING CLOCK v10.14 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.

@@ -29,6 +29,29 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         ):
             self.assertIn(symbol, MAIN_SOURCE)
 
+    def test_command_center_is_default_landing_workspace_and_reuses_existing_workspaces(self):
+        for symbol in (
+            "command_center_nav_button", "command_center_view",
+            'self.show_page("command_center")',
+            "build_command_center_page(self)", "refresh_command_center(self, now_utc)",
+            "apply_command_center_theme(self)",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        command_engine = (PROJECT_ROOT / "command_center_engine.py").read_text(encoding="utf-8")
+        command_ui = (PROJECT_ROOT / "command_center_ui.py").read_text(encoding="utf-8")
+        for symbol in (
+            "build_command_center_snapshot", "assess_session_risk",
+            "event_count_next_24h", "market_is_fresh", "calendar_is_fresh",
+        ):
+            self.assertIn(symbol, command_engine)
+        for symbol in (
+            "refresh_live_calendar(silent=False)", "refresh_market_data(silent=False)",
+            "daily_checklists", "PRE-MARKET PREPARATION",
+            "GLOBAL SESSION STATUS", "UPCOMING ECONOMIC EVENTS",
+            "VOLATILITY & MARKET SNAPSHOT", "RISK & ATTENTION",
+        ):
+            self.assertIn(symbol, command_ui)
+
     def test_global_session_cards_use_live_analog_and_digital_clocks(self):
         self.assertIn("def _draw_session_analog_clock", MAIN_SOURCE)
         self.assertIn('"analog": analog_canvas', MAIN_SOURCE)

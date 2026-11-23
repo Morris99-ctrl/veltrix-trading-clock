@@ -1,0 +1,27 @@
+VELTRIX TRADING CLOCK v10.14 — TRADING COMMAND CENTER
+
+Overview
+- Adds a new default landing workspace that consolidates existing live trading-day context.
+- Leaves all existing workspaces, calculations, session schedules and alert rules available.
+
+Trading Command Center
+- Four session cards display local market-centre time, exchange-aware status and next transition countdown.
+- Summary tiles show sessions open, active configured overlap, economic releases in the next 24 hours and separate market/calendar feed freshness.
+- Upcoming calendar releases show currency, impact, status, local release time and countdown; past, malformed and cancelled events are excluded.
+- Market snapshot reuses existing provider cache and instrument summaries for indicative quote, ATR(14) and historical one-day 1-sigma expected move.
+- Risk & Attention surfaces existing session schedule flags and live-session volatility expansion context.
+- Daily pre-market checklist persists locally by home-timezone date and keeps a bounded 14-day history.
+- Quick links open Global Sessions, Alerts & Events, Economic Calendar and Volatility Lab.
+- Refresh action reuses existing non-blocking market and calendar workers.
+
+Data and safety boundaries
+- No new data provider or broker connection is introduced.
+- Yahoo Finance values remain indicative and may be delayed or cached.
+- Calendar freshness is reported independently from market-data freshness.
+- Missing market values remain unavailable instead of being rendered as zero.
+- Risk flags are schedule/volatility context, not trade signals, execution advice or live liquidity measurements.
+- No order placement, broker account access or trading automation is added.
+
+Earlier v10.13 improvements retained
+- Approximately 60 FPS animation target, fractional-second hand interpolation, tapered hour/minute pointers and decoupled ring refresh.
+- The 16 ms timer is a target; actual frame pacing depends on the Windows event loop and display scheduling.
