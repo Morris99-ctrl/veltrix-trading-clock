@@ -4,7 +4,10 @@ import math
 import unittest
 from datetime import datetime
 
-from session_clock import session_clock_hand_endpoints
+from session_clock import (
+    session_clock_hand_endpoints,
+    session_clock_hand_polygon_coordinates,
+)
 
 
 class SessionClockGeometryTests(unittest.TestCase):
@@ -52,6 +55,37 @@ class SessionClockGeometryTests(unittest.TestCase):
 
         self.assertNotEqual(first["hour"], later["hour"])
         self.assertNotEqual(first["minute"], later["minute"])
+
+    def test_tapered_hand_polygon_points_in_direction_of_endpoint(self):
+        points = session_clock_hand_polygon_coordinates(
+            10, 10, 60, 10, half_width=3.0,
+        )
+
+        self.assertEqual(len(points), 14)
+        self.assertAlmostEqual(points[6], 60.0)
+        self.assertAlmostEqual(points[7], 10.0)
+        self.assertLess(points[3], points[11])
+        self.assertAlmostEqual(points[4], points[8], places=6)
+        self.assertAlmostEqual(points[5] + points[9], 20.0, places=6)
+
+    def test_tapered_hand_shadow_offset_is_applied_to_every_point(self):
+        normal = session_clock_hand_polygon_coordinates(
+            0, 0, 0, -40, half_width=2.0,
+        )
+        shadow = session_clock_hand_polygon_coordinates(
+            0, 0, 0, -40, half_width=2.0, offset_x=1.25, offset_y=1.5,
+        )
+
+        self.assertEqual(len(normal), len(shadow))
+        for index in range(0, len(normal), 2):
+            self.assertAlmostEqual(shadow[index] - normal[index], 1.25)
+            self.assertAlmostEqual(shadow[index + 1] - normal[index + 1], 1.5)
+
+    def test_invalid_hand_polygon_dimensions_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "half-width"):
+            session_clock_hand_polygon_coordinates(0, 0, 10, 0, half_width=0)
+        with self.assertRaisesRegex(ValueError, "pivot"):
+            session_clock_hand_polygon_coordinates(0, 0, 0, 0, half_width=2)
 
     def test_invalid_radius_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "positive"):

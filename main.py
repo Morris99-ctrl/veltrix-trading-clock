@@ -34,13 +34,14 @@ from desktop_notifications import send_desktop_notification
 from session_engine import format_countdown, get_session_state, load_session_definitions
 from themes import THEMES
 from ui_theme import (
-    apply_veltrix_classic_widget_palette, apply_veltrix_ttk_palette, prepare_veltrix_ttk_theme,
+    apply_veltrix_classic_widget_palette, apply_veltrix_font_defaults,
+    apply_veltrix_ttk_palette, prepare_veltrix_ttk_theme, UI_FONT,
 )
 from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
 from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
-from session_clock import session_clock_hand_endpoints
+from session_clock import session_clock_hand_endpoints, session_clock_hand_polygon_coordinates
 from session_visuals import (
     session_window_progress, session_window_arc_angles, utc_offset_label,
     local_day_phase, timeline_probe_from_x, session_calendar_close_override,
@@ -77,9 +78,10 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.11"
+APP_VERSION = "10.13"
 UI_QUEUE_POLL_MS = 500
-SESSION_CLOCK_FRAME_MS = 50
+SESSION_CLOCK_FRAME_MS = 16
+SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
 
 DIGIT_SEGMENTS = {
     "0": "abcdef",
@@ -161,14 +163,15 @@ class VeltrixTradingClock:
             except tk.TclError:
                 # Some non-Windows Tk builds do not support .ico window icons.
                 pass
-        self.root.geometry("1160x1020")
-        self.root.minsize(900, 760)
+        self.root.geometry("1280x900")
+        self.root.minsize(1080, 740)
         self.root.configure(bg=THEMES[self.theme_name]["bg"])
         # Use a ttk theme that honours Veltrix's palette on Windows as well as
         # Linux/macOS. Native Windows "vista" controls can remain white even
         # when fieldbackground and Treeview heading colours are configured.
         self.ttk_style = ttk.Style(self.root)
         self.ttk_theme_name = prepare_veltrix_ttk_theme(self.ttk_style)
+        apply_veltrix_font_defaults(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Original alarm-clock state and callbacks.
@@ -417,6 +420,10 @@ class VeltrixTradingClock:
     def _frame(self, parent: tk.Widget, *, bg: str = "bg", **kwargs) -> tk.Frame:
         palette = THEMES[self.theme_name]
         resolved_bg = {"card": "panel", "raised": "dim"}.get(bg, bg)
+        # Surfaces are separated by tone and spacing, not bright one-pixel outlines.
+        for option in ("highlightthickness", "highlightbackground", "highlightcolor"):
+            kwargs.pop(option, None)
+        kwargs.update(highlightthickness=0, bd=0, relief="flat")
         frame = tk.Frame(parent, bg=palette[resolved_bg], **kwargs)
         self._register_theme(frame, bg)
         return frame
@@ -432,6 +439,7 @@ class VeltrixTradingClock:
     ) -> tk.Label:
         palette = THEMES[self.theme_name]
         resolved_bg = {"card": "panel", "raised": "dim"}.get(bg, bg)
+        kwargs.setdefault("font", UI_FONT)
         label = tk.Label(parent, text=text, bd=0, bg=palette[resolved_bg], fg=palette[fg], **kwargs)
         self._register_theme(label, bg, fg)
         return label
@@ -445,19 +453,19 @@ class VeltrixTradingClock:
         header.pack(fill="x", pady=(0, 13))
         brand_block = self._frame(header)
         brand_block.pack(side="left", anchor="w")
-        self.brand_label = self._label(brand_block, "VELTRIX", fg="bright", font=("Consolas", 23, "bold"))
+        self.brand_label = self._label(brand_block, "VELTRIX", fg="bright", font=("Segoe UI", 23, "bold"))
         self.brand_label.pack(anchor="w")
         self.subtitle_label = self._label(
-            brand_block, "CAPITAL  /  GLOBAL TRADING CLOCK", fg="muted", font=("Consolas", 8, "bold")
+            brand_block, "CAPITAL  /  GLOBAL TRADING CLOCK", fg="muted", font=("Segoe UI", 9, "bold")
         )
         self.subtitle_label.pack(anchor="w", pady=(1, 0))
 
         right_header = self._frame(header)
         right_header.pack(side="right", anchor="e")
-        self.live_label = self._label(right_header, "● LIVE MONITOR", fg="success", font=("Consolas", 9, "bold"))
+        self.live_label = self._label(right_header, "● LIVE MONITOR", fg="success", font=("Segoe UI", 10, "bold"))
         self.live_label.pack(side="left", padx=(0, 13))
         self.theme_selector = tk.OptionMenu(right_header, self.theme_var, *THEMES.keys(), command=self.set_theme)
-        self.theme_selector.configure(font=("Consolas", 9, "bold"), relief="flat", bd=0, padx=7, pady=5, cursor="hand2")
+        self.theme_selector.configure(font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=7, pady=5, cursor="hand2")
         self.theme_selector.pack(side="left")
 
         # Main clock display, retaining the original seven-segment visual identity.
@@ -473,15 +481,15 @@ class VeltrixTradingClock:
 
         info_side = self._frame(hero, bg="panel")
         info_side.grid(row=0, column=1, sticky="nsew")
-        self.local_heading = self._label(info_side, "LOCAL CONTROL CLOCK", bg="panel", fg="muted", font=("Consolas", 9, "bold"))
+        self.local_heading = self._label(info_side, "LOCAL CONTROL CLOCK", bg="panel", fg="muted", font=("Segoe UI", 10, "bold"))
         self.local_heading.pack(anchor="w", pady=(8, 2))
-        self.home_time_label = self._label(info_side, "--:--:--", bg="panel", fg="bright", font=("Consolas", 27, "bold"))
+        self.home_time_label = self._label(info_side, "--:--:--", bg="panel", fg="bright", font=("Segoe UI", 27, "bold"))
         self.home_time_label.pack(anchor="w")
-        self.home_date_label = self._label(info_side, "Loading date...", bg="panel", fg="text", font=("Segoe UI", 9))
+        self.home_date_label = self._label(info_side, "Loading date...", bg="panel", fg="text", font=("Segoe UI", 10))
         self.home_date_label.pack(anchor="w", pady=(1, 12))
-        self.next_alarm_label = self._label(info_side, "◉  NEXT ALARM: NONE", bg="panel", fg="muted", font=("Consolas", 9, "bold"), wraplength=340, justify="left")
+        self.next_alarm_label = self._label(info_side, "◉  NEXT ALARM: NONE", bg="panel", fg="muted", font=("Segoe UI", 10, "bold"), wraplength=340, justify="left")
         self.next_alarm_label.pack(anchor="w", pady=(3, 0))
-        self.audio_label = self._label(info_side, "AUDIO: SYSTEM BELL", bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+        self.audio_label = self._label(info_side, "AUDIO: SYSTEM BELL", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
         self.audio_label.pack(anchor="w", pady=(7, 0))
 
         # Main workspace navigation. The alarm strip remains visible on both pages.
@@ -489,37 +497,37 @@ class VeltrixTradingClock:
         nav.pack(fill="x", pady=(0, 9))
         self.sessions_nav_button = tk.Button(
             nav, text="GLOBAL SESSIONS", command=lambda: self.show_page("sessions"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.sessions_nav_button.pack(side="left", padx=(0, 5))
         self.session_performance_nav_button = tk.Button(
             nav, text="SESSION PERFORMANCE", command=lambda: self.show_page("session_performance"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
         )
         self.session_performance_nav_button.pack(side="left", padx=(0, 5))
         self.alerts_nav_button = tk.Button(
             nav, text="ALERTS & EVENTS", command=lambda: self.show_page("alerts"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.alerts_nav_button.pack(side="left", padx=(0, 6))
         self.calendar_nav_button = tk.Button(
             nav, text="ECONOMIC CALENDAR", command=lambda: self.show_page("calendar"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.calendar_nav_button.pack(side="left", padx=(0, 6))
         self.volatility_nav_button = tk.Button(
             nav, text="VOLATILITY LAB", command=lambda: self.show_page("volatility"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.volatility_nav_button.pack(side="left", padx=(0, 6))
         self.regime_nav_button = tk.Button(
             nav, text="REGIME LAB", command=lambda: self.show_page("regime"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
         self.regime_nav_button.pack(side="left", padx=(0, 6))
         self.focus_nav_button = tk.Button(
             nav, text="FOCUS & GOALS", command=lambda: self.show_page("focus"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
         self.focus_nav_button.pack(side="left")
 
@@ -584,9 +592,9 @@ class VeltrixTradingClock:
 
         section = self._frame(self.sessions_content)
         section.pack(fill="x", pady=(4, 8))
-        self.section_title = self._label(section, "GLOBAL MARKET SESSIONS", fg="bright", font=("Consolas", 11, "bold"))
+        self.section_title = self._label(section, "GLOBAL MARKET SESSIONS", fg="bright", font=("Segoe UI", 12, "bold"))
         self.section_title.pack(side="left")
-        self.section_hint = self._label(section, "SCHEDULED WEEKDAY HOURS · LOCAL CENTRE TIME", fg="muted", font=("Consolas", 8, "bold"))
+        self.section_hint = self._label(section, "SCHEDULED WEEKDAY HOURS · LOCAL CENTRE TIME", fg="muted", font=("Segoe UI", 9, "bold"))
         self.section_hint.pack(side="right")
 
         # Four independent session cards.
@@ -614,43 +622,43 @@ class VeltrixTradingClock:
         alarm_panel = self._frame(self.outer, bg="panel", padx=14, pady=10)
         alarm_panel.pack(fill="x", pady=(10, 0))
         alarm_panel.grid_columnconfigure(0, weight=1)
-        self.alarm_title = self._label(alarm_panel, "ALARM CONTROL", bg="panel", fg="bright", font=("Consolas", 9, "bold"))
+        self.alarm_title = self._label(alarm_panel, "ALARM CONTROL", bg="panel", fg="bright", font=("Segoe UI", 10, "bold"))
         self.alarm_title.grid(row=0, column=0, sticky="w", pady=(0, 7))
         controls = self._frame(alarm_panel, bg="panel")
         controls.grid(row=1, column=0, sticky="w")
         spin_options = {
-            "font": ("Consolas", 11, "bold"), "justify": "center", "relief": "flat", "bd": 0,
-            "highlightthickness": 1, "width": 4,
+            "font": ("Segoe UI", 11, "bold"), "justify": "center", "relief": "flat", "bd": 0,
+            "highlightthickness": 0, "width": 4,
         }
         self.hour_spin = tk.Spinbox(controls, from_=1, to=12, format="%02.0f", textvariable=self.hour_var, **spin_options)
         self.minute_spin = tk.Spinbox(controls, from_=0, to=59, format="%02.0f", textvariable=self.minute_var, **spin_options)
         self.period_spin = tk.Spinbox(controls, values=("AM", "PM"), textvariable=self.period_var,
-                                      font=("Consolas", 11, "bold"), justify="center", relief="flat", bd=0,
-                                      highlightthickness=1, width=4)
+                                      font=("Segoe UI", 12, "bold"), justify="center", relief="flat", bd=0,
+                                      highlightthickness=0, width=4)
         self.hour_spin.pack(side="left", padx=(0, 5))
         self.minute_spin.pack(side="left", padx=(0, 5))
         self.period_spin.pack(side="left", padx=(0, 12))
         self.set_button = tk.Button(controls, text="SET ALARM", command=self.set_alarm,
-                                    font=("Consolas", 9, "bold"), relief="flat", bd=0,
+                                    font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
                                     padx=12, pady=7, cursor="hand2")
         self.set_button.pack(side="left", padx=(0, 7))
         self.cancel_button = tk.Button(controls, text="CLEAR", command=self.cancel_alarm,
-                                       font=("Consolas", 9, "bold"), relief="flat", bd=0,
+                                       font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
                                        padx=12, pady=7, cursor="hand2")
         self.cancel_button.pack(side="left")
 
-        self.status_label = self._label(alarm_panel, self.status_message, bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+        self.status_label = self._label(alarm_panel, self.status_message, bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
         self.status_label.grid(row=2, column=0, sticky="w", pady=(9, 0))
 
         # Market intelligence footer.
         footer = self._frame(self.sessions_content, bg="panel", padx=14, pady=9)
         footer.pack(fill="x", pady=(10, 0))
-        self.overlap_label = self._label(footer, "Checking session alignment...", bg="panel", fg="bright", font=("Consolas", 9, "bold"), anchor="w", justify="left")
+        self.overlap_label = self._label(footer, "Checking session alignment...", bg="panel", fg="bright", font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
         self.overlap_label.pack(fill="x")
         self.footer_note = self._label(
             footer,
             "Session hours are configurable conventions. Public holidays, broker hours and instrument-specific hours are not yet modelled.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w", justify="left", wraplength=1050,
+            bg="panel", fg="muted", font=("Segoe UI", 10), anchor="w", justify="left", wraplength=1050,
         )
         self.footer_note.pack(fill="x", pady=(4, 0))
 
@@ -662,12 +670,12 @@ class VeltrixTradingClock:
         header.pack(fill="x")
         self.timeline_title = self._label(
             header, "24-HOUR GLOBAL SESSION MAP", bg="panel", fg="bright",
-            font=("Consolas", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
         )
         self.timeline_title.pack(side="left")
         self.timeline_utc_label = self._label(
             header, "UTC · MIDNIGHT TO MIDNIGHT", bg="panel", fg="muted",
-            font=("Consolas", 8, "bold"),
+            font=("Segoe UI", 9, "bold"),
         )
         self.timeline_utc_label.pack(side="right")
 
@@ -675,7 +683,7 @@ class VeltrixTradingClock:
         profile_controls.pack(fill="x", pady=(8, 2))
         self.session_profile_label = self._label(
             profile_controls, "PROFILE", bg="panel", fg="muted",
-            font=("Consolas", 7, "bold"),
+            font=("Segoe UI", 9, "bold"),
         )
         self.session_profile_label.pack(side="left", padx=(0, 6))
         self.session_profile_combo = ttk.Combobox(
@@ -685,12 +693,12 @@ class VeltrixTradingClock:
         self.session_profile_combo.pack(side="left", padx=(0, 6))
         self.apply_session_profile_button = tk.Button(
             profile_controls, text="APPLY", command=self._apply_selected_session_profile,
-            font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
         )
         self.apply_session_profile_button.pack(side="left", padx=(0, 5))
         self.edit_custom_session_profile_button = tk.Button(
             profile_controls, text="EDIT CUSTOM", command=self.edit_custom_session_profile,
-            font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
         )
         self.edit_custom_session_profile_button.pack(side="left")
 
@@ -699,7 +707,7 @@ class VeltrixTradingClock:
             text="CASH EXCHANGE HOLIDAYS / EARLY CLOSES",
             variable=self.exchange_calendar_enabled_var,
             command=self._toggle_exchange_calendar,
-            font=("Consolas", 7, "bold"),
+            font=("Segoe UI", 9, "bold"),
             relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
             bg=THEMES[self.theme_name]["panel"],
             fg=THEMES[self.theme_name]["text"],
@@ -716,7 +724,7 @@ class VeltrixTradingClock:
         world_dial_panel.pack(side="left", fill="y", padx=(0, 15))
         self.world_dial_title = self._label(
             world_dial_panel, "WORLD SESSION DIAL", bg="panel", fg="muted",
-            font=("Consolas", 7, "bold"),
+            font=("Segoe UI", 9, "bold"),
         )
         self.world_dial_title.pack(anchor="center", pady=(0, 3))
         self.world_dial_canvas = tk.Canvas(
@@ -728,7 +736,7 @@ class VeltrixTradingClock:
         timeline_side.pack(side="left", fill="both", expand=True)
         self.timeline_interaction_hint = self._label(
             timeline_side, "CLICK OR DRAG A LANE TO PROBE ANY UTC TIME",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
         )
         self.timeline_interaction_hint.pack(anchor="w", pady=(0, 4))
         self.session_timeline_canvas = tk.Canvas(
@@ -744,31 +752,31 @@ class VeltrixTradingClock:
 
         self.timeline_probe_label = self._label(
             panel, "TIME PROBE · CLICK OR DRAG THE TIMELINE TO INSPECT SESSION ALIGNMENT",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
             anchor="w", justify="left", wraplength=1050,
         )
         self.timeline_probe_label.pack(fill="x", pady=(1, 3))
 
         self.timeline_overlap_label = self._label(
             panel, "OVERLAPS · CALCULATING", bg="panel", fg="success",
-            font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=1050,
+            font=("Segoe UI", 9, "bold"), anchor="w", justify="left", wraplength=1050,
         )
         self.timeline_overlap_label.pack(fill="x", pady=(2, 3))
         self.timeline_upcoming_label = self._label(
             panel, "NEXT TRANSITIONS · CALCULATING", bg="panel", fg="muted",
-            font=("Consolas", 8), anchor="w", justify="left", wraplength=1050,
+            font=("Segoe UI", 9), anchor="w", justify="left", wraplength=1050,
         )
         self.timeline_upcoming_label.pack(fill="x")
 
         self.exchange_calendar_status_label = self._label(
             panel, "EXCHANGE CALENDAR OFF · GENERIC WEEKDAY SCHEDULES ONLY",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
             anchor="w", justify="left", wraplength=1050,
         )
         self.exchange_calendar_status_label.pack(fill="x", pady=(5, 1))
         self.exchange_calendar_events_label = self._label(
             panel, "UPCOMING EXCHANGE EXCEPTIONS · CALENDAR OVERLAY DISABLED",
-            bg="panel", fg="warning", font=("Consolas", 7),
+            bg="panel", fg="warning", font=("Segoe UI", 9),
             anchor="w", justify="left", wraplength=1050,
         )
         self.exchange_calendar_events_label.pack(fill="x", pady=(1, 2))
@@ -779,7 +787,7 @@ class VeltrixTradingClock:
         analytics_header.pack(fill="x")
         self.session_analytics_title = self._label(
             analytics_header, "MARKET SESSION INTELLIGENCE", bg="panel", fg="bright",
-            font=("Consolas", 9, "bold"),
+            font=("Segoe UI", 10, "bold"),
         )
         self.session_analytics_title.pack(side="left")
         self.session_history_period_combo = ttk.Combobox(
@@ -794,24 +802,24 @@ class VeltrixTradingClock:
         )
         self.session_history_period_label = self._label(
             analytics_header, "HISTORY DAYS", bg="panel", fg="muted",
-            font=("Consolas", 7, "bold"),
+            font=("Segoe UI", 9, "bold"),
         )
         self.session_history_period_label.pack(side="right", padx=(0, 6))
         self.weekly_session_hours_label = self._label(
             analytics, "WEEKLY SCHEDULED HOURS · LOCAL MON–SUN · CALCULATING",
-            bg="panel", fg="text", font=("Consolas", 8, "bold"),
+            bg="panel", fg="text", font=("Segoe UI", 9, "bold"),
             anchor="w", justify="left", wraplength=1050,
         )
         self.weekly_session_hours_label.pack(fill="x", pady=(7, 3))
         self.historical_overlap_label = self._label(
             analytics, "HISTORICAL SCHEDULED OVERLAP · CALCULATING",
-            bg="panel", fg="success", font=("Consolas", 8, "bold"),
+            bg="panel", fg="success", font=("Segoe UI", 9, "bold"),
             anchor="w", justify="left", wraplength=1050,
         )
         self.historical_overlap_label.pack(fill="x", pady=(2, 3))
         self.historical_pair_label = self._label(
             analytics, "OVERLAP BREAKDOWN · CALCULATING",
-            bg="panel", fg="muted", font=("Consolas", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 9),
             anchor="w", justify="left", wraplength=1050,
         )
         self.historical_pair_label.pack(fill="x")
@@ -852,7 +860,7 @@ class VeltrixTradingClock:
                     canvas.create_text(
                         cx+math.cos(angle)*label_radius, cy+math.sin(angle)*label_radius,
                         text=f"{hour:02d}", fill=palette["muted"],
-                        font=("Consolas", 7, "bold"), tags="world-dial-static",
+                        font=("Segoe UI", 9, "bold"), tags="world-dial-static",
                     )
             colours = (palette["success"], palette["bright"], palette["warning"], palette["error"])
             radii = (91.0, 79.0, 67.0, 55.0)
@@ -877,11 +885,11 @@ class VeltrixTradingClock:
             )
             canvas.create_text(
                 cx, cy-15, text="VELTRIX", fill=palette["muted"],
-                font=("Consolas", 7, "bold"), tags="world-dial-static",
+                font=("Segoe UI", 9, "bold"), tags="world-dial-static",
             )
             canvas.create_text(
                 cx, cy+28, text="UTC · 24H", fill=palette["muted"],
-                font=("Consolas", 6, "bold"), tags="world-dial-static",
+                font=("Segoe UI", 9, "bold"), tags="world-dial-static",
             )
             self.world_dial_signature = signature
         else:
@@ -901,12 +909,12 @@ class VeltrixTradingClock:
         )
         canvas.create_text(
             cx, cy+1, text=now_utc.strftime("%H:%M"),
-            fill=palette["text"], font=("Consolas", 12, "bold"),
+            fill=palette["text"], font=("Segoe UI", 12, "bold"),
             tags="world-dial-dynamic",
         )
         canvas.create_text(
             cx, cy+16, text=now_utc.strftime("%a %d %b").upper(),
-            fill=palette["muted"], font=("Consolas", 5, "bold"),
+            fill=palette["muted"], font=("Segoe UI", 7, "bold"),
             tags="world-dial-dynamic",
         )
 
@@ -948,13 +956,13 @@ class VeltrixTradingClock:
                     anchor = "e"
                 canvas.create_text(
                     x, 10, text=f"{hour:02d}:00", fill=palette["muted"],
-                    anchor=anchor, font=("Consolas", 7), tags="timeline-static",
+                    anchor=anchor, font=("Segoe UI", 9), tags="timeline-static",
                 )
             for index, session in enumerate(self.sessions):
                 y = top + index * lane_step
                 canvas.create_text(
                     left - 9, y + lane_height / 2, text=session.name,
-                    fill=palette["text"], anchor="e", font=("Consolas", 7, "bold"),
+                    fill=palette["text"], anchor="e", font=("Segoe UI", 9, "bold"),
                     tags="timeline-static",
                 )
                 canvas.create_rectangle(
@@ -965,7 +973,7 @@ class VeltrixTradingClock:
             overlap_y = top + len(self.sessions) * lane_step + 4
             canvas.create_text(
                 left - 9, overlap_y + lane_height / 2, text="OVERLAP",
-                fill=palette["bright"], anchor="e", font=("Consolas", 7, "bold"),
+                fill=palette["bright"], anchor="e", font=("Segoe UI", 9, "bold"),
                 tags="timeline-static",
             )
             canvas.create_rectangle(
@@ -1206,12 +1214,12 @@ class VeltrixTradingClock:
         shell.pack(fill="both", expand=True)
         self._label(
             shell, "CUSTOM MARKET SESSION PROFILE", fg="bright",
-            font=("Consolas", 12, "bold"),
+            font=("Segoe UI", 12, "bold"),
         ).pack(anchor="w")
         self._label(
             shell,
             "Set local open/close times and active weekdays for each market. Times use each market's own timezone.",
-            fg="muted", font=("Segoe UI", 8),
+            fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(4, 12))
 
         weekdays = (("Mon", 0), ("Tue", 1), ("Wed", 2), ("Thu", 3),
@@ -1221,11 +1229,11 @@ class VeltrixTradingClock:
         headings = (("MARKET", 0), ("OPEN", 1), ("CLOSE", 2))
         for title, column in headings:
             self._label(
-                grid, title, fg="muted", font=("Consolas", 8, "bold"),
+                grid, title, fg="muted", font=("Segoe UI", 9, "bold"),
             ).grid(row=0, column=column, sticky="w", padx=(0, 8), pady=(0, 8))
         for index, (label, _day) in enumerate(weekdays, start=3):
             self._label(
-                grid, label.upper(), fg="muted", font=("Consolas", 7, "bold"),
+                grid, label.upper(), fg="muted", font=("Segoe UI", 9, "bold"),
             ).grid(row=0, column=index, padx=2, pady=(0, 8))
 
         controls: dict[str, dict[str, Any]] = {}
@@ -1243,7 +1251,7 @@ class VeltrixTradingClock:
                 for _label, day in weekdays
             }
             self._label(
-                grid, session.name, fg="text", font=("Consolas", 8, "bold"),
+                grid, session.name, fg="text", font=("Segoe UI", 9, "bold"),
             ).grid(row=row, column=0, sticky="w", padx=(0, 9), pady=6)
             ttk.Entry(grid, textvariable=open_var, width=8, justify="center").grid(
                 row=row, column=1, padx=(0, 7), pady=6,
@@ -1287,13 +1295,13 @@ class VeltrixTradingClock:
 
         tk.Button(
             footer, text="SAVE & APPLY CUSTOM PROFILE", command=save_custom,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=13, pady=8,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=13, pady=8,
             bg=THEMES[self.theme_name]["button_active"], fg=THEMES[self.theme_name]["bright"],
             cursor="hand2",
         ).pack(side="right")
         tk.Button(
             footer, text="CANCEL", command=window.destroy,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=13, pady=8,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=13, pady=8,
             bg=THEMES[self.theme_name]["button_bg"], fg=THEMES[self.theme_name]["button_fg"],
             cursor="hand2",
         ).pack(side="right", padx=(0, 7))
@@ -1382,11 +1390,11 @@ class VeltrixTradingClock:
         header = self._frame(self.focus_content, bg="panel", padx=15, pady=12)
         header.pack(fill="x", pady=(0, 10))
         self._label(header, "FOCUS & GOALS CENTER", bg="panel", fg="bright",
-                    font=("Consolas", 14, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 14, "bold")).pack(anchor="w")
         self._label(
             header,
             "PERSONAL EXECUTION TRACKING  ·  LOCAL-FIRST STORAGE  ·  DEADLINE AWARE",
-            bg="panel", fg="muted", font=("Consolas", 8, "bold"),
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(3, 0))
 
         timer_row = self._frame(self.focus_content)
@@ -1397,7 +1405,7 @@ class VeltrixTradingClock:
         timer_card = self._frame(timer_row, bg="panel", padx=14, pady=12)
         timer_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         self._label(timer_card, "FOCUS TIMER", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         controls = ttk.Frame(timer_card)
         controls.pack(fill="x", pady=(10, 5))
         ttk.Label(controls, text="MODE").grid(row=0, column=0, sticky="w", padx=(0, 5))
@@ -1430,12 +1438,12 @@ class VeltrixTradingClock:
 
         self.focus_timer_display = self._label(
             timer_card, "00:00:00", bg="panel", fg="bright",
-            font=("Consolas", 39, "bold"), anchor="center",
+            font=("Segoe UI", 39, "bold"), anchor="center",
         )
         self.focus_timer_display.pack(fill="x", pady=(13, 1))
         self.focus_timer_status_label = self._label(
             timer_card, "READY · CHOOSE A MODE AND START", bg="panel", fg="muted",
-            font=("Consolas", 8, "bold"), anchor="center",
+            font=("Segoe UI", 9, "bold"), anchor="center",
         )
         self.focus_timer_status_label.pack(fill="x", pady=(0, 11))
         timer_buttons = ttk.Frame(timer_card)
@@ -1451,9 +1459,9 @@ class VeltrixTradingClock:
         daily_card = self._frame(timer_row, bg="panel", padx=14, pady=12)
         daily_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         self._label(daily_card, "TODAY'S FOCUS", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.focus_daily_total_label = self._label(
-            daily_card, "00:00:00", bg="panel", fg="bright", font=("Consolas", 29, "bold")
+            daily_card, "00:00:00", bg="panel", fg="bright", font=("Segoe UI", 29, "bold")
         )
         self.focus_daily_total_label.pack(anchor="w", pady=(12, 1))
         target_row = ttk.Frame(daily_card)
@@ -1467,12 +1475,12 @@ class VeltrixTradingClock:
         self.focus_daily_progress = ttk.Progressbar(daily_card, mode="determinate", maximum=4, value=0)
         self.focus_daily_progress.pack(fill="x", pady=(5, 4))
         self.focus_daily_progress_label = self._label(
-            daily_card, "0% OF DAILY TARGET", bg="panel", fg="muted", font=("Consolas", 8, "bold")
+            daily_card, "0% OF DAILY TARGET", bg="panel", fg="muted", font=("Segoe UI", 9, "bold")
         )
         self.focus_daily_progress_label.pack(anchor="w")
         self._label(
             daily_card, "Timer intervals are recorded locally.\nA running timer continues across app restarts.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=300,
+            bg="panel", fg="muted", font=("Segoe UI", 10), justify="left", wraplength=300,
         ).pack(anchor="w", pady=(14, 0))
 
         history_card = self._frame(self.focus_content, bg="panel", padx=14, pady=11)
@@ -1480,7 +1488,7 @@ class VeltrixTradingClock:
         history_header = self._frame(history_card, bg="panel")
         history_header.pack(fill="x", pady=(0, 7))
         self._label(history_header, "RECENT FOCUS SESSIONS", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(side="left")
+                    font=("Segoe UI", 10, "bold")).pack(side="left")
         ttk.Button(history_header, text="REFRESH", command=self._refresh_focus_history).pack(side="right")
         self.focus_history_tree = ttk.Treeview(
             history_card, columns=("started", "mode", "label", "duration", "status"),
@@ -1497,15 +1505,15 @@ class VeltrixTradingClock:
         goals_header = self._frame(self.focus_content, bg="panel", padx=14, pady=10)
         goals_header.pack(fill="x", pady=(0, 9))
         self._label(goals_header, "LONG-TERM GOALS", bg="panel", fg="bright",
-                    font=("Consolas", 11, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 12, "bold")).pack(anchor="w")
         self._label(
             goals_header,
             "Set a deadline, break the outcome into milestones, and track the days remaining.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(3, 0))
         self.focus_goal_countdown_label = self._label(
             goals_header, "SELECT A GOAL TO VIEW ITS LIVE DEADLINE COUNTDOWN",
-            bg="panel", fg="bright", font=("Consolas", 10, "bold"),
+            bg="panel", fg="bright", font=("Segoe UI", 10, "bold"),
         )
         self.focus_goal_countdown_label.pack(anchor="w", pady=(8, 0))
 
@@ -1527,7 +1535,7 @@ class VeltrixTradingClock:
         editor = self._frame(self.focus_content, bg="panel", padx=14, pady=12)
         editor.pack(fill="x", pady=(0, 10))
         self.focus_goal_editor_heading = self._label(
-            editor, "CREATE GOAL", bg="panel", fg="bright", font=("Consolas", 9, "bold")
+            editor, "CREATE GOAL", bg="panel", fg="bright", font=("Segoe UI", 10, "bold")
         )
         self.focus_goal_editor_heading.pack(anchor="w", pady=(0, 8))
         form = ttk.Frame(editor)
@@ -1560,7 +1568,7 @@ class VeltrixTradingClock:
         ttk.Label(editor, text="DESCRIPTION / SUCCESS CRITERIA").pack(anchor="w", pady=(7, 3))
         self.focus_goal_description = tk.Text(
             editor, height=3, wrap="word", relief="flat", bd=0,
-            highlightthickness=1, padx=8, pady=6,
+            highlightthickness=0, padx=8, pady=6,
         )
         self.focus_goal_description.pack(fill="x", pady=(0, 8))
         goal_actions = ttk.Frame(editor)
@@ -1570,7 +1578,7 @@ class VeltrixTradingClock:
         ttk.Button(goal_actions, text="DELETE GOAL", command=self._delete_focus_goal).pack(side="left")
         self.focus_goal_status_label = self._label(
             editor, "Goals are stored locally on this computer.", bg="panel", fg="muted",
-            font=("Consolas", 8),
+            font=("Segoe UI", 9),
         )
         self.focus_goal_status_label.pack(anchor="w", pady=(7, 0))
 
@@ -1579,7 +1587,7 @@ class VeltrixTradingClock:
         milestone_header = self._frame(milestone_card, bg="panel")
         milestone_header.pack(fill="x", pady=(0, 7))
         self._label(milestone_header, "GOAL MILESTONES", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(side="left")
+                    font=("Segoe UI", 10, "bold")).pack(side="left")
         self.focus_milestone_tree = ttk.Treeview(
             milestone_card, columns=("milestone", "status"), show="headings", height=4,
             style="Veltrix.Treeview",
@@ -2008,18 +2016,18 @@ class VeltrixTradingClock:
         self.alert_config_toggle = tk.Button(
             settings_toggle_row, text="ALERT RULES / PREFERENCES  ▸",
             command=lambda: toggle_alert_settings(self),
-            font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
         )
         self.alert_config_toggle.pack(side="left")
 
         settings_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
         settings_panel.pack(fill="x", pady=(0, 10))
         self._label(settings_panel, "SESSION ALERT ENGINE", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             settings_panel,
             "Choose which market transitions should generate an in-app alert.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(2, 8))
 
         toggles = self._frame(settings_panel, bg="panel")
@@ -2039,7 +2047,7 @@ class VeltrixTradingClock:
             self.alert_vars[key] = variable
             check = tk.Checkbutton(
                 toggles, text=label, variable=variable, command=self.save_alert_settings,
-                font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=5, pady=3,
+                font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=5, pady=3,
                 cursor="hand2", selectcolor=palette["dim"], activebackground=palette["panel"],
             )
             check.pack(side="left", padx=(0, 7))
@@ -2048,41 +2056,41 @@ class VeltrixTradingClock:
         lead_row = self._frame(settings_panel, bg="panel")
         lead_row.pack(fill="x", pady=(8, 0))
         self._label(lead_row, "PRE-OPEN MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left")
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
         self.pre_open_var = tk.StringVar(value=str(self.alert_settings.get("pre_open_minutes", 15)))
         self.pre_open_spin = tk.Spinbox(
             lead_row, from_=1, to=180, textvariable=self.pre_open_var,
-            width=4, font=("Consolas", 9, "bold"), justify="center", relief="flat", bd=0,
+            width=4, font=("Segoe UI", 10, "bold"), justify="center", relief="flat", bd=0,
         )
         self.pre_open_spin.pack(side="left", padx=(6, 16))
         self._label(lead_row, "PRE-CLOSE MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left")
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
         self.pre_close_var = tk.StringVar(value=str(self.alert_settings.get("pre_close_minutes", 10)))
         self.pre_close_spin = tk.Spinbox(
             lead_row, from_=1, to=180, textvariable=self.pre_close_var,
-            width=4, font=("Consolas", 9, "bold"), justify="center", relief="flat", bd=0,
+            width=4, font=("Segoe UI", 10, "bold"), justify="center", relief="flat", bd=0,
         )
         self.pre_close_spin.pack(side="left", padx=(6, 12))
         self.save_alert_button = tk.Button(
             lead_row, text="SAVE ALERT SETTINGS", command=self.save_alert_settings,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
         )
         self.save_alert_button.pack(side="left")
         self.test_alert_button = tk.Button(
             lead_row, text="TEST NOTIFICATION", command=self.test_notification,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
         )
         self.test_alert_button.pack(side="left", padx=(7, 0))
 
         overrides_title = self._label(
             settings_panel, "SESSION-SPECIFIC REMINDER OVERRIDES",
-            bg="panel", fg="bright", font=("Consolas", 8, "bold"),
+            bg="panel", fg="bright", font=("Segoe UI", 9, "bold"),
         )
         overrides_title.pack(anchor="w", pady=(12, 2))
         self._label(
             settings_panel,
             "Each market has independent lead times, initially set to the global default values.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(0, 5))
         self.session_lead_vars = {}
         self.session_lead_spins = []
@@ -2097,7 +2105,7 @@ class VeltrixTradingClock:
             row.pack(fill="x", pady=2)
             self._label(
                 row, session.name, bg="panel", fg="text",
-                font=("Consolas", 8, "bold"), width=12,
+                font=("Segoe UI", 9, "bold"), width=12,
             ).pack(side="left")
             open_var = tk.StringVar(
                 value=str(override.get("pre_open_minutes", self.alert_settings.get("pre_open_minutes", 15)))
@@ -2105,16 +2113,16 @@ class VeltrixTradingClock:
             close_var = tk.StringVar(
                 value=str(override.get("pre_close_minutes", self.alert_settings.get("pre_close_minutes", 10)))
             )
-            self._label(row, "PRE-OPEN", bg="panel", fg="muted", font=("Consolas", 7)).pack(side="left", padx=(5, 3))
+            self._label(row, "PRE-OPEN", bg="panel", fg="muted", font=("Segoe UI", 8)).pack(side="left", padx=(5, 3))
             open_spin = tk.Spinbox(
                 row, from_=1, to=180, textvariable=open_var, width=4,
-                font=("Consolas", 8), justify="center", relief="flat", bd=0,
+                font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
             )
             open_spin.pack(side="left", padx=(0, 12))
-            self._label(row, "PRE-CLOSE", bg="panel", fg="muted", font=("Consolas", 7)).pack(side="left", padx=(0, 3))
+            self._label(row, "PRE-CLOSE", bg="panel", fg="muted", font=("Segoe UI", 8)).pack(side="left", padx=(0, 3))
             close_spin = tk.Spinbox(
                 row, from_=1, to=180, textvariable=close_var, width=4,
-                font=("Consolas", 8), justify="center", relief="flat", bd=0,
+                font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
             )
             close_spin.pack(side="left")
             self.session_lead_vars[session.key] = {"pre_open": open_var, "pre_close": close_var}
@@ -2124,12 +2132,12 @@ class VeltrixTradingClock:
         risk_panel.pack(fill="x", pady=(0, 10))
         self._label(
             risk_panel, "SESSION RISK AWARENESS", bg="panel", fg="bright",
-            font=("Consolas", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
         ).pack(anchor="w")
         self._label(
             risk_panel,
             "Schedule-based cautions for opening/closing windows and exchange holiday-adjacent conditions. These are not live liquidity measurements.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), wraplength=1050,
+            bg="panel", fg="muted", font=("Segoe UI", 10), wraplength=1050,
             justify="left",
         ).pack(anchor="w", pady=(2, 8))
         risk_toggles = self._frame(risk_panel, bg="panel")
@@ -2148,7 +2156,7 @@ class VeltrixTradingClock:
         ):
             check = tk.Checkbutton(
                 risk_toggles, text=label, variable=variable, command=self.save_alert_settings,
-                font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=5, pady=3,
+                font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=5, pady=3,
                 cursor="hand2", bg=palette["panel"], fg=palette["text"],
                 selectcolor=palette["dim"], activebackground=palette["panel"],
                 activeforeground=palette["bright"],
@@ -2158,44 +2166,44 @@ class VeltrixTradingClock:
         risk_windows = self._frame(risk_panel, bg="panel")
         risk_windows.pack(fill="x", pady=(7, 0))
         self._label(risk_windows, "OPENING CAUTION MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left")
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
         self.risk_opening_window_var = tk.StringVar(
             value=str(self.session_risk_settings.get("opening_window_minutes", 15))
         )
         self.risk_opening_window_spin = tk.Spinbox(
             risk_windows, from_=0, to=180, textvariable=self.risk_opening_window_var,
-            width=4, font=("Consolas", 8), justify="center", relief="flat", bd=0,
+            width=4, font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
         )
         self.risk_opening_window_spin.pack(side="left", padx=(6, 16))
         self._label(risk_windows, "CLOSING CAUTION MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left")
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
         self.risk_closing_window_var = tk.StringVar(
             value=str(self.session_risk_settings.get("closing_window_minutes", 15))
         )
         self.risk_closing_window_spin = tk.Spinbox(
             risk_windows, from_=0, to=180, textvariable=self.risk_closing_window_var,
-            width=4, font=("Consolas", 8), justify="center", relief="flat", bd=0,
+            width=4, font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
         )
         self.risk_closing_window_spin.pack(side="left", padx=(6, 16))
         self.risk_pre_open_window_var = tk.StringVar(
             value=str(self.session_risk_settings.get("pre_open_window_minutes", 15))
         )
         self._label(risk_windows, "PRE-OPEN FLAG MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left")
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
         self.risk_pre_open_window_spin = tk.Spinbox(
             risk_windows, from_=0, to=180, textvariable=self.risk_pre_open_window_var,
-            width=4, font=("Consolas", 8), justify="center", relief="flat", bd=0,
+            width=4, font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
         )
         self.risk_pre_open_window_spin.pack(side="left", padx=(6, 0))
 
         event_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
         event_panel.pack(fill="x", pady=(0, 10))
         self._label(event_panel, "ECONOMIC EVENT REMINDERS", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             event_panel,
             f"Add events manually. Times are interpreted in {self.home_zone.key} (your control timezone).",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(2, 8))
 
         event_form = self._frame(event_panel, bg="panel")
@@ -2204,56 +2212,56 @@ class VeltrixTradingClock:
         self.event_datetime_var = tk.StringVar(value=(datetime.now(self.home_zone) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M"))
         self.event_name_entry = tk.Entry(
             event_form, textvariable=self.event_name_var, width=25,
-            font=("Consolas", 9), relief="flat", bd=0,
+            font=("Segoe UI", 10), relief="flat", bd=0,
         )
         self.event_name_entry.pack(side="left", padx=(0, 7), ipady=6)
         self.event_datetime_entry = tk.Entry(
             event_form, textvariable=self.event_datetime_var, width=19,
-            font=("Consolas", 9), relief="flat", bd=0,
+            font=("Segoe UI", 10), relief="flat", bd=0,
         )
         self.event_datetime_entry.pack(side="left", padx=(0, 7), ipady=6)
         self.add_event_button = tk.Button(
             event_form, text="ADD EVENT", command=self.add_economic_event,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=11, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=11, pady=6, cursor="hand2",
         )
         self.add_event_button.pack(side="left")
         self._label(event_form, "REMIND", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left", padx=(14, 4))
+                    font=("Segoe UI", 9, "bold")).pack(side="left", padx=(14, 4))
         self.event_lead_var = tk.StringVar(value=str(self.config.get("event_reminder_minutes", 15)))
         self.event_lead_spin = tk.Spinbox(
             event_form, from_=0, to=1440, textvariable=self.event_lead_var,
-            width=5, font=("Consolas", 9, "bold"), justify="center", relief="flat", bd=0,
+            width=5, font=("Segoe UI", 10, "bold"), justify="center", relief="flat", bd=0,
         )
         self.event_lead_spin.pack(side="left")
         self._label(event_form, "MIN BEFORE", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left", padx=(4, 0))
+                    font=("Segoe UI", 9, "bold")).pack(side="left", padx=(4, 0))
 
         event_list_row = self._frame(event_panel, bg="panel")
         event_list_row.pack(fill="x", pady=(9, 0))
         self.event_listbox = tk.Listbox(
-            event_list_row, height=4, font=("Consolas", 8), relief="flat", bd=0,
+            event_list_row, height=4, font=("Segoe UI", 9), relief="flat", bd=0,
             activestyle="none", exportselection=False,
         )
         self.event_listbox.pack(side="left", fill="x", expand=True)
         self.remove_event_button = tk.Button(
             event_list_row, text="REMOVE SELECTED", command=self.remove_economic_event,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
         )
         self.remove_event_button.pack(side="left", padx=(8, 0), anchor="n")
 
         feed_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=10)
         feed_panel.pack(fill="both", expand=True)
         self._label(feed_panel, "ALERT ACTIVITY", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.alert_banner = self._label(
             feed_panel, "NO ALERTS YET  ·  Session notifications will appear here.",
-            bg="panel", fg="muted", font=("Consolas", 8, "bold"), anchor="w", justify="left",
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"), anchor="w", justify="left",
         )
         self.alert_banner.pack(fill="x", pady=(4, 7))
         feed_row = self._frame(feed_panel, bg="panel")
         feed_row.pack(fill="both", expand=True)
         self.alert_listbox = tk.Listbox(
-            feed_row, height=5, font=("Consolas", 8), relief="flat", bd=0,
+            feed_row, height=5, font=("Segoe UI", 9), relief="flat", bd=0,
             activestyle="none", exportselection=False,
         )
         self.alert_listbox.pack(fill="both", expand=True)
@@ -2267,27 +2275,27 @@ class VeltrixTradingClock:
         connection = self._frame(self.calendar_view, bg="panel", padx=14, pady=11)
         connection.pack(fill="x", pady=(0, 9))
         self._label(connection, "LIVE ECONOMIC CALENDAR", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             connection,
             "ShowMyTrades public calendar · 9 major currencies · No API key · 15-minute refresh floor.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(2, 8))
         source_row = self._frame(connection, bg="panel")
         source_row.pack(fill="x")
         self.calendar_status_label = self._label(
             source_row, "CONNECTING TO PUBLIC CALENDAR...",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w",
+            bg="panel", fg="warning", font=("Segoe UI", 9, "bold"), anchor="w",
         )
         self.calendar_status_label.pack(side="left", fill="x", expand=True)
         self.refresh_calendar_button = tk.Button(
             source_row, text="REFRESH CALENDAR", command=self.refresh_live_calendar,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
         )
         self.refresh_calendar_button.pack(side="right")
         self.calendar_freshness_label = self._label(
             connection, "Loading cached calendar data...",
-            bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w",
+            bg="panel", fg="muted", font=("Segoe UI", 10), anchor="w",
         )
         self.calendar_freshness_label.pack(fill="x", pady=(7, 0))
         if self.calendar_last_updated:
@@ -2308,21 +2316,21 @@ class VeltrixTradingClock:
         self.calendar_filter = ttk.Combobox(
             controls, textvariable=self.calendar_filter_var,
             values=("All impact levels", "High impact", "Medium impact", "Low impact", "Market holidays"),
-            state="readonly", width=18, font=("Consolas", 8),
+            state="readonly", width=18, font=("Segoe UI", 9),
         )
         self.calendar_filter.pack(side="left", padx=(0, 8))
         self.calendar_filter.bind("<<ComboboxSelected>>", lambda _event: self._refresh_calendar_table())
         self.calendar_search_var = tk.StringVar()
         self.calendar_search_entry = tk.Entry(
             controls, textvariable=self.calendar_search_var, width=28,
-            font=("Consolas", 8), relief="flat", bd=0,
+            font=("Segoe UI", 9), relief="flat", bd=0,
         )
         self.calendar_search_entry.pack(side="left", padx=(0, 8), ipady=6)
         self.calendar_search_entry.insert(0, "Search currency / event")
         self.calendar_search_entry.bind("<FocusIn>", self._clear_calendar_search_placeholder)
         self.calendar_search_var.trace_add("write", lambda *_args: self._refresh_calendar_table())
         self.calendar_count_label = self._label(
-            controls, "0 EVENTS", bg="panel", fg="muted", font=("Consolas", 8, "bold"),
+            controls, "0 EVENTS", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
         )
         self.calendar_count_label.pack(side="right")
 
@@ -2334,24 +2342,24 @@ class VeltrixTradingClock:
         self.calendar_reminder_check = tk.Checkbutton(
             reminder_row, text="REMIND ME BEFORE HIGH-IMPACT RELEASES",
             variable=self.calendar_reminder_enabled_var, command=self.save_calendar_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=4, pady=2,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=4, pady=2,
             cursor="hand2", selectcolor=palette["dim"], activebackground=palette["panel"],
         )
         self.calendar_reminder_check.pack(side="left")
         self._label(reminder_row, "LEAD MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left", padx=(12, 5))
+                    font=("Segoe UI", 9, "bold")).pack(side="left", padx=(12, 5))
         self.calendar_reminder_minutes_var = tk.StringVar(
             value=str(self.calendar_settings.get("reminder_minutes", 15))
         )
         self.calendar_reminder_spin = tk.Spinbox(
             reminder_row, from_=0, to=1440, textvariable=self.calendar_reminder_minutes_var,
-            width=5, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0,
+            width=5, font=("Segoe UI", 9, "bold"), justify="center", relief="flat", bd=0,
             command=self.save_calendar_preferences,
         )
         self.calendar_reminder_spin.pack(side="left")
         self.save_calendar_preferences_button = tk.Button(
             reminder_row, text="SAVE REMINDER SETTINGS", command=self.save_calendar_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
         )
         self.save_calendar_preferences_button.pack(side="left", padx=(10, 0))
 
@@ -2359,7 +2367,7 @@ class VeltrixTradingClock:
         table_panel.pack(fill="both", expand=True)
         self._label(
             table_panel, f"UPCOMING MACRO RELEASES · DISPLAYED IN {datetime.now(self.home_zone).tzname()} ({self.home_zone.key})",
-            bg="panel", fg="bright", font=("Consolas", 8, "bold"),
+            bg="panel", fg="bright", font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(0, 7))
         table_frame = self._frame(table_panel, bg="panel")
         table_frame.pack(fill="both", expand=True)
@@ -2382,7 +2390,7 @@ class VeltrixTradingClock:
         self.calendar_tree.tag_configure("medium", foreground=palette["warning"])
         self.calendar_tree.tag_configure("low", foreground=palette["success"])
         self.calendar_tree.tag_configure("holiday", foreground=palette["muted"])
-        self.calendar_tree.tag_configure("tentative", font=("Consolas", 8, "italic"))
+        self.calendar_tree.tag_configure("tentative", font=("Segoe UI", 9, "italic"))
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.calendar_tree.yview)
         horizontal_scrollbar = ttk.Scrollbar(table_panel, orient="horizontal", command=self.calendar_tree.xview)
         self.calendar_tree.configure(yscrollcommand=scrollbar.set, xscrollcommand=horizontal_scrollbar.set)
@@ -2392,7 +2400,7 @@ class VeltrixTradingClock:
         attribution = self.calendar_payload.get("attribution", {})
         self.calendar_attribution_label = self._label(
             table_panel, str(attribution.get("text", "Economic calendar by ShowMyTrades")) + "  ·  VIEW SOURCE",
-            bg="panel", fg="muted", font=("Segoe UI", 7, "underline"), anchor="w", cursor="hand2",
+            bg="panel", fg="muted", font=("Segoe UI", 9, "underline"), anchor="w", cursor="hand2",
         )
         self.calendar_attribution_label.pack(fill="x", pady=(5, 0))
         self.calendar_attribution_label.bind("<Button-1>", lambda _event: self._open_calendar_source())
@@ -2430,25 +2438,25 @@ class VeltrixTradingClock:
         header = self._frame(self.market_content, bg="panel", padx=14, pady=10)
         header.pack(fill="x", pady=(0, 9))
         self._label(header, "MARKET VOLATILITY MONITOR", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.market_description_label = self._label(
             header, "5m realised volatility (√Σr²) · Daily Wilder ATR(14) · 20-session 1σ move",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         )
         self.market_description_label.pack(anchor="w", pady=(2, 7))
         top_row = self._frame(header, bg="panel")
         top_row.pack(fill="x")
         self.market_status_label = self._label(top_row, "WAITING FOR MARKET DATA...", bg="panel", fg="warning",
-                                               font=("Consolas", 8, "bold"), anchor="w")
+                                               font=("Segoe UI", 9, "bold"), anchor="w")
         self.market_status_label.pack(side="left", fill="x", expand=True)
         self.refresh_market_button = tk.Button(
             top_row, text="REFRESH MARKET DATA", command=self.refresh_market_data,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
         )
         self.refresh_market_button.pack(side="right")
         self.market_freshness_label = self._label(
             header, "Yahoo Finance legacy fallback · Unofficial feed · Price timing may vary · Provider validation pending",
-            bg="panel", fg="muted", font=("Segoe UI", 7), anchor="w",
+            bg="panel", fg="muted", font=("Segoe UI", 9), anchor="w",
         )
         self.market_freshness_label.pack(fill="x", pady=(6, 0))
 
@@ -2458,21 +2466,21 @@ class VeltrixTradingClock:
             cards_frame.grid_columnconfigure(column, weight=1, uniform="market_asset")
         self.market_asset_cards: dict[str, dict[str, tk.Widget]] = {}
         for column, instrument in enumerate(self.market_instruments):
-            card = self._frame(cards_frame, bg="panel", padx=11, pady=9, highlightthickness=1, bd=0)
+            card = self._frame(cards_frame, bg="panel", padx=11, pady=9, highlightthickness=0, bd=0)
             card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < len(self.market_instruments)-1 else 0))
             name = self._label(card, str(instrument.get("name", instrument["key"])), bg="panel", fg="bright",
-                               font=("Consolas", 9, "bold"))
+                               font=("Segoe UI", 10, "bold"))
             name.pack(anchor="w")
             symbol = self._label(card, str(instrument.get("symbol", "")), bg="panel", fg="muted",
-                                 font=("Consolas", 7))
+                                 font=("Segoe UI", 8))
             symbol.pack(anchor="w", pady=(1, 5))
-            price = self._label(card, "--", bg="panel", fg="text", font=("Consolas", 17, "bold"))
+            price = self._label(card, "--", bg="panel", fg="text", font=("Segoe UI", 17, "bold"))
             price.pack(anchor="w")
-            atr = self._label(card, "ATR(14): N/A", bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+            atr = self._label(card, "ATR(14): N/A", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
             atr.pack(anchor="w", pady=(5, 0))
-            expected = self._label(card, "1D EXPECTED MOVE: N/A", bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+            expected = self._label(card, "1D EXPECTED MOVE: N/A", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
             expected.pack(anchor="w", pady=(2, 0))
-            quote_time = self._label(card, "No quote loaded", bg="panel", fg="muted", font=("Segoe UI", 7))
+            quote_time = self._label(card, "No quote loaded", bg="panel", fg="muted", font=("Segoe UI", 9))
             quote_time.pack(anchor="w", pady=(4, 0))
             self.market_asset_cards[str(instrument["key"])] = {
                 "frame": card, "name": name, "symbol": symbol, "price": price,
@@ -2482,7 +2490,7 @@ class VeltrixTradingClock:
         table_panel = self._frame(self.market_content, bg="panel", padx=11, pady=9)
         table_panel.pack(fill="both", expand=True, pady=(0, 9))
         self._label(table_panel, "SESSION-BY-SESSION REALISED VOLATILITY", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
         table_frame = self._frame(table_panel, bg="panel")
         table_frame.pack(fill="both", expand=True)
         columns = ("instrument", "session", "realised", "range", "bars", "regime", "observation")
@@ -2510,29 +2518,29 @@ class VeltrixTradingClock:
         self.market_regime_enabled_var = tk.BooleanVar(value=bool(self.market_settings.get("regime_alerts_enabled", True)))
         self.market_regime_check = tk.Checkbutton(
             controls, text="VOLATILITY REGIME ALERTS", variable=self.market_regime_enabled_var,
-            command=self.save_market_preferences, font=("Consolas", 8, "bold"), relief="flat", bd=0,
+            command=self.save_market_preferences, font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
             padx=4, pady=2, cursor="hand2", selectcolor=palette["dim"], activebackground=palette["panel"],
         )
         self.market_regime_check.pack(side="left")
-        self._label(controls, "EXPANSION ≥", bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(side="left", padx=(10, 4))
+        self._label(controls, "EXPANSION ≥", bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(10, 4))
         self.market_expansion_var = tk.StringVar(value=str(self.market_settings.get("expansion_multiple", 1.5)))
         self.market_expansion_spin = tk.Spinbox(controls, from_=1.1, to=5.0, increment=0.1,
-            textvariable=self.market_expansion_var, width=4, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0)
+            textvariable=self.market_expansion_var, width=4, font=("Segoe UI", 9, "bold"), justify="center", relief="flat", bd=0)
         self.market_expansion_spin.pack(side="left")
-        self._label(controls, "CONTRACTION ≤", bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(side="left", padx=(9, 4))
+        self._label(controls, "CONTRACTION ≤", bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(9, 4))
         self.market_contraction_var = tk.StringVar(value=str(self.market_settings.get("contraction_multiple", 0.67)))
         self.market_contraction_spin = tk.Spinbox(controls, from_=0.1, to=0.99, increment=0.01,
-            textvariable=self.market_contraction_var, width=4, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0)
+            textvariable=self.market_contraction_var, width=4, font=("Segoe UI", 9, "bold"), justify="center", relief="flat", bd=0)
         self.market_contraction_spin.pack(side="left")
         self.save_market_settings_button = tk.Button(controls, text="SAVE SETTINGS", command=self.save_market_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2")
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2")
         self.save_market_settings_button.pack(side="left", padx=(10, 0))
 
         alerts_panel = self._frame(self.market_content, bg="panel", padx=12, pady=8)
         alerts_panel.pack(fill="x")
         self._label(alerts_panel, "VOLATILITY REGIME ACTIVITY", bg="panel", fg="bright",
-                    font=("Consolas", 8, "bold")).pack(anchor="w")
-        self.market_alert_listbox = tk.Listbox(alerts_panel, height=2, font=("Consolas", 7),
+                    font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.market_alert_listbox = tk.Listbox(alerts_panel, height=2, font=("Segoe UI", 9),
             relief="flat", bd=0, activestyle="none", exportselection=False)
         self.market_alert_listbox.pack(fill="x", pady=(4, 0))
         self.market_alert_listbox.insert("end", "No expansion or contraction alerts have been recorded this run.")
@@ -2702,7 +2710,7 @@ class VeltrixTradingClock:
             parent=self.root,
             title="Export daily session-performance and overlap rows",
             defaultextension=".csv",
-            initialfile="veltrix_session_performance_v10_11.csv",
+            initialfile="veltrix_session_performance_v10_12.csv",
             filetypes=(("CSV files", "*.csv"),),
         )
         if not path:
@@ -2742,16 +2750,16 @@ class VeltrixTradingClock:
         header = self._frame(self.regime_content, bg="panel", padx=14, pady=11)
         header.pack(fill="x", pady=(0, 9))
         self._label(header, "CAUSAL MARKET REGIME LAB", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             header,
             "CAUSAL OHLC CLASSIFICATION · TREND / RANGE / VOLATILITY SHOCK · HISTORICAL OUTCOME STUDY",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(3, 6))
         self.regime_status_label = self._label(
             header,
             "LOCAL OHLC DATA · IMPORT A COMPLETED BAR CSV HERE, THEN RUN CLASSIFICATION",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=980,
+            bg="panel", fg="warning", font=("Segoe UI", 9, "bold"), anchor="w", justify="left", wraplength=980,
         )
         self.regime_status_label.pack(fill="x")
 
@@ -2759,7 +2767,7 @@ class VeltrixTradingClock:
         controls.pack(fill="x", pady=(0, 9))
         controls.grid_columnconfigure(0, weight=1)
         self._label(controls, "DATASET / INSTRUMENT", bg="panel", fg="muted",
-                    font=("Consolas", 7, "bold")).grid(row=0, column=0, sticky="w")
+                    font=("Segoe UI", 8, "bold")).grid(row=0, column=0, sticky="w")
         self.regime_asset_combo = ttk.Combobox(
             controls, textvariable=self.regime_asset_var,
             values=list(self.regime_dataset_label_to_key.keys()), state="readonly", width=54,
@@ -2794,10 +2802,10 @@ class VeltrixTradingClock:
             cell = self._frame(fields, bg="panel")
             cell.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 7, 7 if column < 2 else 0),
                       pady=(0, 7))
-            self._label(cell, label, bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(anchor="w")
+            self._label(cell, label, bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(anchor="w")
             widget = tk.Entry(
                 cell, textvariable=self.regime_vars[key], width=17,
-                font=("Consolas", 9, "bold"), relief="flat", bd=0, highlightthickness=1,
+                font=("Segoe UI", 10, "bold"), relief="flat", bd=0, highlightthickness=0,
             )
             self._register_theme(widget, "entry_bg", "entry_fg")
             widget.pack(fill="x", pady=(3, 0), ipady=5)
@@ -2807,31 +2815,31 @@ class VeltrixTradingClock:
         actions.grid(row=3, column=0, sticky="ew", pady=(3, 0))
         self.regime_import_button = tk.Button(
             actions, text="IMPORT OHLC CSV", command=self.import_regime_csv,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7,
             cursor="hand2", state="disabled",
         )
         self.regime_import_button.pack(side="left", padx=(0, 7))
         self.regime_run_button = tk.Button(
             actions, text="RUN REGIME ANALYSIS", command=self.run_regime_analysis,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.regime_run_button.pack(side="left", padx=(0, 7))
         self.regime_export_button = tk.Button(
             actions, text="EXPORT REGIME CSV", command=self.export_regime_results,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7,
             cursor="hand2", state="disabled",
         )
         self.regime_export_button.pack(side="left", padx=7)
         self.regime_save_button = tk.Button(
             actions, text="SAVE SETTINGS", command=self.save_regime_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.regime_save_button.pack(side="left", padx=7)
 
         metrics_panel = self._frame(self.regime_content, bg="panel", padx=11, pady=9)
         metrics_panel.pack(fill="x", pady=(0, 9))
         self._label(metrics_panel, "CLASSIFICATION SNAPSHOT", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 7))
         metrics_grid = self._frame(metrics_panel, bg="panel")
         metrics_grid.pack(fill="x")
         for column in range(3):
@@ -2845,21 +2853,21 @@ class VeltrixTradingClock:
         for index, (key, title, initial) in enumerate(metric_specs):
             row, column = divmod(index, 3)
             tile = self._frame(metrics_grid, bg="panel", padx=9, pady=7,
-                               highlightthickness=1, bd=0)
+                               highlightthickness=0, bd=0)
             tile.grid(row=row, column=column, sticky="nsew",
                       padx=(0 if column == 0 else 5, 5 if column < 2 else 0), pady=(0, 6))
-            title_label = self._label(tile, title, bg="panel", fg="muted", font=("Consolas", 7, "bold"))
+            title_label = self._label(tile, title, bg="panel", fg="muted", font=("Segoe UI", 8, "bold"))
             title_label.pack(anchor="w")
-            value_label = self._label(tile, initial, bg="panel", fg="text", font=("Consolas", 12, "bold"))
+            value_label = self._label(tile, initial, bg="panel", fg="text", font=("Segoe UI", 12, "bold"))
             value_label.pack(anchor="w", pady=(3, 0))
             self.regime_metric_tiles[key] = {"frame": tile, "title": title_label, "value": value_label}
 
         chart_panel = self._frame(self.regime_content, bg="panel", padx=11, pady=9)
         chart_panel.pack(fill="x", pady=(0, 9))
         self._label(chart_panel, "PRICE PATH WITH CAUSAL REGIME LABELS · MOST RECENT 250 BARS",
-                    bg="panel", fg="bright", font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
+                    bg="panel", fg="bright", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
         self.regime_chart_canvas = tk.Canvas(
-            chart_panel, height=245, highlightthickness=1, highlightbackground=THEMES[self.theme_name]["border"],
+            chart_panel, height=245, highlightthickness=0, highlightbackground=THEMES[self.theme_name]["panel"],
             bd=0,
         )
         self._register_theme(self.regime_chart_canvas, "panel")
@@ -2873,7 +2881,7 @@ class VeltrixTradingClock:
         distribution_panel = self._frame(tables, bg="panel", padx=10, pady=9)
         distribution_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         self._label(distribution_panel, "REGIME FREQUENCY & FORWARD OUTCOMES",
-                    bg="panel", fg="bright", font=("Consolas", 8, "bold")).pack(anchor="w", pady=(0, 5))
+                    bg="panel", fg="bright", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 5))
         distribution_columns = ("regime", "count", "frequency", "samples", "mean", "median", "positive")
         self.regime_distribution_tree = ttk.Treeview(
             distribution_panel, columns=distribution_columns, show="headings", height=6,
@@ -2893,7 +2901,7 @@ class VeltrixTradingClock:
         transition_panel = self._frame(tables, bg="panel", padx=10, pady=9)
         transition_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         self._label(transition_panel, "REGIME TRANSITION COUNTS",
-                    bg="panel", fg="bright", font=("Consolas", 8, "bold")).pack(anchor="w", pady=(0, 5))
+                    bg="panel", fg="bright", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 5))
         transition_columns = ("from", "range", "up", "down", "shock", "transition")
         self.regime_transition_tree = ttk.Treeview(
             transition_panel, columns=transition_columns, show="headings", height=6,
@@ -2912,7 +2920,7 @@ class VeltrixTradingClock:
         recent_panel = self._frame(self.regime_content, bg="panel", padx=11, pady=9)
         recent_panel.pack(fill="both", expand=True, pady=(0, 9))
         self._label(recent_panel, "RECENT CLASSIFICATIONS · LATEST 60",
-                    bg="panel", fg="bright", font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
+                    bg="panel", fg="bright", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
         recent_columns = ("timestamp", "close", "regime", "er", "slope", "atr_ratio", "tr_multiple", "forward")
         self.regime_recent_tree = ttk.Treeview(
             recent_panel, columns=recent_columns, show="headings", height=12,
@@ -2938,7 +2946,7 @@ class VeltrixTradingClock:
         self._label(
             methodology,
             "METHODOLOGY: Each bar is classified using only its own and earlier completed OHLC bars. Efficiency ratio measures net displacement / total path; trend slope is normalised by slow ATR; volatility shocks use fast/slow ATR and current true range versus prior slow ATR. Forward returns are calculated only after labels are fixed and are historical conditional outcomes, not predictions or trade signals. Thresholds are research parameters, not universal gold constants. Results depend on feed, symbol, bar construction, interval, missing data and transaction-cost assumptions.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=980,
+            bg="panel", fg="muted", font=("Segoe UI", 10), justify="left", wraplength=980,
         ).pack(fill="x")
         self._apply_regime_tree_theme()
 
@@ -3346,12 +3354,12 @@ class VeltrixTradingClock:
         canvas.create_rectangle(0, 0, width, height, fill=palette["panel"], outline="")
         if not self.regime_result:
             canvas.create_text(width / 2, height / 2, text="RUN REGIME ANALYSIS TO DISPLAY HISTORICAL CLASSIFICATIONS",
-                               fill=palette["muted"], font=("Consolas", 9, "bold"))
+                               fill=palette["muted"], font=("Segoe UI", 10, "bold"))
             return
         records = self.regime_result["records"][-250:]
         if len(records) < 2:
             canvas.create_text(width / 2, height / 2, text="INSUFFICIENT CLASSIFIED HISTORY",
-                               fill=palette["muted"], font=("Consolas", 9, "bold"))
+                               fill=palette["muted"], font=("Segoe UI", 10, "bold"))
             return
         prices = [float(item["close"]) for item in records]
         low, high = min(prices), max(prices)
@@ -3369,7 +3377,7 @@ class VeltrixTradingClock:
             price = high - (high - low) * grid_index / 4
             canvas.create_line(left, y, width - right, y, fill=palette["border"], dash=(2, 4))
             canvas.create_text(left - 8, y, text=f"{price:.2f}", fill=palette["muted"],
-                               anchor="e", font=("Consolas", 7))
+                               anchor="e", font=("Segoe UI", 8))
         points = []
         for index, record in enumerate(records):
             x = left + plot_width * index / (len(records) - 1)
@@ -3386,9 +3394,9 @@ class VeltrixTradingClock:
             canvas.create_rectangle(x0, band_y, x0 + max(1, band_width + 0.4), height - 5,
                                     fill=colors.get(record["regime"], palette["muted"]), outline="")
         canvas.create_text(left, height - 2, text="OLDER", fill=palette["muted"],
-                           anchor="sw", font=("Consolas", 7))
+                           anchor="sw", font=("Segoe UI", 8))
         canvas.create_text(width - right, height - 2, text="LATEST", fill=palette["muted"],
-                           anchor="se", font=("Consolas", 7))
+                           anchor="se", font=("Segoe UI", 8))
 
     def export_regime_results(self) -> None:
         if not self.regime_result:
@@ -3412,12 +3420,12 @@ class VeltrixTradingClock:
         style = ttk.Style(self.root)
         style.configure(
             "Veltrix.Regime.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
+            fieldbackground=palette["bg"], rowheight=29, bordercolor=palette["bg"],
+            font=("Segoe UI", 9),
         )
         style.configure(
             "Veltrix.Regime.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
+            relief="flat", font=("Segoe UI", 9, "bold"),
         )
         style.map("Veltrix.Regime.Treeview", background=[("selected", palette["button_active"])],
                   foreground=[("selected", palette["bright"])])
@@ -3427,7 +3435,7 @@ class VeltrixTradingClock:
         if hasattr(self, "regime_canvas"):
             self.regime_canvas.configure(bg=palette["bg"])
         if hasattr(self, "regime_chart_canvas"):
-            self.regime_chart_canvas.configure(bg=palette["panel"], highlightbackground=palette["border"])
+            self.regime_chart_canvas.configure(bg=palette["panel"], highlightthickness=0, bd=0)
         tags = {
             "range": palette["bright"], "trend_up": palette["success"],
             "trend_down": palette["error"], "volatility_shock": palette["warning"],
@@ -4178,27 +4186,27 @@ class VeltrixTradingClock:
             messagebox.showerror("Could not save settings", str(exc), parent=self.root)
 
     def _summary_tile(self, parent: tk.Widget, column: int, title: str, value: str) -> dict[str, tk.Widget]:
-        frame = self._frame(parent, bg="panel", padx=12, pady=8, highlightthickness=1)
+        frame = self._frame(parent, bg="panel", padx=12, pady=8, highlightthickness=0)
         frame.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < 2 else 0))
-        title_label = self._label(frame, title, bg="panel", fg="muted", font=("Consolas", 7, "bold"))
+        title_label = self._label(frame, title, bg="panel", fg="muted", font=("Segoe UI", 8, "bold"))
         title_label.pack(anchor="w")
-        value_label = self._label(frame, value, bg="panel", fg="text", font=("Consolas", 11, "bold"))
+        value_label = self._label(frame, value, bg="panel", fg="text", font=("Segoe UI", 12, "bold"))
         value_label.pack(anchor="w", pady=(3, 0))
         return {"frame": frame, "title": title_label, "value": value_label}
 
     def _build_session_card(self, session, row: int, column: int) -> None:
-        card = self._frame(self.session_grid, bg="card", padx=14, pady=10, highlightthickness=1, bd=0)
+        card = self._frame(self.session_grid, bg="card", padx=14, pady=10, highlightthickness=0, bd=0)
         card.grid(row=row, column=column, sticky="nsew", padx=(0 if column == 0 else 7, 7 if column == 0 else 0), pady=(0, 10))
         card.grid_columnconfigure(0, weight=1)
         top = self._frame(card, bg="card")
         top.grid(row=0, column=0, sticky="ew")
-        name = self._label(top, session.name, bg="card", fg="text", font=("Consolas", 11, "bold"))
+        name = self._label(top, session.name, bg="card", fg="text", font=("Segoe UI", 12, "bold"))
         name.pack(side="left")
-        country = self._label(top, session.flag, bg="raised", fg="bright", font=("Consolas", 8, "bold"), padx=6, pady=2)
+        country = self._label(top, session.flag, bg="raised", fg="bright", font=("Segoe UI", 9, "bold"), padx=6, pady=2)
         country.pack(side="left", padx=(8, 0))
-        status = self._label(top, "CHECKING", bg="raised", fg="muted", font=("Consolas", 8, "bold"), padx=8, pady=3)
+        status = self._label(top, "CHECKING", bg="raised", fg="muted", font=("Segoe UI", 9, "bold"), padx=8, pady=3)
         status.pack(side="right")
-        city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 8))
+        city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 10))
         city.grid(row=1, column=0, sticky="w", pady=(3, 1))
         analog_canvas = tk.Canvas(
             card, width=240, height=240, bg=THEMES[self.theme_name]["panel"],
@@ -4208,22 +4216,22 @@ class VeltrixTradingClock:
         analog_clock = {"canvas": analog_canvas, "signature": None, "hands": {}}
         local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 15, "bold"))
         local_time.grid(row=3, column=0, sticky="n", pady=(0, 2))
-        zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Consolas", 8))
+        zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Segoe UI", 9))
         zone.grid(row=4, column=0, sticky="n", pady=(0, 2))
         session_progress_label = self._label(
             card, "DAY CYCLE · SESSION WINDOW", bg="card", fg="muted",
-            font=("Consolas", 7, "bold"),
+            font=("Segoe UI", 9, "bold"),
         )
         session_progress_label.grid(row=5, column=0, sticky="n", pady=(0, 6))
         divider = self._frame(card, bg="border", height=1)
         divider.grid(row=6, column=0, sticky="ew", pady=(0, 6))
-        transition = self._label(card, "Calculating next transition...", bg="card", fg="text", font=("Consolas", 9, "bold"))
+        transition = self._label(card, "Calculating next transition...", bg="card", fg="text", font=("Segoe UI", 10, "bold"))
         transition.grid(row=7, column=0, sticky="w")
-        transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 8))
+        transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 10))
         transition_at.grid(row=8, column=0, sticky="w", pady=(2, 0))
         risk = self._label(
             card, "SESSION RISK · NORMAL", bg="card", fg="muted",
-            font=("Consolas", 7, "bold"), anchor="w", justify="left", wraplength=500,
+            font=("Segoe UI", 9, "bold"), anchor="w", justify="left", wraplength=500,
         )
         risk.grid(row=9, column=0, sticky="ew", pady=(5, 0))
         self.cards[session.key] = {
@@ -4330,12 +4338,12 @@ class VeltrixTradingClock:
             # with the live hands or the local digital readout below the dial.
             canvas.create_text(
                 cx, cy - radius * 0.30, text="VELTRIX",
-                fill=palette["muted"], font=("Consolas", 7, "bold"),
+                fill=palette["muted"], font=("Segoe UI", 9, "bold"),
                 tags="clock-face",
             )
             canvas.create_text(
                 cx, cy - radius * 0.20, text="WORLD TIME",
-                fill=palette["dim"], font=("Consolas", 5, "bold"),
+                fill=palette["dim"], font=("Segoe UI", 7, "bold"),
                 tags="clock-face",
             )
 
@@ -4355,30 +4363,35 @@ class VeltrixTradingClock:
                     fill=palette["dim"], width=1, tags="clock-face",
                 )
 
-            # Shadowed, layered hands: retained Canvas objects avoid redraw flicker.
+            # Tapered, bevel-edged hands create a more realistic instrument dial.
+            # Their Canvas items are retained and only their coordinates are changed.
             hands = {
-                "hour_shadow": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["dim"], width=7,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "hour_shadow": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["dim"], outline=palette["dim"], width=1,
+                    tags="clock-hands",
                 ),
-                "minute_shadow": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["border"], width=5.2,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "minute_shadow": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["border"], outline=palette["border"], width=1,
+                    tags="clock-hands",
                 ),
-                "hour": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["bright"], width=4.0,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "hour": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["bright"], outline=palette["bright_edge"], width=0.8,
+                    tags="clock-hands",
                 ),
-                "minute": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["bright_edge"], width=2.6,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "minute": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["bright_edge"], outline=palette["muted"], width=0.65,
+                    tags="clock-hands",
                 ),
                 "second": canvas.create_line(
-                    cx, cy, cx, cy, fill=accent, width=1.35,
+                    cx, cy, cx, cy, fill=accent, width=1.25,
                     capstyle=tk.ROUND, tags="clock-hands",
                 ),
                 "second_tail": canvas.create_line(
-                    cx, cy, cx, cy, fill=accent, width=2.6,
+                    cx, cy, cx, cy, fill=accent, width=2.4,
                     capstyle=tk.ROUND, tags="clock-hands",
                 ),
                 "second_counterweight": canvas.create_oval(
@@ -4398,6 +4411,7 @@ class VeltrixTradingClock:
             clock_state.update({
                 "signature": signature, "hands": hands, "session_ring": session_ring,
                 "center_x": cx, "center_y": cy, "radius": radius,
+                "last_ring_refresh": 0.0,
             })
 
         endpoints = session_clock_hand_endpoints(
@@ -4407,10 +4421,21 @@ class VeltrixTradingClock:
             radius=clock_state["radius"],
         )
         cx, cy = clock_state["center_x"], clock_state["center_y"]
+        radius = clock_state["radius"]
         for hand_name, (x, y) in endpoints.items():
-            canvas.coords(clock_state["hands"][hand_name], cx, cy, x, y)
             if hand_name in ("hour", "minute"):
-                canvas.coords(clock_state["hands"][f"{hand_name}_shadow"], cx, cy, x, y)
+                half_width = radius * (0.026 if hand_name == "hour" else 0.017)
+                points = session_clock_hand_polygon_coordinates(
+                    cx, cy, x, y, half_width=half_width,
+                )
+                shadow_points = session_clock_hand_polygon_coordinates(
+                    cx, cy, x, y, half_width=half_width,
+                    offset_x=1.1, offset_y=1.35,
+                )
+                canvas.coords(clock_state["hands"][hand_name], *points)
+                canvas.coords(clock_state["hands"][f"{hand_name}_shadow"], *shadow_points)
+            else:
+                canvas.coords(clock_state["hands"][hand_name], cx, cy, x, y)
 
         # The seconds hand has a short rear counterweight, like a mechanical dial.
         second_x, second_y = endpoints["second"]
@@ -4433,7 +4458,11 @@ class VeltrixTradingClock:
             )
             arc_start, arc_extent = session_window_arc_angles(session, close_at=arc_close)
             ring = clock_state.get("session_ring", {})
-            if ring:
+            ring_refresh_due = (
+                time.perf_counter() - clock_state.get("last_ring_refresh", 0.0)
+                >= SESSION_CLOCK_RING_REFRESH_SECONDS
+            )
+            if ring and ring_refresh_due:
                 canvas.itemconfigure(
                     ring["schedule"], start=arc_start, extent=arc_extent, outline=palette["dim"],
                 )
@@ -4463,6 +4492,7 @@ class VeltrixTradingClock:
                     ring["close"], close_x-marker_size, close_y-marker_size,
                     close_x+marker_size, close_y+marker_size,
                 )
+                clock_state["last_ring_refresh"] = time.perf_counter()
         return progress
 
     def _session_progress_text(self, state, progress) -> str:
@@ -4547,11 +4577,11 @@ class VeltrixTradingClock:
         if hasattr(self, "session_performance_chart_canvas"):
             self.session_performance_chart_canvas.configure(bg=palette["panel"])
         for tile in (self.summary_open, self.summary_overlap, self.summary_next):
-            tile["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            tile["frame"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
             tile["title"].configure(bg=palette["panel"], fg=palette["muted"])
             tile["value"].configure(bg=palette["panel"], fg=palette["text"])
         for widgets in self.cards.values():
-            widgets["card"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            widgets["card"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
             widgets["top"].configure(bg=palette["panel"])
             widgets["analog"].configure(bg=palette["panel"])
             for key in ("name", "city", "time", "zone", "session_progress", "transition", "transition_at", "risk"):
@@ -4568,12 +4598,12 @@ class VeltrixTradingClock:
             widgets["divider"].configure(bg=palette["border"])
 
         for card in self.market_asset_cards.values():
-            card["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            card["frame"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
 
         for widget in (self.hour_spin, self.minute_spin, self.period_spin):
             widget.configure(
                 bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
-                buttonbackground=palette["button_bg"], highlightbackground=palette["border"],
+                buttonbackground=palette["button_bg"], highlightbackground=palette["entry_bg"],
                 highlightcolor=palette["bright"], disabledbackground=palette["entry_bg"],
                 disabledforeground=palette["muted"],
             )
@@ -4617,7 +4647,7 @@ class VeltrixTradingClock:
             self.session_performance_min_regime_coverage_spin,
         ):
             spin.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
-                           buttonbackground=palette["button_bg"], highlightbackground=palette["border"])
+                           buttonbackground=palette["button_bg"], highlightbackground=palette["entry_bg"])
         for entry in (
             self.event_name_entry, self.event_datetime_entry, self.calendar_search_entry,
             self.alerts_market_watch_entry,
@@ -4641,15 +4671,15 @@ class VeltrixTradingClock:
             self.alerts_recent_listbox,
         ):
             listbox.configure(bg=palette["bg"], fg=palette["text"], selectbackground=palette["button_active"],
-                              selectforeground=palette["bright"], highlightthickness=1,
-                              highlightbackground=palette["border"])
+                              selectforeground=palette["bright"], highlightthickness=0,
+                              highlightbackground=palette["entry_bg"])
         self.show_page(getattr(self, "current_page", "sessions"))
         self.theme_selector.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                                        activebackground=palette["button_active"], activeforeground=palette["bright"])
         try:
             menu = self.theme_selector["menu"]
             menu.configure(bg=palette["panel"], fg=palette["button_fg"], activebackground=palette["button_active"],
-                           activeforeground=palette["bright"], font=("Consolas", 9, "bold"), bd=1, relief="solid")
+                           activeforeground=palette["bright"], font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
         except tk.TclError:
             pass
         if self.alarm_window is not None:
@@ -4661,12 +4691,12 @@ class VeltrixTradingClock:
         style = ttk.Style(self.root)
         style.configure(
             "Veltrix.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=27, bordercolor=palette["border"],
-            font=("Consolas", 8),
+            fieldbackground=palette["bg"], rowheight=29, bordercolor=palette["bg"],
+            font=("Segoe UI", 9),
         )
         style.configure(
             "Veltrix.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
+            relief="flat", font=("Segoe UI", 9, "bold"),
         )
         style.map(
             "Veltrix.Treeview", background=[("selected", palette["button_active"])],
@@ -4681,12 +4711,12 @@ class VeltrixTradingClock:
         style = ttk.Style(self.root)
         style.configure(
             "Veltrix.Market.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
+            fieldbackground=palette["bg"], rowheight=29, bordercolor=palette["bg"],
+            font=("Segoe UI", 9),
         )
         style.configure(
             "Veltrix.Market.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
+            relief="flat", font=("Segoe UI", 9, "bold"),
         )
         style.map("Veltrix.Market.Treeview", background=[("selected", palette["button_active"])],
                   foreground=[("selected", palette["bright"])])
@@ -4774,9 +4804,9 @@ class VeltrixTradingClock:
 
         period = now.strftime("%p")
         canvas.create_text(width - 18, 17, text=period, anchor="ne", fill=palette["muted"],
-                           font=("Consolas", 10, "bold"), tags="clock-dynamic")
+                           font=("Segoe UI", 10, "bold"), tags="clock-dynamic")
         canvas.create_text(18, height - 15, text="SYSTEM LOCAL TIME", anchor="sw", fill=palette["muted"],
-                           font=("Consolas", 7, "bold"), tags="clock-dynamic")
+                           font=("Segoe UI", 9, "bold"), tags="clock-dynamic")
 
     # ------------------------------------------------------------------
     # Global market session updates
@@ -5048,19 +5078,19 @@ class VeltrixTradingClock:
         self.popup_label = tk.Label(
             self.alarm_window,
             text="ALARM SIGNAL ACTIVE\n" + (self.ringing_time.strftime("%I:%M %p") if self.ringing_time else ""),
-            font=("Consolas", 15, "bold"), justify="center", bd=0,
+            font=("Segoe UI", 15, "bold"), justify="center", bd=0,
         )
         self.popup_label.pack(pady=(27, 18))
         self.popup_frame = tk.Frame(self.alarm_window, bd=0)
         self.popup_frame.pack()
         self.snooze_button = tk.Button(
             self.popup_frame, text=f"SNOOZE {SNOOZE_MINUTES}M", command=self.snooze_alarm,
-            font=("Consolas", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
+            font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
         )
         self.snooze_button.grid(row=0, column=0, padx=6)
         self.dismiss_button = tk.Button(
             self.popup_frame, text="DISMISS", command=self.dismiss_alarm,
-            font=("Consolas", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
+            font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
         )
         self.dismiss_button.grid(row=0, column=1, padx=6)
         self._apply_popup_theme()

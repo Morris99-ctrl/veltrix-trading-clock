@@ -28,13 +28,13 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
     app.alerts_calendar_day = datetime.now(app.home_zone).date()
     app.alerts_watch_sort_descending = False
 
-    shell = app._frame(parent, bg="panel", padx=10, pady=9, highlightthickness=1, bd=0)
+    shell = app._frame(parent, bg="panel", padx=10, pady=9, highlightthickness=0, bd=0)
     shell.pack(fill="both", expand=True, pady=(0, 8))
 
     header = app._frame(shell, bg="panel")
     header.pack(fill="x", pady=(0, 7))
     app.alerts_brand_label = app._label(
-        header, "VELTRIX", bg="panel", fg="bright", font=("Consolas", 16, "bold")
+        header, "VELTRIX", bg="panel", fg="bright", font=("Segoe UI", 16, "bold")
     )
     app.alerts_brand_label.pack(side="left", padx=(5, 14))
     app._frame(header, bg="border", width=1).pack(
@@ -44,41 +44,41 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
     title_block.pack(side="left", anchor="w")
     app._label(
         title_block, "MARKET WATCH · TRADING HOURS", bg="panel", fg="text",
-        font=("Consolas", 10, "bold"),
+        font=("Segoe UI", 10, "bold"),
     ).pack(anchor="w")
     app._label(
         title_block, "LIVE SESSION COUNTDOWNS  |  FX REFERENCE WEEK  |  ECONOMIC NEWS",
-        bg="panel", fg="muted", font=("Consolas", 7),
+        bg="panel", fg="muted", font=("Segoe UI", 8),
     ).pack(anchor="w", pady=(2, 0))
 
     top = app._frame(shell, bg="panel")
     top.pack(fill="x", pady=(0, 8))
-    top.grid_columnconfigure(0, minsize=122)
+    top.grid_columnconfigure(0, minsize=142)
     top.grid_columnconfigure(1, weight=1)
-    top.grid_columnconfigure(2, minsize=174)
+    top.grid_columnconfigure(2, minsize=190)
 
-    system = app._frame(top, bg="bg", padx=9, pady=8, highlightthickness=1, bd=0)
+    system = app._frame(top, bg="bg", padx=9, pady=8, highlightthickness=0, bd=0)
     system.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
     app._label(system, "◉  SYSTEM TIME", bg="bg", fg="muted",
-               font=("Consolas", 7, "bold")).pack(anchor="w")
+               font=("Segoe UI", 8, "bold")).pack(anchor="w")
     app.alerts_system_time_label = app._label(
-        system, "--:--:--", bg="bg", fg="bright", font=("Consolas", 18, "bold")
+        system, "--:--:--", bg="bg", fg="bright", font=("Segoe UI", 18, "bold")
     )
     app.alerts_system_time_label.pack(anchor="w", pady=(8, 2))
     app.alerts_system_date_label = app._label(
-        system, "-- --- ----", bg="bg", fg="text", font=("Consolas", 7)
+        system, "-- --- ----", bg="bg", fg="text", font=("Segoe UI", 8)
     )
     app.alerts_system_date_label.pack(anchor="w")
     app.alerts_system_zone_label = app._label(
-        system, app.home_zone.key, bg="bg", fg="muted", font=("Consolas", 6)
+        system, app.home_zone.key, bg="bg", fg="muted", font=("Segoe UI", 8)
     )
     app.alerts_system_zone_label.pack(anchor="w", pady=(5, 0))
 
-    timeline_panel = app._frame(top, bg="bg", padx=8, pady=6, highlightthickness=1, bd=0)
+    timeline_panel = app._frame(top, bg="bg", padx=8, pady=6, highlightthickness=0, bd=0)
     timeline_panel.grid(row=0, column=1, sticky="nsew", padx=(0, 7))
     app._label(
         timeline_panel, "GLOBAL SESSION MAP · UTC 00:00–24:00",
-        bg="bg", fg="text", font=("Consolas", 7, "bold"),
+        bg="bg", fg="text", font=("Segoe UI", 8, "bold"),
     ).pack(anchor="w")
     app.alerts_session_canvas = tk.Canvas(
         timeline_panel, height=148, bg=palette["bg"], highlightthickness=0, bd=0,
@@ -86,10 +86,10 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
     app.alerts_session_canvas.pack(fill="both", expand=True, pady=(2, 0))
     app.alerts_session_timeline_signature = None
 
-    status = app._frame(top, bg="bg", padx=8, pady=7, highlightthickness=1, bd=0)
+    status = app._frame(top, bg="bg", padx=8, pady=7, highlightthickness=0, bd=0)
     status.grid(row=0, column=2, sticky="nsew")
     app._label(
-        status, "✓  CURRENT SESSION", bg="bg", fg="text", font=("Consolas", 7, "bold")
+        status, "✓  CURRENT SESSION", bg="bg", fg="text", font=("Segoe UI", 8, "bold")
     ).pack(anchor="w", pady=(0, 5))
     app.alerts_session_rows = {}
     for session in app.sessions:
@@ -97,30 +97,30 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
         line.pack(fill="x", pady=2)
         app._label(
             line, f"{_FLAG_MAP.get(session.flag, session.flag)}  {session.name.title()}",
-            bg="bg", fg="text", font=("Segoe UI", 7),
+            bg="bg", fg="text", font=("Segoe UI", 8),
         ).pack(side="left")
         state_label = app._label(
-            line, "CHECK", bg="bg", fg="muted", font=("Consolas", 7, "bold")
+            line, "CHECK", bg="bg", fg="muted", font=("Segoe UI", 8, "bold")
         )
         state_label.pack(side="right")
         app.alerts_session_rows[session.key] = state_label
     app.alerts_overlap_summary = app._label(
         status, "SESSION OVERLAP · CALCULATING", bg="bg", fg="muted",
-        font=("Consolas", 6, "bold"), anchor="w", justify="left", wraplength=160,
+        font=("Segoe UI", 8, "bold"), anchor="w", justify="left", wraplength=160,
     )
     app.alerts_overlap_summary.pack(fill="x", pady=(5, 0))
     app.alerts_active_summary = app._label(
-        status, "ACTIVE CENTRES · 0 / 4", bg="bg", fg="muted", font=("Consolas", 6),
+        status, "ACTIVE CENTRES · 0 / 4", bg="bg", fg="muted", font=("Segoe UI", 8),
         anchor="w",
     )
     app.alerts_active_summary.pack(fill="x", pady=(2, 0))
 
-    command = app._frame(shell, bg="panel", padx=7, pady=6, highlightthickness=1, bd=0)
+    command = app._frame(shell, bg="panel", padx=7, pady=6, highlightthickness=0, bd=0)
     command.pack(fill="x", pady=(0, 7))
     app.alerts_search_var = tk.StringVar(value="")
     app.alerts_market_watch_entry = tk.Entry(
         command, textvariable=app.alerts_search_var, width=21,
-        font=("Consolas", 8), relief="flat", bd=0,
+        font=("Segoe UI", 9), relief="flat", bd=0,
     )
     app.alerts_market_watch_entry.pack(side="left", padx=(4, 5), ipady=5)
     app.alerts_market_watch_entry.insert(0, "Search symbol / event")
@@ -132,31 +132,31 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
         command=lambda: refresh_alerts_dashboard(
             app, datetime.now(timezone.utc), app.latest_session_states, force=True
         ),
-        font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
     )
     app.alerts_search_button.pack(side="left", padx=(0, 5))
     app.alerts_clear_button = tk.Button(
         command, text="CLEAR", command=lambda: clear_watch_search(app),
-        font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
     )
     app.alerts_clear_button.pack(side="left")
     app.alerts_feed_state_label = app._label(
         command, "SHOWMYTRADES · WAITING FOR FEED",
-        bg="panel", fg="muted", font=("Consolas", 7),
+        bg="panel", fg="muted", font=("Segoe UI", 8),
     )
     app.alerts_feed_state_label.pack(side="left", padx=(16, 4))
     app.alerts_sort_up_button = tk.Button(
         command, text="↑ UP", command=lambda: set_watch_sort(app, False),
-        font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
     )
     app.alerts_sort_up_button.pack(side="right", padx=(4, 0))
     app.alerts_sort_down_button = tk.Button(
         command, text="↓ DOWN", command=lambda: set_watch_sort(app, True),
-        font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
     )
     app.alerts_sort_down_button.pack(side="right", padx=(4, 0))
     app.alerts_watch_count_label = app._label(
-        command, "SHOWING 0 / 28", bg="panel", fg="text", font=("Consolas", 7, "bold")
+        command, "SHOWING 0 / 28", bg="panel", fg="text", font=("Segoe UI", 8, "bold")
     )
     app.alerts_watch_count_label.pack(side="right", padx=(8, 10))
     app.alerts_search_var.trace_add(
@@ -165,11 +165,11 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
         )
     )
 
-    ticker = app._frame(shell, bg="bg", padx=7, pady=5, highlightthickness=1, bd=0)
+    ticker = app._frame(shell, bg="bg", padx=7, pady=5, highlightthickness=0, bd=0)
     ticker.pack(fill="x", pady=(0, 8))
     app.alerts_news_ticker_label = app._label(
         ticker, "●  NEXT NEWS · WAITING FOR THE ECONOMIC CALENDAR FEED",
-        bg="bg", fg="warning", font=("Consolas", 7, "bold"), anchor="w", justify="left",
+        bg="bg", fg="warning", font=("Segoe UI", 8, "bold"), anchor="w", justify="left",
     )
     app.alerts_news_ticker_label.pack(fill="x")
 
@@ -179,18 +179,18 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
     lower.grid_columnconfigure(1, weight=4, uniform="watch_columns")
     lower.grid_rowconfigure(0, weight=1)
 
-    watch_panel = app._frame(lower, bg="bg", padx=7, pady=7, highlightthickness=1, bd=0)
+    watch_panel = app._frame(lower, bg="bg", padx=7, pady=7, highlightthickness=0, bd=0)
     watch_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
     watch_header = app._frame(watch_panel, bg="bg")
     watch_header.pack(fill="x", pady=(0, 5))
     app._label(
         watch_header, "SYMBOL WATCHLIST · 28 MAJOR / CROSS FX PAIRS",
-        bg="bg", fg="text", font=("Consolas", 8, "bold"),
+        bg="bg", fg="text", font=("Segoe UI", 9, "bold"),
     ).pack(side="left")
     app._label(
         watch_panel,
         "REFERENCE SCHEDULE ONLY · NY 17:00 SUNDAY OPEN / FRIDAY CLOSE · NOT BROKER QUOTES",
-        bg="bg", fg="muted", font=("Consolas", 6),
+        bg="bg", fg="muted", font=("Segoe UI", 8),
     ).pack(anchor="w", pady=(0, 5))
     watch_frame = app._frame(watch_panel, bg="bg")
     watch_frame.pack(fill="both", expand=True)
@@ -219,32 +219,32 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
     app.alerts_watch_tree.pack(side="left", fill="both", expand=True)
     watch_scroll.pack(side="right", fill="y")
 
-    news_panel = app._frame(lower, bg="bg", padx=7, pady=7, highlightthickness=1, bd=0)
+    news_panel = app._frame(lower, bg="bg", padx=7, pady=7, highlightthickness=0, bd=0)
     news_panel.grid(row=0, column=1, sticky="nsew")
     app._label(
         news_panel, "NEWS CALENDAR · HIGH / MEDIUM IMPACT",
-        bg="bg", fg="text", font=("Consolas", 8, "bold"),
+        bg="bg", fg="text", font=("Segoe UI", 9, "bold"),
     ).pack(anchor="w", pady=(0, 6))
     news_controls = app._frame(news_panel, bg="bg")
     news_controls.pack(fill="x", pady=(0, 5))
     app.alerts_news_previous_button = tk.Button(
         news_controls, text="‹", command=lambda: shift_calendar_date(app, -1),
-        font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=6, pady=3, cursor="hand2",
+        font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=6, pady=3, cursor="hand2",
     )
     app.alerts_news_previous_button.pack(side="left")
     app.alerts_news_today_button = tk.Button(
         news_controls, text="TODAY", command=lambda: show_calendar_today(app),
-        font=("Consolas", 6, "bold"), relief="flat", bd=0, padx=6, pady=3, cursor="hand2",
+        font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=3, cursor="hand2",
     )
     app.alerts_news_today_button.pack(side="left", padx=(3, 0))
     app.alerts_news_next_button = tk.Button(
         news_controls, text="›", command=lambda: shift_calendar_date(app, 1),
-        font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=6, pady=3, cursor="hand2",
+        font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=6, pady=3, cursor="hand2",
     )
     app.alerts_news_next_button.pack(side="left", padx=(3, 5))
     app.alerts_news_date_label = app._label(
         news_controls, datetime.now(app.home_zone).strftime("%a %d %b").upper(),
-        bg="bg", fg="muted", font=("Consolas", 6, "bold"),
+        bg="bg", fg="muted", font=("Segoe UI", 8, "bold"),
     )
     app.alerts_news_date_label.pack(side="left", padx=(0, 5))
     app.alerts_news_impact_var = tk.StringVar(value="High + Medium")
@@ -286,24 +286,24 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
     app.alerts_news_tree.pack(side="left", fill="both", expand=True)
     news_scroll.pack(side="right", fill="y")
     app.alerts_news_count_label = app._label(
-        news_panel, "SHOWING 0 EVENTS", bg="bg", fg="muted", font=("Consolas", 6)
+        news_panel, "SHOWING 0 EVENTS", bg="bg", fg="muted", font=("Segoe UI", 8)
     )
     app.alerts_news_count_label.pack(anchor="w", pady=(4, 0))
     app.alerts_news_source_label = app._label(
         news_panel, "SOURCE · SHOWMYTRADES PUBLIC ECONOMIC CALENDAR",
-        bg="bg", fg="muted", font=("Consolas", 6), anchor="w", wraplength=330,
+        bg="bg", fg="muted", font=("Segoe UI", 8), anchor="w", wraplength=330,
     )
     app.alerts_news_source_label.pack(anchor="w", pady=(2, 0))
 
-    activity = app._frame(parent, bg="panel", padx=10, pady=7, highlightthickness=1, bd=0)
+    activity = app._frame(parent, bg="panel", padx=10, pady=7, highlightthickness=0, bd=0)
     activity.pack(fill="x", pady=(0, 7))
     app.alerts_recent_banner = app._label(
         activity, "RECENT ALERT ACTIVITY · NO ALERTS YET",
-        bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+        bg="panel", fg="muted", font=("Segoe UI", 8, "bold"),
     )
     app.alerts_recent_banner.pack(anchor="w", pady=(0, 4))
     app.alerts_recent_listbox = tk.Listbox(
-        activity, height=3, font=("Consolas", 7), relief="flat", bd=0,
+        activity, height=3, font=("Segoe UI", 8), relief="flat", bd=0,
         activestyle="none", exportselection=False,
     )
     app.alerts_recent_listbox.pack(fill="x")
@@ -337,11 +337,11 @@ def draw_alerts_session_timeline(app, now_utc: datetime, states: list) -> None:
         canvas.configure(bg=palette["bg"])
         canvas.create_text(
             left + span / 4, 8, text="AM", fill=palette["muted"],
-            font=("Consolas", 6, "bold"), tags="alerts-timeline-static",
+            font=("Segoe UI", 8, "bold"), tags="alerts-timeline-static",
         )
         canvas.create_text(
             left + span * 3 / 4, 8, text="PM", fill=palette["muted"],
-            font=("Consolas", 6, "bold"), tags="alerts-timeline-static",
+            font=("Segoe UI", 8, "bold"), tags="alerts-timeline-static",
         )
         for hour in range(25):
             x = left + span * hour / 24
@@ -354,7 +354,7 @@ def draw_alerts_session_timeline(app, now_utc: datetime, states: list) -> None:
             if hour < 24:
                 canvas.create_text(
                     x, 20, text=str(hour % 12 or 12), fill=palette["muted"],
-                    anchor="center", font=("Consolas", 5), tags="alerts-timeline-static",
+                    anchor="center", font=("Segoe UI", 9), tags="alerts-timeline-static",
                 )
         colours = (palette["success"], palette["bright"], palette["warning"], palette["error"])
         for index, session in enumerate(app.sessions):
@@ -362,7 +362,7 @@ def draw_alerts_session_timeline(app, now_utc: datetime, states: list) -> None:
             canvas.create_text(
                 left - 6, y + lane_height / 2,
                 text=_SESSION_SHORT_NAMES.get(session.key, session.name[:3]),
-                fill=palette["text"], anchor="e", font=("Consolas", 6, "bold"),
+                fill=palette["text"], anchor="e", font=("Segoe UI", 8, "bold"),
                 tags="alerts-timeline-static",
             )
             canvas.create_rectangle(
@@ -397,7 +397,7 @@ def draw_alerts_session_timeline(app, now_utc: datetime, states: list) -> None:
         )
         canvas.create_text(
             x, 9, text=marker.strftime("%H:%M"), fill=palette["bg"],
-            font=("Consolas", 5, "bold"), tags="alerts-timeline-dynamic",
+            font=("Segoe UI", 7, "bold"), tags="alerts-timeline-dynamic",
         )
 
 
@@ -646,13 +646,13 @@ def apply_alerts_tree_theme(app) -> None:
     for prefix in ("Veltrix.Watch", "Veltrix.News"):
         style.configure(
             f"{prefix}.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=23, bordercolor=palette["border"],
-            font=("Consolas", 7),
+            fieldbackground=palette["bg"], rowheight=29, bordercolor=palette["bg"],
+            font=("Segoe UI", 8),
         )
         style.configure(
             f"{prefix}.Treeview.Heading", background=palette["panel"],
             foreground=palette["bright"], relief="flat",
-            font=("Consolas", 7, "bold"),
+            font=("Segoe UI", 8, "bold"),
         )
         style.map(
             f"{prefix}.Treeview",

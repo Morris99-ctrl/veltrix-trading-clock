@@ -45,7 +45,9 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn('widgets["card"].configure(', MAIN_SOURCE)
 
     def test_session_clock_hands_sweep_independently_of_the_status_refresh(self):
-        self.assertIn("SESSION_CLOCK_FRAME_MS = 50", MAIN_SOURCE)
+        self.assertIn("SESSION_CLOCK_FRAME_MS = 16", MAIN_SOURCE)
+        self.assertIn("SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25", MAIN_SOURCE)
+        self.assertIn("session_clock_hand_polygon_coordinates", MAIN_SOURCE)
         self.assertIn("def _animate_session_clocks", MAIN_SOURCE)
         self.assertIn("SESSION_CLOCK_FRAME_MS, self._animate_session_clocks", MAIN_SOURCE)
         self.assertIn("self.session_animation_job", MAIN_SOURCE)
