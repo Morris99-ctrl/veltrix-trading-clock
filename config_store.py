@@ -12,7 +12,8 @@ from session_engine import load_session_definitions
 
 CONFIG_SCHEMA_VERSION = 1
 _MAPPING_SECTIONS = (
-    "alerts", "calendar", "market_data", "research", "regime_lab", "backtest", "focus", "session_profiles", "exchange_calendar", "session_risk", "exchange_calendar",
+    "alerts", "calendar", "market_data", "research", "regime_lab", "backtest", "focus",
+    "session_profiles", "exchange_calendar", "session_risk",
 )
 
 
