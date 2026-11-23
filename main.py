@@ -1548,7 +1548,7 @@ class VeltrixTradingClock:
 
         header = self._frame(self.regime_content, bg="panel", padx=14, pady=11)
         header.pack(fill="x", pady=(0, 9))
-        self._label(header, "MARKET REGIME RESEARCH LAB", bg="panel", fg="bright",
+        self._label(header, "CAUSAL MARKET REGIME LAB", bg="panel", fg="bright",
                     font=("Consolas", 10, "bold")).pack(anchor="w")
         self._label(
             header,
