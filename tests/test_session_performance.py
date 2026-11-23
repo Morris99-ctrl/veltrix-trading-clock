@@ -228,6 +228,105 @@ class SessionPerformanceTests(unittest.TestCase):
         self.assertEqual(result["metadata"]["valid_bars"], 1)
         self.assertEqual(result["sessions"][0]["bars_used"], 1)
 
+    def test_rolling_metrics_are_trailing_only_and_include_drawdown_and_compounding(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        bars = [
+            bar(f"2026-11-{day:02d}T08:00:00+00:00", 100, max(close, 101), min(close, 99), close)
+            for day, close in ((23, 110), (24, 90), (25, 120))
+        ]
+        result = analyse_session_performance(
+            bars, [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+            rolling_window_sessions=2, ranking_min_samples=2,
+        )
+        rows = result["session_daily"]
+        self.assertEqual(rows[0]["rolling_sample_sessions"], 1)
+        latest = rows[-1]
+        self.assertEqual(latest["rolling_sample_sessions"], 2)
+        self.assertAlmostEqual(latest["rolling_mean_return_pct"], 5.0)
+        self.assertAlmostEqual(latest["rolling_positive_rate_pct"], 50.0)
+        self.assertAlmostEqual(latest["rolling_compounded_return_pct"], 8.0)
+        self.assertAlmostEqual(latest["rolling_max_drawdown_pct"], -10.0)
+        self.assertAlmostEqual(latest["rolling_consistency_score"], 66.6666667)
+        summary = result["sessions"][0]
+        self.assertEqual(summary["rank"], 1)
+        self.assertEqual(len(result["ranked_sessions"]), 1)
+
+    def test_ranking_is_withheld_until_minimum_rolling_sample_is_met(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        bars = [
+            bar(f"2026-11-{day:02d}T08:00:00+00:00", 100, 102, 99, 101)
+            for day in (23, 24, 25)
+        ]
+        result = analyse_session_performance(
+            bars, [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+            rolling_window_sessions=3, ranking_min_samples=4,
+        )
+        self.assertEqual(result["sessions"][0]["rolling_sample_sessions"], 3)
+        self.assertFalse(result["sessions"][0]["ranking_eligible"])
+        self.assertIsNone(result["sessions"][0]["rank"])
+        self.assertEqual(result["ranked_sessions"], [])
+
+    def test_regime_breakdown_uses_dominant_causal_label_and_latest_tie_break(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        bars = []
+        labels = {}
+        regime_days = {
+            23: ("TREND_UP", "TREND_UP", "TREND_UP", "RANGE"),
+            24: ("RANGE", "RANGE", "TREND_DOWN", "TREND_DOWN"),
+            25: ("WARMUP", "WARMUP", "WARMUP", "WARMUP"),
+        }
+        for day, regimes in regime_days.items():
+            for hour, regime in zip((8, 9, 10, 11), regimes):
+                stamp = f"2026-11-{day:02d}T{hour:02d}:00:00+00:00"
+                bars.append(bar(stamp, 100, 102, 99, 101))
+                labels[stamp] = regime
+        result = analyse_session_performance(
+            bars, [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+            regime_labels=labels, minimum_regime_coverage_pct=50,
+        )
+        daily = result["session_daily"]
+        self.assertEqual(daily[0]["dominant_regime"], "TREND_UP")
+        self.assertEqual(daily[1]["dominant_regime"], "TREND_DOWN")
+        self.assertEqual(daily[1]["regime_coverage_pct"], 100.0)
+        self.assertEqual(daily[2]["dominant_regime"], "WARMUP")
+        self.assertFalse(daily[2]["regime_eligible"])
+        breakdown = {row["regime"]: row for row in result["regime_breakdown"]}
+        self.assertEqual(set(breakdown), {"TREND_UP", "TREND_DOWN"})
+        self.assertEqual(breakdown["TREND_UP"]["sample_days"], 1)
+        self.assertEqual(breakdown["TREND_DOWN"]["sample_days"], 1)
+
+    def test_regime_label_timestamps_are_normalised_from_explicit_offsets(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        stamp = "2026-11-23T08:00:00+00:00"
+        equivalent = "2026-11-23T11:00:00+03:00"
+        result = analyse_session_performance(
+            [bar(stamp, 100, 102, 99, 101)], [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+            regime_labels={equivalent: "RANGE"}, minimum_regime_coverage_pct=100,
+        )
+        self.assertEqual(result["session_daily"][0]["dominant_regime"], "RANGE")
+        self.assertEqual(result["session_daily"][0]["regime_coverage_pct"], 100.0)
+
+    def test_rolling_and_regime_thresholds_are_validated(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        bars = [bar("2026-11-23T08:00:00+00:00", 100, 102, 99, 101)]
+        with self.assertRaisesRegex(ValueError, "Rolling window"):
+            analyse_session_performance(
+                bars, [ny], bar_interval_minutes=60, rolling_window_sessions=1,
+            )
+        with self.assertRaisesRegex(ValueError, "cannot exceed"):
+            analyse_session_performance(
+                bars, [ny], bar_interval_minutes=60,
+                rolling_window_sessions=5, ranking_min_samples=6,
+            )
+        with self.assertRaisesRegex(ValueError, "Minimum regime coverage"):
+            analyse_session_performance(
+                bars, [ny], bar_interval_minutes=60, minimum_regime_coverage_pct=101,
+            )
+
     def test_empty_or_invalid_data_is_rejected(self):
         ny = self.session("ny", "New York", "America/New_York", "08:00", "17:00")
         with self.assertRaisesRegex(ValueError, "No valid"):

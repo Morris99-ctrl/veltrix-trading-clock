@@ -152,6 +152,36 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         ):
             self.assertIn(symbol, SESSION_PERFORMANCE_SOURCE)
 
+    def test_session_performance_v10_10_rolling_rankings_and_causal_regime_breakdown(self):
+        for symbol in (
+            "rolling_window_sessions=rolling_window",
+            "ranking_min_samples=ranking_minimum",
+            "regime_labels=causal_labels",
+            "minimum_regime_coverage_pct=minimum_regime_coverage",
+            "analyse_market_regimes(bars, regime_config)",
+            "Forward-return outcomes produced for the Regime Lab display are ignored.",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        for symbol in (
+            "ROLLING SESSION RANKING",
+            "SESSION RESULTS BY DOMINANT CAUSAL MARKET REGIME",
+            "MIN SAMPLE TO RANK",
+            "MIN REGIME COVERAGE",
+            "rolling_compounded_return_pct",
+            "rolling_max_drawdown_pct",
+            "consistency_score",
+        ):
+            self.assertIn(symbol, SESSION_PERFORMANCE_UI_SOURCE)
+        for symbol in (
+            "def _attach_rolling_metrics",
+            "def _dominant_regime",
+            "def _equity_path_metrics",
+            "rolling_window_sessions",
+            "regime_breakdown",
+            "Forward-return outcomes from Regime Lab are never consulted.",
+        ):
+            self.assertIn(symbol, SESSION_PERFORMANCE_SOURCE)
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
