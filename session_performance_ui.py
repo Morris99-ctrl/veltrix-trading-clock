@@ -134,7 +134,7 @@ def build_session_performance_page(app) -> None:
 
     advanced_filters = app._frame(controls, bg="panel")
     advanced_filters.grid(row=4, column=0, sticky="ew", pady=(8, 0))
-    app._label(advanced_filters, "ROLLING WINDOW · DAYS", bg="panel", fg="muted",
+    app._label(advanced_filters, "ROLLING WINDOW · SESSIONS", bg="panel", fg="muted",
                font=("Consolas", 7, "bold")).pack(side="left")
     app.session_performance_rolling_window_var = tk.StringVar(value="20")
     app.session_performance_rolling_window_spin = tk.Spinbox(
@@ -201,7 +201,7 @@ def build_session_performance_page(app) -> None:
         ("excluded", "EXCLUDED SESSION DAYS", "N/A"),
         ("period", "DATA PERIOD (UTC)", "N/A"),
         ("top", "TOP RANKED SESSION", "N/A"),
-        ("window", "ROLLING WINDOW", "20 DAYS"),
+        ("window", "ROLLING WINDOW", "20 SESSIONS"),
     )
     for index, (key, title, initial) in enumerate(metric_specs):
         row, column = divmod(index, 3)
