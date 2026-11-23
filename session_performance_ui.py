@@ -132,8 +132,36 @@ def build_session_performance_page(app) -> None:
     )
     app.session_performance_profile_label.pack(side="left")
 
+    advanced_filters = app._frame(controls, bg="panel")
+    advanced_filters.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+    app._label(advanced_filters, "ROLLING WINDOW · DAYS", bg="panel", fg="muted",
+               font=("Consolas", 7, "bold")).pack(side="left")
+    app.session_performance_rolling_window_var = tk.StringVar(value="20")
+    app.session_performance_rolling_window_spin = tk.Spinbox(
+        advanced_filters, from_=2, to=250, textvariable=app.session_performance_rolling_window_var,
+        width=5, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0,
+    )
+    app.session_performance_rolling_window_spin.pack(side="left", padx=(5, 16))
+    app._label(advanced_filters, "MIN SAMPLE TO RANK", bg="panel", fg="muted",
+               font=("Consolas", 7, "bold")).pack(side="left")
+    app.session_performance_ranking_min_samples_var = tk.StringVar(value="10")
+    app.session_performance_ranking_min_samples_spin = tk.Spinbox(
+        advanced_filters, from_=1, to=250, textvariable=app.session_performance_ranking_min_samples_var,
+        width=5, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0,
+    )
+    app.session_performance_ranking_min_samples_spin.pack(side="left", padx=(5, 16))
+    app._label(advanced_filters, "MIN REGIME COVERAGE", bg="panel", fg="muted",
+               font=("Consolas", 7, "bold")).pack(side="left")
+    app.session_performance_min_regime_coverage_var = tk.StringVar(value="50")
+    app.session_performance_min_regime_coverage_spin = tk.Spinbox(
+        advanced_filters, from_=0, to=100, increment=5,
+        textvariable=app.session_performance_min_regime_coverage_var,
+        width=5, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0,
+    )
+    app.session_performance_min_regime_coverage_spin.pack(side="left", padx=(5, 0))
+
     actions = app._frame(controls, bg="panel")
-    actions.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+    actions.grid(row=5, column=0, sticky="ew", pady=(10, 0))
     app.session_performance_import_button = tk.Button(
         actions, text="IMPORT / MANAGE CSV IN REGIME LAB",
         command=lambda: app.show_page("regime"),
@@ -172,6 +200,8 @@ def build_session_performance_page(app) -> None:
         ("interval", "BAR INTERVAL", "N/A"),
         ("excluded", "EXCLUDED SESSION DAYS", "N/A"),
         ("period", "DATA PERIOD (UTC)", "N/A"),
+        ("top", "TOP RANKED SESSION", "N/A"),
+        ("window", "ROLLING WINDOW", "20 DAYS"),
     )
     for index, (key, title, initial) in enumerate(metric_specs):
         row, column = divmod(index, 3)
@@ -197,7 +227,7 @@ def build_session_performance_page(app) -> None:
     chart_panel = app._frame(app.session_performance_content, bg="panel", padx=11, pady=9)
     chart_panel.pack(fill="x", pady=(0, 9))
     app._label(
-        chart_panel, "MEAN HISTORICAL SESSION RETURN · PER INCLUDED LOCAL SESSION DAY",
+        chart_panel, "LATEST ROLLING MEAN SESSION RETURN · PER INCLUDED LOCAL SESSION DAY",
         bg="panel", fg="bright", font=("Consolas", 8, "bold"),
     ).pack(anchor="w", pady=(0, 6))
     app.session_performance_chart_canvas = tk.Canvas(
@@ -268,6 +298,54 @@ def build_session_performance_page(app) -> None:
         )
     app.session_performance_overlap_tree.pack(fill="x")
 
+    ranking_panel = app._frame(tables, bg="panel", padx=10, pady=9)
+    ranking_panel.grid(row=2, column=0, sticky="nsew", pady=(7, 0))
+    app._label(
+        ranking_panel, "ROLLING SESSION RANKING · SIGNED CONSISTENCY SCORE",
+        bg="panel", fg="bright", font=("Consolas", 8, "bold"),
+    ).pack(anchor="w", pady=(0, 5))
+    app.session_performance_ranking_tree = ttk.Treeview(
+        ranking_panel,
+        columns=("rank", "session", "n", "mean", "positive", "score", "compound", "drawdown"),
+        show="headings", height=4, style="Veltrix.Performance.Treeview", selectmode="browse",
+    )
+    ranking_headings = {
+        "rank": ("RANK", 48, "center"), "session": ("SESSION", 105, "w"),
+        "n": ("ROLL N", 58, "center"), "mean": ("ROLL MEAN %", 90, "center"),
+        "positive": ("POSITIVE %", 80, "center"), "score": ("CONSISTENCY /100", 105, "center"),
+        "compound": ("ROLL COMPOUND %", 105, "center"), "drawdown": ("ROLL MAX DD %", 100, "center"),
+    }
+    for key, (heading, width, anchor) in ranking_headings.items():
+        app.session_performance_ranking_tree.heading(key, text=heading)
+        app.session_performance_ranking_tree.column(
+            key, width=width, minwidth=46, anchor=anchor, stretch=key == "session"
+        )
+    app.session_performance_ranking_tree.pack(fill="x")
+
+    regime_panel = app._frame(tables, bg="panel", padx=10, pady=9)
+    regime_panel.grid(row=3, column=0, sticky="nsew", pady=(7, 0))
+    app._label(
+        regime_panel, "SESSION RESULTS BY DOMINANT CAUSAL MARKET REGIME",
+        bg="panel", fg="bright", font=("Consolas", 8, "bold"),
+    ).pack(anchor="w", pady=(0, 5))
+    app.session_performance_regime_tree = ttk.Treeview(
+        regime_panel,
+        columns=("session", "regime", "days", "mean", "positive", "range", "volatility", "score"),
+        show="headings", height=6, style="Veltrix.Performance.Treeview", selectmode="browse",
+    )
+    regime_headings = {
+        "session": ("SESSION", 95, "w"), "regime": ("DOMINANT REGIME", 140, "w"),
+        "days": ("DAYS", 50, "center"), "mean": ("MEAN RETURN %", 90, "center"),
+        "positive": ("POSITIVE %", 80, "center"), "range": ("MEAN RANGE %", 90, "center"),
+        "volatility": ("MEAN REAL VOL %", 100, "center"), "score": ("CONSISTENCY /100", 105, "center"),
+    }
+    for key, (heading, width, anchor) in regime_headings.items():
+        app.session_performance_regime_tree.heading(key, text=heading)
+        app.session_performance_regime_tree.column(
+            key, width=width, minwidth=46, anchor=anchor, stretch=key == "session"
+        )
+    app.session_performance_regime_tree.pack(fill="x")
+
     note = app._frame(app.session_performance_content, bg="panel", padx=11, pady=9)
     note.pack(fill="x", pady=(0, 9))
     app._label(
@@ -279,8 +357,14 @@ def build_session_performance_page(app) -> None:
         "Returns are first observed session-bar open to last observed close. Range is observed high-to-low divided by first open. "
         "Realised volatility is the root-sum-square of observed bar log returns, expressed in percent (not annualised). "
         "Coverage is an estimate: observed bars / expected bars from the imported median interval. "
-        "Incomplete days below your minimum bars or coverage are shown as excluded and do not enter the averages. "
-        "Exchange holidays, broker-specific schedules, spreads, liquidity and execution are not inferred."
+        "Rolling metrics use only the current and earlier accepted session days. The signed consistency score is "
+        "50 + 50 × mean return / mean absolute return: 50 is neutral, above 50 is positive expectancy, below 50 is negative expectancy. "
+        "Ranking is withheld until the configured minimum rolling sample is met. Rolling max drawdown is the worst peak-to-trough "
+        "decline of the compounded gross daily-return path in that window. "
+        "Regime attribution uses the existing causal Regime Lab classifier. A session day is assigned to its most frequent classified "
+        "bar regime; ties go to the latest classified bar. Forward-return outcome fields are not used. Days below the regime-coverage "
+        "threshold are not included in the regime breakdown. "
+        "These statistics do not adjust for exchange holidays, broker-specific schedules, spreads, liquidity, transaction costs or execution."
     )
     app.session_performance_methodology_label = app._label(
         note, methodology, bg="panel", fg="muted",
@@ -297,7 +381,10 @@ def _clear_session_performance_result(app) -> None:
     app.session_performance_result_metadata = {}
     if hasattr(app, "session_performance_export_button"):
         app.session_performance_export_button.configure(state="disabled")
-    for tree_name in ("session_performance_tree", "session_performance_overlap_tree"):
+    for tree_name in (
+        "session_performance_tree", "session_performance_overlap_tree",
+        "session_performance_ranking_tree", "session_performance_regime_tree",
+    ):
         tree = getattr(app, tree_name, None)
         if tree is not None:
             tree.delete(*tree.get_children())
@@ -456,6 +543,13 @@ def render_session_performance_result(app, metadata: dict, result: dict) -> None
         "excluded": f"{excluded:,}",
         "period": period,
     }
+    ranked = result.get("ranked_sessions", [])
+    top = ranked[0] if ranked else None
+    values["top"] = (
+        f"{top['session']} · {float(top['rolling_consistency_score']):.1f}/100"
+        if top else "NO QUALIFYING RANK"
+    )
+    values["window"] = f"{int(meta.get('rolling_window_sessions', 20))} DAYS"
     for key, value in values.items():
         tiles[key]["value"].configure(text=value)
 
@@ -485,12 +579,47 @@ def render_session_performance_result(app, metadata: dict, result: dict) -> None
         tag = "positive" if (row.get("mean_return_pct") or 0) > 0 else "negative" if (row.get("mean_return_pct") or 0) < 0 else "neutral"
         app.session_performance_overlap_tree.insert("", "end", values=values, tags=(tag,))
 
+    app.session_performance_ranking_tree.delete(*app.session_performance_ranking_tree.get_children())
+    session_rows_by_key = {row["session_key"]: row for row in sessions}
+    ranked_keys = [row["session_key"] for row in ranked]
+    ranked_key_set = set(ranked_keys)
+    display_order = ranked_keys + [
+        row["session_key"] for row in sessions if row["session_key"] not in ranked_key_set
+    ]
+    for key in display_order:
+        row = session_rows_by_key[key]
+        values = (
+            str(row["rank"]) if row.get("rank") is not None else "—",
+            row["session"],
+            str(row.get("rolling_sample_sessions", 0)),
+            _format(row.get("rolling_mean_return_pct")),
+            _plain_pct(row.get("rolling_positive_rate_pct")),
+            f"{float(row['rolling_consistency_score']):.1f}" if row.get("rolling_consistency_score") is not None else "N/A",
+            _format(row.get("rolling_compounded_return_pct")),
+            _format(row.get("rolling_max_drawdown_pct")),
+        )
+        tag = "positive" if (row.get("rolling_mean_return_pct") or 0) > 0 else "negative" if (row.get("rolling_mean_return_pct") or 0) < 0 else "neutral"
+        app.session_performance_ranking_tree.insert("", "end", values=values, tags=(tag,))
+
+    app.session_performance_regime_tree.delete(*app.session_performance_regime_tree.get_children())
+    for row in result.get("regime_breakdown", []):
+        values = (
+            row["session"], row["regime"], str(row["sample_days"]),
+            _format(row["mean_return_pct"]), _plain_pct(row["positive_rate_pct"]),
+            _plain_pct(row["mean_range_pct"]), _plain_pct(row["mean_realised_volatility_pct"]),
+            f"{float(row['consistency_score']):.1f}" if row.get("consistency_score") is not None else "N/A",
+        )
+        tag = "positive" if (row.get("mean_return_pct") or 0) > 0 else "negative" if (row.get("mean_return_pct") or 0) < 0 else "neutral"
+        app.session_performance_regime_tree.insert("", "end", values=values, tags=(tag,))
+
     app.session_performance_export_button.configure(state="normal")
+    regime_sample_count = sum(row.get("sample_days", 0) for row in result.get("regime_breakdown", []))
     app.session_performance_status_label.configure(
         text=(
             f"STUDY COMPLETE · {metadata.get('name', 'DATASET')} · "
             f"{meta.get('valid_bars', 0):,} VALID BARS · {total_samples:,} INCLUDED SESSION DAYS · "
-            f"{excluded:,} EXCLUDED DAYS · {metadata.get('session_profile', 'CURRENT PROFILE')}"
+            f"{excluded:,} EXCLUDED DAYS · {len(ranked)} RANKED SESSIONS · "
+            f"{regime_sample_count} REGIME-SAMPLED DAYS · {metadata.get('session_profile', 'CURRENT PROFILE')}"
         ),
         fg=palette["success"],
     )
@@ -530,7 +659,10 @@ def apply_session_performance_theme(app) -> None:
     if hasattr(app, "session_performance_chart_canvas"):
         app.session_performance_chart_canvas.configure(bg=palette["panel"])
     if hasattr(app, "session_performance_tree"):
-        for tree_name in ("session_performance_tree", "session_performance_overlap_tree"):
+        for tree_name in (
+            "session_performance_tree", "session_performance_overlap_tree",
+            "session_performance_ranking_tree", "session_performance_regime_tree",
+        ):
             tree = getattr(app, tree_name)
             for tag, colour in (
                 ("positive", palette["success"]),
