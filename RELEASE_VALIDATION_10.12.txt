@@ -1,0 +1,28 @@
+VELTRIX TRADING CLOCK v10.12 — RELEASE VALIDATION
+
+Scope
+- Visual refresh of the existing v10.11 Core Edition.
+- No changes to market-data providers, session schedules, alert logic, analytics
+  calculations or chronological validation methodology.
+
+Automated checks
+- Python 3.10, 3.11 and 3.12 unit-test matrix: pending GitHub Actions.
+- Python compileall check: pending GitHub Actions.
+- Windows PyInstaller package: pending GitHub Actions.
+- Executable verification and artifact upload: pending GitHub Actions.
+
+Manual Windows GUI checklist
+- [ ] Launch the packaged executable on Windows 10/11.
+- [ ] Confirm legible Segoe UI typography and removal of white one-pixel card outlines.
+- [ ] Inspect Global Sessions clocks, timeline and session cards at the default
+      and minimum supported window sizes.
+- [ ] Inspect Alerts & Events, Market Watch, Session Performance, Regime Lab,
+      Volatility Lab and Focus & Goals.
+- [ ] Switch through CYAN, AMBER, MATRIX, VIOLET, ICE and LIGHT themes.
+- [ ] Confirm dropdowns, entries, spinboxes, Treeviews, scrollbars and popups
+      remain readable and correctly themed.
+- [ ] Confirm alarm, session alerts, calendar refresh and focus timers still work.
+
+Release gate
+- Keep the pull request in draft until automated checks pass and the manual
+  Windows GUI checklist is completed.
