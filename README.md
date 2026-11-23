@@ -1,6 +1,6 @@
-# Veltrix Trading Clock — v10.2 Core Edition
+# Veltrix Trading Clock — v10.3 Core Edition
 
-Veltrix v10.2 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.3 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -32,15 +32,13 @@ The map honours each session's IANA timezone and weekday schedule, including day
 
 The Global Sessions page is vertically scrollable so the clock cards, 24-hour map and footer remain accessible on shorter displays.
 
-## Global Session Intelligence
+## Market Session Intelligence (v10.3)
 
-The 24-hour UTC map sits beneath the four market clocks. It is generated from the same `SessionDefinition` objects used by the live clock cards and alert engine, rather than maintaining a second set of market hours.
+The session dashboard now includes selectable market-hours profiles and a custom profile editor. Built-in profiles are **Current Configuration**, **Forex Standard**, **Equities Cash** and **Extended Monitoring**. The custom editor lets the user set each market's local open/close time and active weekdays. Profile changes update the four clocks, live timeline, transition countdowns and overlap calculations together. The selected profile, original base schedule and custom hours are saved in the application configuration so switching profiles does not overwrite the starting schedule.
 
-Each market has its own lane showing its scheduled local trading window converted to UTC. The map starts at 00:00 UTC and ends at 24:00 UTC, with a live current-time marker. The separate overlap lane highlights periods when at least two configured sessions are scheduled open. The summary underneath lists the overlap participants and UTC times, total overlap duration, and the next three market transitions.
+The weekly-hours report calculates the Monday-Sunday schedule in each market's own local timezone. It reports scheduled hours and active weekdays for Sydney, Tokyo, London and New York, applying the relevant IANA timezone and daylight-saving offset for each local date.
 
-The map honours each session's IANA timezone and weekday schedule, including daylight-saving changes. It represents configured weekday hours only; exchange holidays, emergency closures, broker-specific hours and overnight schedules are not inferred. It is a schedule visualisation, not a live exchange-status feed.
-
-The Global Sessions page is vertically scrollable so the clock cards, 24-hour map and footer remain accessible on shorter displays.
+The historical overlap report supports 7, 30 and 90-day lookbacks. It reconstructs scheduled overlap intervals from the currently selected profile, reports total and average daily overlap time, busiest UTC date and overlap hours by market pair. This is a **schedule reconstruction**, not an observation of actual historical exchange openings. Public holidays, emergency closures, special sessions and broker-specific hours are not known unless represented in the configured schedule.
 
 ## Regime Lab data
 
@@ -97,16 +95,16 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
-The v10.2 validation run passed all 127 tests on Python 3.10, 3.11 and 3.12. The Windows PyInstaller build and executable verification also succeeded. Download the `Veltrix-Trading-Clock-v10.2-Windows` artifact from [successful workflow run 40](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45241544114). The run artifact is a build output, not a manually smoke-tested installation.
+The v10.2 validation baseline passed all 127 tests on Python 3.10, 3.11 and 3.12. Its Windows PyInstaller build and executable verification also succeeded. The v10.3 pipeline will validate the new intelligence engine and desktop package.
 
-The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline and overlap calculations, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
+The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations and profile validation, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
 A passing unit suite does not prove live provider uptime, native Windows rendering, data licensing or trading profitability.
 
 ## Project structure
 
 - main.py — integrated Tkinter interface and orchestration.
-- session_engine.py / session_clock.py / session_timeline.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, overlap calculations and alert scheduling.
+- session_engine.py / session_clock.py / session_timeline.py / session_intelligence.py / session_profiles.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, historical overlap analytics, weekly hours, selectable profiles and alert scheduling.
 - calendar_engine.py — public calendar client, cache and reminders.
 - market_data.py / volatility_engine.py — indicative market monitoring, ATR and expected-move calculations.
 - regime_engine.py — causal OHLC regime classification and outcome summaries.
