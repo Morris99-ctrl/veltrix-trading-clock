@@ -129,6 +129,107 @@ def _expected_overlap_bars(
     return max(0, int(math.ceil(total_seconds / (interval_minutes * 60.0))))
 
 
+
+REGIME_LABELS = ("RANGE", "TREND_UP", "TREND_DOWN", "VOLATILITY_SHOCK", "TRANSITION")
+
+
+def _sample_std(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    average = mean(values)
+    return math.sqrt(sum((value - average) ** 2 for value in values) / (len(values) - 1))
+
+
+def _equity_path_metrics(returns: list[float]) -> dict[str, float | None]:
+    if not returns:
+        return {
+            "compounded_return_pct": None,
+            "max_drawdown_pct": None,
+            "mean_return_pct": None,
+            "median_return_pct": None,
+            "std_return_pct": None,
+            "positive_rate_pct": None,
+            "mean_absolute_return_pct": None,
+            "consistency_score": None,
+        }
+    equity = 1.0
+    peak = 1.0
+    worst_drawdown = 0.0
+    for value in returns:
+        equity *= 1.0 + value / 100.0
+        peak = max(peak, equity)
+        drawdown = (equity / peak - 1.0) * 100.0 if peak > 0 else -100.0
+        worst_drawdown = min(worst_drawdown, drawdown)
+    average = mean(returns)
+    mean_absolute = mean(abs(value) for value in returns)
+    score = 50.0 if mean_absolute <= 1e-15 else 50.0 + 50.0 * average / mean_absolute
+    return {
+        "compounded_return_pct": (equity - 1.0) * 100.0,
+        "max_drawdown_pct": worst_drawdown,
+        "mean_return_pct": average,
+        "median_return_pct": median(returns),
+        "std_return_pct": _sample_std(returns),
+        "positive_rate_pct": sum(value > 0 for value in returns) / len(returns) * 100.0,
+        "mean_absolute_return_pct": mean_absolute,
+        "consistency_score": min(100.0, max(0.0, score)),
+    }
+
+
+def _attach_rolling_metrics(rows: list[dict[str, Any]], window: int) -> None:
+    """Attach trailing-only metrics to accepted daily observations in time order."""
+    ordered = sorted(rows, key=lambda item: str(item.get("first_bar_utc", "")))
+    seen_returns: list[float] = []
+    for row in ordered:
+        seen_returns.append(float(row["return_pct"]))
+        sample = seen_returns[-window:]
+        stats = _equity_path_metrics(sample)
+        row.update({
+            "rolling_sample_sessions": len(sample),
+            "rolling_mean_return_pct": stats["mean_return_pct"],
+            "rolling_median_return_pct": stats["median_return_pct"],
+            "rolling_std_return_pct": stats["std_return_pct"],
+            "rolling_positive_rate_pct": stats["positive_rate_pct"],
+            "rolling_compounded_return_pct": stats["compounded_return_pct"],
+            "rolling_max_drawdown_pct": stats["max_drawdown_pct"],
+            "rolling_consistency_score": stats["consistency_score"],
+        })
+
+
+def _dominant_regime(
+    bars: list[OHLCBar],
+    labels: dict[datetime, str],
+    minimum_coverage_pct: float,
+) -> tuple[str, float, int, int]:
+    observed = [labels.get(bar.timestamp) for bar in bars]
+    classified = [(index, label) for index, label in enumerate(observed) if label in REGIME_LABELS]
+    coverage = (len(classified) / len(bars) * 100.0) if bars else 0.0
+    if not classified:
+        return "WARMUP", coverage, 0, len(bars)
+    if coverage < minimum_coverage_pct:
+        return "INSUFFICIENT_COVERAGE", coverage, len(classified), len(bars) - len(classified)
+    counts: dict[str, int] = {}
+    for _index, label in classified:
+        counts[str(label)] = counts.get(str(label), 0) + 1
+    maximum = max(counts.values())
+    tied = {label for label, count in counts.items() if count == maximum}
+    # Ties are resolved by the latest classified bar in that session day.
+    dominant = next(str(label) for _index, label in reversed(classified) if label in tied)
+    return dominant, coverage, len(classified), len(bars) - len(classified)
+
+
+def _normalise_regime_labels(raw_labels: dict[str, str] | None) -> dict[datetime, str]:
+    result: dict[datetime, str] = {}
+    for raw_stamp, raw_label in (raw_labels or {}).items():
+        try:
+            stamp = datetime.fromisoformat(str(raw_stamp).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise ValueError("Regime-label timestamps must include a timezone or UTC offset.")
+        result[stamp.astimezone(timezone.utc)] = str(raw_label)
+    return result
+
+
 def analyse_session_performance(
     raw_bars: Iterable[OHLCBar | dict[str, Any]],
     sessions: Iterable[SessionDefinition],
@@ -136,6 +237,10 @@ def analyse_session_performance(
     bar_interval_minutes: float,
     minimum_bars_per_session: int = 3,
     minimum_coverage_pct: float = 50.0,
+    rolling_window_sessions: int = 20,
+    ranking_min_samples: int = 10,
+    regime_labels: dict[str, str] | None = None,
+    minimum_regime_coverage_pct: float = 50.0,
 ) -> dict[str, Any]:
     """Calculate local-session return/range/realised-volatility and overlap stats.
 
@@ -144,6 +249,13 @@ def analyse_session_performance(
     local [open, close) window. A date is included in session-level averages only
     when both the minimum bar count and estimated coverage threshold are met.
     Coverage is a count-based estimate from the median imported bar interval.
+    Rolling metrics use only the current and earlier accepted session days. The
+    signed consistency score is 50 + 50 * mean(return) / mean(abs(return)); it
+    rewards directionally consistent positive results and penalises negative
+    expectancy. It is descriptive, not a risk-adjusted or profitability score.
+    Regime attribution uses only causal labels for bars in the session day. The
+    dominant regime is the most frequent label, with ties resolved by the latest
+    classified bar. Forward-return outcomes from Regime Lab are never consulted.
     """
     try:
         interval = float(bar_interval_minutes)
@@ -157,7 +269,22 @@ def analyse_session_performance(
         raise ValueError("Minimum bars per session must be between 1 and 10,000.")
     if not math.isfinite(min_coverage) or not 0 <= min_coverage <= 100:
         raise ValueError("Minimum session coverage must be between 0 and 100 percent.")
+    try:
+        rolling_window = int(rolling_window_sessions)
+        ranking_min = int(ranking_min_samples)
+        regime_coverage_min = float(minimum_regime_coverage_pct)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Rolling, ranking and regime-coverage settings must be numeric.") from exc
+    if not 2 <= rolling_window <= 250:
+        raise ValueError("Rolling window must be between 2 and 250 session days.")
+    if not 1 <= ranking_min <= 250:
+        raise ValueError("Minimum ranking sample must be between 1 and 250.")
+    if ranking_min > rolling_window:
+        raise ValueError("Minimum ranking sample cannot exceed the rolling window.")
+    if not math.isfinite(regime_coverage_min) or not 0 <= regime_coverage_min <= 100:
+        raise ValueError("Minimum regime coverage must be between 0 and 100 percent.")
 
+    regime_by_time = _normalise_regime_labels(regime_labels)
     definitions = list(sessions)
     if not definitions:
         raise ValueError("At least one configured market session is required.")
@@ -212,11 +339,23 @@ def analyse_session_performance(
             open_utc, close_utc = _session_window(session, local_date)
             expected = max(1, int(math.ceil((close_utc - open_utc).total_seconds() / 60.0 / interval)))
             metrics = _daily_metrics(day_bars, expected)
+            dominant_regime, regime_coverage, regime_classified, regime_unclassified = (
+                _dominant_regime(day_bars, regime_by_time, regime_coverage_min)
+            )
             base = {
                 "row_type": "SESSION",
                 "date": local_date.isoformat(),
                 "session": session.name,
                 "session_key": session.key,
+                "dominant_regime": dominant_regime if regime_labels is not None else "NOT_RUN",
+                "regime_coverage_pct": regime_coverage if regime_labels is not None else None,
+                "regime_classified_bars": regime_classified if regime_labels is not None else 0,
+                "regime_unclassified_bars": regime_unclassified if regime_labels is not None else 0,
+                "regime_eligible": (
+                    regime_labels is not None
+                    and dominant_regime in REGIME_LABELS
+                    and regime_coverage >= regime_coverage_min
+                ),
                 **metrics,
             }
             if metrics["bars"] < min_bars:
@@ -233,6 +372,7 @@ def analyse_session_performance(
                 base["exclusion_reason"] = ""
             session_daily.append(base)
 
+        _attach_rolling_metrics(accepted, rolling_window)
         returns = [item["return_pct"] for item in accepted]
         ranges = [item["range_pct"] for item in accepted]
         volatilities = [item["realised_volatility_pct"] for item in accepted]
@@ -241,6 +381,8 @@ def analyse_session_performance(
         return_stats = _safe_stats(returns)
         range_stats = _safe_stats(ranges)
         vol_stats = _safe_stats(volatilities)
+        historical = _equity_path_metrics(returns)
+        latest = accepted[-1] if accepted else {}
         session_summaries.append({
             "session": session.name,
             "session_key": session.key,
@@ -258,6 +400,62 @@ def analyse_session_performance(
             "median_range_pct": range_stats["median"],
             "mean_realised_volatility_pct": vol_stats["mean"],
             "mean_coverage_pct": mean(coverages) if coverages else None,
+            "historical_std_return_pct": historical["std_return_pct"],
+            "historical_compounded_return_pct": historical["compounded_return_pct"],
+            "historical_max_drawdown_pct": historical["max_drawdown_pct"],
+            "historical_consistency_score": historical["consistency_score"],
+            "rolling_window_sessions": rolling_window,
+            "rolling_sample_sessions": latest.get("rolling_sample_sessions", 0),
+            "rolling_mean_return_pct": latest.get("rolling_mean_return_pct"),
+            "rolling_std_return_pct": latest.get("rolling_std_return_pct"),
+            "rolling_positive_rate_pct": latest.get("rolling_positive_rate_pct"),
+            "rolling_compounded_return_pct": latest.get("rolling_compounded_return_pct"),
+            "rolling_max_drawdown_pct": latest.get("rolling_max_drawdown_pct"),
+            "rolling_consistency_score": latest.get("rolling_consistency_score"),
+            "ranking_min_samples": ranking_min,
+            "ranking_eligible": int(latest.get("rolling_sample_sessions", 0)) >= ranking_min,
+            "rank": None,
+        })
+
+    eligible_rankings = sorted(
+        (
+            item for item in session_summaries
+            if item["ranking_eligible"] and item["rolling_consistency_score"] is not None
+        ),
+        key=lambda item: (
+            float(item["rolling_consistency_score"]),
+            float(item["rolling_mean_return_pct"] or 0.0),
+            int(item["rolling_sample_sessions"]),
+        ),
+        reverse=True,
+    )
+    for rank, item in enumerate(eligible_rankings, start=1):
+        item["rank"] = rank
+
+    regime_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    if regime_labels is not None:
+        for row in session_daily:
+            key = (str(row["session_key"]), str(row.get("dominant_regime", "")))
+            if row.get("included") and row.get("regime_eligible") and key[1] in REGIME_LABELS:
+                regime_groups.setdefault(key, []).append(row)
+    regime_breakdown: list[dict[str, Any]] = []
+    sessions_by_key = {item.key: item.name for item in definitions}
+    for (session_key, regime), rows in sorted(regime_groups.items()):
+        regime_returns = [float(row["return_pct"]) for row in rows]
+        regime_ranges = [float(row["range_pct"]) for row in rows]
+        regime_volatility = [float(row["realised_volatility_pct"]) for row in rows]
+        stats = _equity_path_metrics(regime_returns)
+        regime_breakdown.append({
+            "session": sessions_by_key[session_key],
+            "session_key": session_key,
+            "regime": regime,
+            "sample_days": len(rows),
+            "mean_return_pct": stats["mean_return_pct"],
+            "median_return_pct": stats["median_return_pct"],
+            "positive_rate_pct": stats["positive_rate_pct"],
+            "mean_range_pct": mean(regime_ranges) if regime_ranges else None,
+            "mean_realised_volatility_pct": mean(regime_volatility) if regime_volatility else None,
+            "consistency_score": stats["consistency_score"],
         })
 
     overlap_summaries: list[dict[str, Any]] = []
@@ -305,6 +503,7 @@ def analyse_session_performance(
                 row.update({"included": True, "exclusion_reason": ""})
                 accepted.append(row)
             overlap_daily.append(row)
+        _attach_rolling_metrics(accepted, rolling_window)
         returns = [float(item["return_pct"]) for item in accepted]
         ranges = [float(item["range_pct"]) for item in accepted]
         volatilities = [float(item["realised_volatility_pct"]) for item in accepted]
@@ -312,6 +511,8 @@ def analyse_session_performance(
         return_stats = _safe_stats(returns)
         range_stats = _safe_stats(ranges)
         vol_stats = _safe_stats(volatilities)
+        historical = _equity_path_metrics(returns)
+        latest = accepted[-1] if accepted else {}
         overlap_summaries.append({
             "pair": f"{session_names[pair[0]]} + {session_names[pair[1]]}",
             "pair_key": "+".join(pair),
@@ -327,6 +528,14 @@ def analyse_session_performance(
             ),
             "mean_range_pct": range_stats["mean"],
             "mean_realised_volatility_pct": vol_stats["mean"],
+            "rolling_window_sessions": rolling_window,
+            "rolling_sample_days": latest.get("rolling_sample_sessions", 0),
+            "rolling_mean_return_pct": latest.get("rolling_mean_return_pct"),
+            "rolling_positive_rate_pct": latest.get("rolling_positive_rate_pct"),
+            "rolling_compounded_return_pct": latest.get("rolling_compounded_return_pct"),
+            "rolling_max_drawdown_pct": latest.get("rolling_max_drawdown_pct"),
+            "rolling_consistency_score": latest.get("rolling_consistency_score"),
+            "historical_max_drawdown_pct": historical["max_drawdown_pct"],
         })
 
     return {
@@ -338,6 +547,17 @@ def analyse_session_performance(
             "last_timestamp_utc": bars[-1].timestamp.isoformat(),
             "minimum_bars_per_session": min_bars,
             "minimum_coverage_pct": min_coverage,
+            "rolling_window_sessions": rolling_window,
+            "ranking_min_samples": ranking_min,
+            "minimum_regime_coverage_pct": regime_coverage_min,
+            "regime_classification_available": regime_labels is not None,
+            "regime_classification_method": (
+                "Existing causal Regime Lab classifier; only current/past OHLC indicators and regime labels are used."
+                if regime_labels is not None else "Not run"
+            ),
+            "dominant_regime_rule": (
+                "Most frequent causal regime label among session-day bars; ties resolved by latest classified bar."
+            ),
             "timestamp_convention": "CSV timestamps are interpreted as bar-open times.",
             "session_assignment": "Local IANA timezone; bar-open timestamp in [open, close); configured weekdays.",
             "coverage_method": "Observed bars divided by expected bars estimated from median interval; capped at 100%.",
@@ -345,7 +565,9 @@ def analyse_session_performance(
             "classification_uses_future_data": False,
         },
         "sessions": session_summaries,
+        "ranked_sessions": eligible_rankings,
         "overlaps": overlap_summaries,
+        "regime_breakdown": regime_breakdown,
         "session_daily": session_daily,
         "overlap_daily": overlap_daily,
     }
@@ -359,6 +581,10 @@ def export_session_performance_csv(path: str | Path, analysis: dict[str, Any]) -
         "row_type", "date", "session", "session_key", "bars", "expected_bars",
         "coverage_pct", "return_pct", "range_pct", "realised_volatility_pct",
         "direction", "included", "exclusion_reason", "first_bar_utc", "last_bar_utc",
+        "rolling_sample_sessions", "rolling_mean_return_pct", "rolling_median_return_pct",
+        "rolling_std_return_pct", "rolling_positive_rate_pct", "rolling_compounded_return_pct",
+        "rolling_max_drawdown_pct", "rolling_consistency_score", "dominant_regime",
+        "regime_coverage_pct", "regime_classified_bars", "regime_unclassified_bars",
     )
     with destination.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
