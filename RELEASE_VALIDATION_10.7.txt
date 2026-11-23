@@ -1,0 +1,35 @@
+VELTRIX TRADING CLOCK v10.7 — RELEASE VALIDATION
+
+AUTOMATED VALIDATION
+- CI runs compileall and the complete unittest suite on Python 3.10, 3.11 and 3.12.
+- The Windows workflow builds the PyInstaller one-folder desktop app, verifies
+  the executable exists and uploads the v10.7 Windows artifact.
+- Confirm the latest successful workflow run on the v10.7 branch before release.
+
+MANUAL WINDOWS GUI CHECKLIST
+[ ] Launch the app at the normal 1160x1020 window size.
+[ ] Inspect the four session clocks in each of the six themes.
+[ ] Confirm progress ring, opening/closing markers and fill are legible.
+[ ] Confirm UTC-offset labels reflect the applicable daylight-saving rules.
+[ ] Confirm DAY/NIGHT CYCLE switches at 06:00 and 18:00 local time.
+[ ] Compare the World Session Dial tracks against the horizontal UTC session lanes.
+[ ] Click and drag across the timeline; confirm the probe cursor and active-session
+    summary follow the selected minute.
+[ ] Verify the live current-time marker remains visible while a probe is selected.
+[ ] Switch session profiles and confirm cards, rings, world dial and map update.
+[ ] Enable the cash-exchange overlay and inspect a known holiday/early-close date.
+[ ] Check the page at minimum window size and scroll to the footer and alarm controls.
+
+TIMEZONE / DATA INTEGRITY
+- The v10.7 visual layer consumes the existing SessionDefinition timezone names.
+- No IANA timezone identifiers, UTC conversion functions, session schedules,
+  or DST logic in session_engine.py were modified.
+- The day/night cycle is a local wall-clock display convention, not astronomical
+  data or a market signal.
+- Timeline probes use UTC calendar-day coordinates and display schedule state,
+  not actual trading liquidity or execution availability.
+
+RELEASE STATUS
+- Automated workflow results: inspect the latest v10.7 GitHub Actions run.
+- Manual Windows GUI verification: pending.
+- Do not mark this release as fully GUI-verified until the checklist is completed.
