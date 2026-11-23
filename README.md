@@ -144,7 +144,7 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
-The v10.8 baseline passed 193 tests and compileall on Python 3.10, 3.11 and 3.12, with Windows packaging successful. The v10.9 workflow adds session-performance metrics, overlap sampling, coverage filtering, export checks and desktop workspace wiring. See the latest GitHub Actions run and RELEASE_VALIDATION_10.9.txt; manual native Windows GUI review remains required.
+The v10.9 release passed **208 tests** and compileall on Python 3.10, 3.11 and 3.12. The Windows PyInstaller build, executable verification and artifact upload also succeeded in [workflow run 45269026544](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45269026544). Manual native Windows GUI review remains required; see RELEASE_VALIDATION_10.9.txt.
 
 The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 

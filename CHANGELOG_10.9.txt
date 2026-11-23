@@ -45,7 +45,8 @@ PRESERVED
   Focus & Goals and alarm clock remain available.
 
 VALIDATION
-- New tests cover session return/range/volatility calculations, local-time
-  assignment, DST changes, pairwise overlap calculations and sample filters.
-- Full test matrix and Windows standalone build results are recorded in CI.
+- **208 tests pass** across Python 3.10, 3.11 and 3.12. Regression tests cover
+  session return/range/volatility calculations, local-time assignment, DST,
+  pairwise overlap, sample filters, export and workspace wiring.
+- Windows desktop packaging and executable verification succeeded in CI.
 - Manual GUI review remains required.
