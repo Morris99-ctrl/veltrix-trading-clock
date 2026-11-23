@@ -265,15 +265,16 @@ def analyse_session_performance(
     session_names = {item.key: item.name for item in definitions}
     for pair, days in sorted(overlap_groups.items()):
         accepted: list[dict[str, Any]] = []
+        excluded_low_bars = 0
+        excluded_low_coverage = 0
+        left_session = next(item for item in definitions if item.key == pair[0])
+        right_session = next(item for item in definitions if item.key == pair[1])
         for utc_date, overlap_bars in sorted(days.items()):
             ordered = sorted(overlap_bars, key=lambda item: item.timestamp)
-            left_session = next(item for item in definitions if item.key == pair[0])
-            right_session = next(item for item in definitions if item.key == pair[1])
             expected_overlap = _expected_overlap_bars(
                 left_session, right_session, utc_date, interval
             )
             metrics = _daily_metrics(ordered, max(1, expected_overlap))
-            first_open = ordered[0].open
             # Per-bar OHLC returns describe the bars whose open timestamps fell
             # inside the pairwise overlap. They are not stitched across unobserved gaps.
             per_bar_returns = [
@@ -282,8 +283,6 @@ def analyse_session_performance(
                 if item.open > 0 and item.close > 0
             ]
             overlap_return = (math.exp(sum(per_bar_returns)) - 1.0) * 100.0
-            # Overlap volatility also uses individual OHLC bar returns only; no
-            # close-to-next-close stitching across unobserved gaps is performed.
             metrics["realised_volatility_pct"] = math.sqrt(
                 sum(value * value for value in per_bar_returns)
             ) * 100.0
@@ -295,10 +294,16 @@ def analyse_session_performance(
                 **metrics,
                 "return_pct": overlap_return,
                 "direction": "UP" if overlap_return > 0 else "DOWN" if overlap_return < 0 else "FLAT",
-                "included": True,
-                "exclusion_reason": "",
             }
-            accepted.append(row)
+            if int(metrics["bars"]) < min_bars:
+                excluded_low_bars += 1
+                row.update({"included": False, "exclusion_reason": "MINIMUM_BARS"})
+            elif float(metrics["coverage_pct"]) < min_coverage:
+                excluded_low_coverage += 1
+                row.update({"included": False, "exclusion_reason": "MINIMUM_COVERAGE"})
+            else:
+                row.update({"included": True, "exclusion_reason": ""})
+                accepted.append(row)
             overlap_daily.append(row)
         returns = [float(item["return_pct"]) for item in accepted]
         ranges = [float(item["range_pct"]) for item in accepted]
@@ -310,7 +315,10 @@ def analyse_session_performance(
         overlap_summaries.append({
             "pair": f"{session_names[pair[0]]} + {session_names[pair[1]]}",
             "pair_key": "+".join(pair),
+            "observed_days": len(days),
             "sample_days": count,
+            "excluded_low_bars": excluded_low_bars,
+            "excluded_low_coverage": excluded_low_coverage,
             "bars_used": sum(int(item["bars"]) for item in accepted),
             "mean_return_pct": return_stats["mean"],
             "median_return_pct": return_stats["median"],
