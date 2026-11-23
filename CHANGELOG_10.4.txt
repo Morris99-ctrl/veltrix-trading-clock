@@ -33,5 +33,5 @@ SCOPE LIMITATIONS
 - FX spot is not an exchange-listed cash-equity session. The overlay is opt-in and must not be treated as a universal FX holiday schedule.
 
 VALIDATION
-- v10.4 must pass compileall, unit tests on Python 3.10/3.11/3.12 and Windows PyInstaller packaging.
+- Final v10.4 GitHub Actions run 149 passed compileall and all 152 tests on Python 3.10, 3.11 and 3.12; Windows PyInstaller packaging, executable verification and artifact upload also succeeded. Dates outside a venue's published coverage are shown as SCHEDULE ONLY in the session cards.
 - Manual Windows testing must verify overlay toggle persistence, all six themes, holiday/early-close states, alerts, analytics, and the normal/minimum window layout.
