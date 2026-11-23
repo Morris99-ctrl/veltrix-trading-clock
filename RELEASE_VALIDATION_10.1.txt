@@ -13,24 +13,18 @@ Source-level checks
 - Added pure geometry tests and extended the Core Edition UI source regression test.
 - README, quick-start, installation guide, changelog and executable metadata now identify v10.1.
 
-Not yet confirmed
-First GitHub Actions run (run 7)
-- Python 3.10, 3.11 and 3.12 all passed dependency installation and compileall.
-- Each test matrix ran 119 tests; 118 passed and one test failed in each version.
-- The single failure was in the legacy-cache migration test: it checked a temporary file after its temporary directory had been cleaned up.
-- Fixed the test by asserting cache preservation inside the temporary-directory context (commit 6d2531435a72b3f35fa74a6bb5a6ce0125beba8e).
-- The Windows package job was skipped because the test matrix failed.
-- A successful rerun of the corrected test suite and Windows package is still required.
+Corrected GitHub Actions run (run 11)
+- Python 3.10, 3.11 and 3.12 all passed dependency installation, compileall and the
+  full 119-test suite.
+- The previous failing temporary-directory assertion was corrected in
+  tests/test_regime_data.py.
+- At the time this document was refreshed, the Windows desktop package job had
+  started but had not yet reported its final build/artifact result.
 
-- The new GitHub Actions workflow has been committed, but its first run result has not yet been inspected.
-- The complete Python unit-test suite has not been independently run in this editing session.
-- Native Windows GUI interaction has not been smoke-tested.
-
-Not executed in this validation pass
-- The complete Python unit-test suite has not been run against the final branch.
-- Python compileall has not been run against the final branch.
-- Native Windows PyInstaller packaging and installation have not been run.
-- Interactive GUI smoke testing at normal and minimum window sizes has not been performed.
+Still not verified
+- Interactive native Windows GUI smoke testing has not been performed.
+- A successful build does not replace a manual test of the four clocks at normal
+  and minimum window sizes, all six themes and timezone/session transitions.
 
 Required before production release
 1. Run: python -m unittest discover -s tests -v
