@@ -1,12 +1,12 @@
-# Veltrix Trading Clock — v10.3 Core Edition
+# Veltrix Trading Clock — v10.4 Core Edition
 
-Veltrix v10.3 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.4 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
 ## Included workspaces
 
-- **Global Sessions** — four individual neon analog clocks for Sydney, Tokyo, London and New York, each with a compact digital local-time display beneath it, open/closed status, next-transition countdowns, a UTC-aligned 24-hour session map and live overlap summaries.
+- **Global Sessions** — four individual neon analog clocks for Sydney, Tokyo, London and New York, each with a compact digital local-time display beneath it, open/closed status, next-transition countdowns, a UTC-aligned 24-hour session map, live overlap summaries and optional official cash-exchange holiday/early-close overlays.
 - **Alerts & Events** — configurable session opening/closing alerts, overlap warnings and personal economic-event reminders.
 - **Economic Calendar** — third-party public calendar feed, impact filters, cached results and high-impact reminders.
 - **Volatility Lab** — indicative Yahoo Finance market monitoring, ATR, one-day historical expected move and session volatility observations.
@@ -40,6 +40,18 @@ The weekly-hours report calculates the Monday-Sunday schedule in each market's o
 
 The historical overlap report supports 7, 30 and 90-day lookbacks. It reconstructs scheduled overlap intervals from the currently selected profile, reports total and average daily overlap time, busiest UTC date and overlap hours by market pair. This is a **schedule reconstruction**, not an observation of actual historical exchange openings. Public holidays, emergency closures, special sessions and broker-specific hours are not known unless represented in the configured schedule.
 
+## Exchange Calendar Intelligence (v10.4)
+
+An opt-in **CASH EXCHANGE HOLIDAYS / EARLY CLOSES** switch overlays published cash-market exceptions for ASX, Tokyo Stock Exchange / JPX, London Stock Exchange and NYSE on the four Global Sessions clocks, UTC timeline and session alerts. It is disabled by default so generic forex schedules are not silently treated as local cash-equity exchange hours.
+
+When enabled, a full exchange holiday marks the venue HOLIDAY, skips it in the 24-hour map and suppresses the normal open/close alerts for that date. Published actual early-close times shorten the venue clock state and timeline and are used by pre-close/close alerts. The weekly-hours and 7/30/90-day overlap summaries use the same exception overlay while it is enabled.
+
+The bundled calendar snapshot was checked on 23 November 2026 and currently covers ASX, Tokyo Stock Exchange and NYSE dates in 2026–2027, plus London Stock Exchange dates from 31 August 2026 through 2027. Dates outside a venue's published coverage are labelled OUT OF PUBLISHED RANGE rather than assumed to be verified normal days.
+
+**London half-day nuance:** LSE's published notice says its closing process commences from 12:30 on the listed Christmas Eve and year-end half-days. Veltrix displays and alerts on that closing-process start; it does not falsely claim that continuous trading definitely ends at 12:30. ASX's 14:10 normal-trading cessation and NYSE's 13:00 early close are modelled as actual early-close times.
+
+The calendar dataset is an offline, source-attributed snapshot, not a live exchange API. Venue/product scope, sources, dates and limitations are documented in [EXCHANGE_CALENDAR_SOURCES_10.4.md](EXCHANGE_CALENDAR_SOURCES_10.4.md). The ASX 24 derivatives calendar, JPX derivatives holiday-trading programme, NYSE extended sessions, London OTC/SI reporting, exchange amendments, emergency halts and broker-specific hours are not included.
+
 ## Regime Lab data
 
 Regime Lab now has its own **IMPORT OHLC CSV** workflow. It accepts timestamp plus Open, High, Low and Close columns, including common MT5-style separate Date/Time fields. Timestamps are normalised to UTC. Naive timestamps are interpreted using the configured home timezone (Africa/Nairobi by default).
@@ -52,7 +64,7 @@ On first launch, the Core Edition attempts a one-time migration of compatible fi
 
 The Volatility Lab retains its Yahoo Finance public chart integration. It is unofficial, may be delayed, rate-limited or unavailable, and has no uptime guarantee. Treat it as indicative monitoring data, not execution-grade market data. Verify important prices with your broker or a properly licensed provider.
 
-Session schedules are configurable weekday conventions. Public holidays, special exchange closures and broker-specific trading hours are not fully modelled. The economic calendar is third-party data; verify critical releases against their official issuers.
+Session schedules are configurable weekday conventions. The optional v10.4 cash-exchange overlay applies only the bundled published dates and venue scope described in EXCHANGE_CALENDAR_SOURCES_10.4.md; it is not a live exchange-status feed or a substitute for broker-specific trading hours. The economic calendar is third-party data; verify critical releases against their official issuers.
 
 The Core Edition does not connect to MT5, fetch provider history through Massive/Twelve Data, construct tick bars, backtest strategies or submit orders.
 
@@ -100,14 +112,14 @@ The v10.3 validation run passed all 138 tests and compileall on Python 3.10, 3.1
 
 The v10.2 validation baseline passed all 127 tests on Python 3.10, 3.11 and 3.12. Its Windows PyInstaller build and executable verification also succeeded. The v10.3 pipeline will validate the new intelligence engine and desktop package.
 
-The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations and profile validation, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
+The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes and alert suppression, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
 A passing unit suite does not prove live provider uptime, native Windows rendering, data licensing or trading profitability.
 
 ## Project structure
 
 - main.py — integrated Tkinter interface and orchestration.
-- session_engine.py / session_clock.py / session_timeline.py / session_intelligence.py / session_profiles.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, historical overlap analytics, weekly hours, selectable profiles and alert scheduling.
+- session_engine.py / session_clock.py / session_timeline.py / session_intelligence.py / session_profiles.py / exchange_calendar.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, historical overlap analytics, weekly hours, selectable profiles, exchange exceptions and alert scheduling.
 - calendar_engine.py — public calendar client, cache and reminders.
 - market_data.py / volatility_engine.py — indicative market monitoring, ATR and expected-move calculations.
 - regime_engine.py — causal OHLC regime classification and outcome summaries.
