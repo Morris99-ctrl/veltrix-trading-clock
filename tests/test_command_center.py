@@ -75,12 +75,15 @@ class CommandCenterEngineTests(unittest.TestCase):
         self.assertFalse(result["markets"][0]["fresh"])
 
     def test_live_volatility_expansion_becomes_a_caution_item(self):
-        result = self.snapshot(market_reports={
-            "gold": [{
-                "state": "LIVE SESSION", "regime": "EXPANSION", "ratio": 1.8,
-                "asset_name": "Spot Gold",
-            }]
-        })
+        result = self.snapshot(
+            market_reports={
+                "gold": [{
+                    "state": "LIVE SESSION", "regime": "EXPANSION", "ratio": 1.8,
+                    "asset_name": "Spot Gold",
+                }]
+            },
+            market_is_fresh=True,
+        )
         self.assertEqual(result["risks"][0]["severity"], "CAUTION")
         self.assertIn("1.80x", result["risks"][0]["detail"])
 
