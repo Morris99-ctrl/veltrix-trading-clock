@@ -1,4 +1,4 @@
-# Veltrix Trading Clock v10.4 — Core Edition
+# Veltrix Trading Clock v10.5 — Core Edition
 
 The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes selectable market-hours profiles, editable custom local schedules, weekly scheduled-hours summaries and 7/30/90-day reconstructed overlap reports. The Global Sessions dashboard displays four timezone-aware neon analog clocks with compact digital local-time readouts beneath each dial, followed by a UTC-aligned 24-hour map of scheduled trading windows and market overlaps. It retains global sessions, alarms, alerts, calendar, volatility monitoring, the independent Regime Lab CSV workflow and Focus & Goals.
 
@@ -62,6 +62,14 @@ The bundled data was checked on 23 November 2026. Coverage is venue-specific: AS
 NYSE and ASX actual early-close times shorten the session state. For the LSE dates marked as half-days, the exchange says the closing process commences from 12:30 London time; Veltrix displays this as a closing-process marker and does not force the market closed at 12:30.
 
 See [EXCHANGE_CALENDAR_SOURCES_10.4.md](EXCHANGE_CALENDAR_SOURCES_10.4.md) for source links, covered dates, product scope and limitations. The bundled snapshot is offline and does not receive automatic exchange amendments.
+
+## Session Risk Awareness
+
+Each of the four Global Sessions cards shows a session-risk label. NORMAL means no configured schedule risk flag is active. CAUTION may indicate an opening/closing window, a published early-close or closing-process event, a nearby holiday, or an unverified date outside calendar coverage. HIGH is used for a published full-day exchange holiday.
+
+Open **Alerts & Events** to set independent pre-open and pre-close reminder lead times for Sydney, Tokyo, London and New York. Adjust the global reminder defaults first, then tune each session's override row. The risk controls independently enable/disable card flags, risk notifications and holiday-liquidity cautions, and set the opening, closing and pre-open warning windows. Click SAVE ALERT SETTINGS to persist the controls.
+
+Holiday-liquidity messages are calendar-based cautions only. They do not measure actual volume, spread, order-book depth or market impact. Opening and closing warnings are time-window indicators, not forecasts of price volatility. Treat them as context for your own analysis, not trade instructions.
 
 ## Regime Lab
 
