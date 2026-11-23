@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import math
 import queue
-import shutil
 import sys
 import threading
 import time
@@ -18,7 +17,7 @@ from uuid import uuid4
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from zoneinfo import ZoneInfo
-from typing import Any, Callable, Optional
+from typing import Any
 
 from alert_engine import due_session_alerts
 from market_data import fetch_market_snapshot, load_market_cache, save_market_cache
