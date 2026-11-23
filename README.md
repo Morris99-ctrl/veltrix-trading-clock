@@ -1,6 +1,6 @@
-# Veltrix Trading Clock — v10.4 Core Edition
+# Veltrix Trading Clock — v10.5 Core Edition
 
-Veltrix v10.4 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.5 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -51,6 +51,16 @@ The bundled calendar snapshot was checked on 23 November 2026 and currently cove
 **London half-day nuance:** LSE's published notice says its closing process commences from 12:30 on the listed Christmas Eve and year-end half-days. Veltrix displays and alerts on that closing-process start; it does not falsely claim that continuous trading definitely ends at 12:30. ASX's 14:10 normal-trading cessation and NYSE's 13:00 early close are modelled as actual early-close times.
 
 The calendar dataset is an offline, source-attributed snapshot, not a live exchange API. Venue/product scope, sources, dates and limitations are documented in [EXCHANGE_CALENDAR_SOURCES_10.4.md](EXCHANGE_CALENDAR_SOURCES_10.4.md). The ASX 24 derivatives calendar, JPX derivatives holiday-trading programme, NYSE extended sessions, London OTC/SI reporting, exchange amendments, emergency halts and broker-specific hours are not included.
+
+## Session Risk Awareness (v10.5)
+
+Each Global Sessions card now includes a schedule-based risk assessment with NORMAL, CAUTION or HIGH severity. Flags distinguish an exchange holiday, published early close, exchange closing-process marker, opening window, near-close window, pre-open window, holiday-ahead caution, post-holiday caution and dates outside published venue-calendar coverage.
+
+The **Alerts & Events** page adds separate pre-open and pre-close lead times for Sydney, Tokyo, London and New York. Each session's reminder can be adjusted independently from the global default. The Session Risk Awareness panel configures whether flags and notifications are enabled, the opening/closing caution windows, the pre-open flag window and holiday-liquidity cautions.
+
+Holiday-adjacent flags are transparent calendar heuristics: they indicate that participation *may* be thinner before or after a published cash-exchange holiday. They are not measured liquidity, volume, spread, market depth or a forecast. Opening and closing windows are likewise time-based context flags, not volatility predictions. The risk panel does not submit trades or size positions.
+
+Session risk preferences and reminder overrides are stored locally in config.json. The risk flags use the currently selected session profile and respect the optional v10.4 exchange-calendar overlay. When the exchange overlay is disabled, exchange-specific holiday-liquidity flags are not inferred.
 
 ## Regime Lab data
 
@@ -109,14 +119,14 @@ Workflow details and build artifacts are available in the [GitHub Actions page](
 
 The v10.4 final validation run passed all 152 tests and compileall on Python 3.10, 3.11 and 3.12. The Windows PyInstaller build, executable verification and artifact upload also succeeded. Download the `Veltrix-Trading-Clock-v10.4-Windows` artifact from [successful workflow run 149](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45247555935). The packaged application still needs the manual interactive Windows GUI checks listed in RELEASE_VALIDATION_10.4.txt.
 
-The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes and alert suppression, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
+The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
 A passing unit suite does not prove live provider uptime, native Windows rendering, data licensing or trading profitability.
 
 ## Project structure
 
 - main.py — integrated Tkinter interface and orchestration.
-- session_engine.py / session_clock.py / session_timeline.py / session_intelligence.py / session_profiles.py / exchange_calendar.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, historical overlap analytics, weekly hours, selectable profiles, exchange exceptions and alert scheduling.
+- session_engine.py / session_clock.py / session_timeline.py / session_intelligence.py / session_profiles.py / exchange_calendar.py / risk_engine.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, historical overlap analytics, selectable profiles, exchange exceptions, session-risk flags and alert scheduling.
 - calendar_engine.py — public calendar client, cache and reminders.
 - market_data.py / volatility_engine.py — indicative market monitoring, ATR and expected-move calculations.
 - regime_engine.py — causal OHLC regime classification and outcome summaries.
