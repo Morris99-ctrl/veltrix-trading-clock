@@ -23,12 +23,12 @@ $exePath = Join-Path $installDir 'VeltrixTradingClock.exe'
 New-Item -ItemType Directory -Force -Path $installDir, $dataDir | Out-Null
 
 # Install program binaries separately from user data so upgrades do not erase
-# API credentials, broker tick files, caches, alarm audio or configuration.
+# settings, retained caches, alarm audio or focus history.
 Copy-Item -Path (Join-Path $BuiltAppDir '*') -Destination $installDir -Recurse -Force
 
 # First-install migration: copy only when the destination does not already
 # exist. An existing AppData file is always preserved during later upgrades.
-foreach ($name in @('config.json', 'calendar_cache.json', 'market_cache.json', 'research_cache.json', 'alarm_state.json', 'focus_goals.sqlite3', '.env', '.env.example', 'alarm.mp3')) {
+foreach ($name in @('config.json', 'calendar_cache.json', 'market_cache.json', 'research_cache.json', 'regime_data.json', 'alarm_state.json', 'focus_goals.sqlite3', 'alarm.mp3')) {
     $source = Join-Path $MigrationSourceDir $name
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
         $source = Join-Path $SourceDir $name
@@ -36,23 +36,6 @@ foreach ($name in @('config.json', 'calendar_cache.json', 'market_cache.json', '
     $destination = Join-Path $dataDir $name
     if ((Test-Path -LiteralPath $source -PathType Leaf) -and -not (Test-Path -LiteralPath $destination)) {
         Copy-Item -LiteralPath $source -Destination $destination
-    }
-}
-
-$destinationTicks = Join-Path $dataDir 'tick_data'
-New-Item -ItemType Directory -Force -Path $destinationTicks | Out-Null
-foreach ($tickSourceRoot in @((Join-Path $MigrationSourceDir 'tick_data'), (Join-Path $SourceDir 'tick_data'))) {
-    if (Test-Path -LiteralPath $tickSourceRoot -PathType Container) {
-        # Merge tick files without overwriting a file already in AppData.
-        Get-ChildItem -LiteralPath $tickSourceRoot -File -Recurse | ForEach-Object {
-            $relative = $_.FullName.Substring($tickSourceRoot.Length).TrimStart('\', '/')
-            $target = Join-Path $destinationTicks $relative
-            $targetParent = Split-Path -Parent $target
-            New-Item -ItemType Directory -Force -Path $targetParent | Out-Null
-            if (-not (Test-Path -LiteralPath $target)) {
-                Copy-Item -LiteralPath $_.FullName -Destination $target
-            }
-        }
     }
 }
 
@@ -80,7 +63,7 @@ $startShortcut.Description = 'Launch Veltrix Trading Clock'
 $startShortcut.Save()
 
 Write-Host "Installed application: $installDir"
-Write-Host "User data and .env folder: $dataDir"
+Write-Host "User data folder: $dataDir"
 Write-Host 'Created Desktop and Start-menu shortcuts.'
 
 if ($LaunchAfterInstall) {
