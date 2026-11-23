@@ -195,6 +195,70 @@ def _attach_rolling_metrics(rows: list[dict[str, Any]], window: int) -> None:
         })
 
 
+def _chronological_holdout_validation(
+    rows: list[dict[str, Any]],
+    *,
+    training_pct: float,
+    minimum_training_samples: int,
+    minimum_holdout_samples: int,
+) -> dict[str, Any]:
+    """Evaluate early observations against a strictly later chronological holdout.
+
+    Training metrics and ranking are calculated from the earliest accepted rows
+    only. The later holdout rows are evaluated separately and never influence the
+    training score or rank. This is a descriptive session-return validation,
+    not a strategy backtest or evidence of a tradable edge.
+    """
+    ordered = sorted(rows, key=lambda item: str(item.get("first_bar_utc", "")))
+    training_count = int(math.floor(len(ordered) * training_pct / 100.0))
+    training = ordered[:training_count]
+    holdout = ordered[training_count:]
+    eligible = (
+        len(training) >= minimum_training_samples
+        and len(holdout) >= minimum_holdout_samples
+    )
+    validation: dict[str, Any] = {
+        "validation_status": "READY" if eligible else "INSUFFICIENT_SAMPLE",
+        "validation_eligible": eligible,
+        "validation_training_sessions": len(training),
+        "validation_holdout_sessions": len(holdout),
+        "validation_training_start_date": training[0].get("date") if training else None,
+        "validation_training_end_date": training[-1].get("date") if training else None,
+        "validation_holdout_start_date": holdout[0].get("date") if holdout else None,
+        "validation_holdout_end_date": holdout[-1].get("date") if holdout else None,
+    }
+    metric_names = (
+        "mean_return_pct", "median_return_pct", "std_return_pct",
+        "positive_rate_pct", "compounded_return_pct", "max_drawdown_pct",
+        "consistency_score",
+    )
+    train_stats = _equity_path_metrics(
+        [float(row["return_pct"]) for row in training]
+    ) if eligible else {}
+    holdout_stats = _equity_path_metrics(
+        [float(row["return_pct"]) for row in holdout]
+    ) if eligible else {}
+    for name in metric_names:
+        validation[f"validation_training_{name}"] = train_stats.get(name)
+        validation[f"validation_holdout_{name}"] = holdout_stats.get(name)
+    train_mean = validation["validation_training_mean_return_pct"]
+    holdout_mean = validation["validation_holdout_mean_return_pct"]
+    validation["validation_mean_return_gap_pct"] = (
+        holdout_mean - train_mean
+        if train_mean is not None and holdout_mean is not None else None
+    )
+
+    training_ids = {id(row) for row in training}
+    for row in ordered:
+        row.update(validation)
+        row["validation_partition"] = (
+            "INSUFFICIENT_SAMPLE" if not eligible
+            else "TRAIN" if id(row) in training_ids else "HOLDOUT"
+        )
+        row["validation_rank"] = None
+    return validation
+
+
 def _dominant_regime(
     bars: list[OHLCBar],
     labels: dict[datetime, str],
@@ -241,6 +305,8 @@ def analyse_session_performance(
     ranking_min_samples: int = 10,
     regime_labels: dict[str, str] | None = None,
     minimum_regime_coverage_pct: float = 50.0,
+    validation_train_pct: float = 70.0,
+    validation_min_holdout_samples: int = 5,
 ) -> dict[str, Any]:
     """Calculate local-session return/range/realised-volatility and overlap stats.
 
@@ -273,8 +339,10 @@ def analyse_session_performance(
         rolling_window = int(rolling_window_sessions)
         ranking_min = int(ranking_min_samples)
         regime_coverage_min = float(minimum_regime_coverage_pct)
+        validation_train_share = float(validation_train_pct)
+        validation_holdout_min = int(validation_min_holdout_samples)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Rolling, ranking and regime-coverage settings must be numeric.") from exc
+        raise ValueError("Rolling, ranking, regime-coverage and validation settings must be numeric.") from exc
     if not 2 <= rolling_window <= 250:
         raise ValueError("Rolling window must be between 2 and 250 session days.")
     if not 1 <= ranking_min <= 250:
@@ -283,6 +351,10 @@ def analyse_session_performance(
         raise ValueError("Minimum ranking sample cannot exceed the rolling window.")
     if not math.isfinite(regime_coverage_min) or not 0 <= regime_coverage_min <= 100:
         raise ValueError("Minimum regime coverage must be between 0 and 100 percent.")
+    if not math.isfinite(validation_train_share) or not 50 <= validation_train_share <= 90:
+        raise ValueError("Validation training share must be between 50 and 90 percent.")
+    if not 1 <= validation_holdout_min <= 250:
+        raise ValueError("Minimum validation holdout sample must be between 1 and 250.")
 
     regime_by_time = _normalise_regime_labels(regime_labels)
     definitions = list(sessions)
@@ -345,6 +417,8 @@ def analyse_session_performance(
             base = {
                 "row_type": "SESSION",
                 "date": local_date.isoformat(),
+                "validation_partition": "EXCLUDED",
+                "validation_rank": None,
                 "session": session.name,
                 "session_key": session.key,
                 "dominant_regime": dominant_regime if regime_labels is not None else "NOT_RUN",
@@ -373,6 +447,12 @@ def analyse_session_performance(
             session_daily.append(base)
 
         _attach_rolling_metrics(accepted, rolling_window)
+        validation = _chronological_holdout_validation(
+            accepted,
+            training_pct=validation_train_share,
+            minimum_training_samples=ranking_min,
+            minimum_holdout_samples=validation_holdout_min,
+        )
         returns = [item["return_pct"] for item in accepted]
         ranges = [item["range_pct"] for item in accepted]
         volatilities = [item["realised_volatility_pct"] for item in accepted]
@@ -414,6 +494,8 @@ def analyse_session_performance(
             "rolling_consistency_score": latest.get("rolling_consistency_score"),
             "ranking_min_samples": ranking_min,
             "ranking_eligible": int(latest.get("rolling_sample_sessions", 0)) >= ranking_min,
+            **validation,
+            "validation_rank": None,
             "rank": None,
         })
 
@@ -431,6 +513,23 @@ def analyse_session_performance(
     )
     for rank, item in enumerate(eligible_rankings, start=1):
         item["rank"] = rank
+
+    validated_sessions = sorted(
+        (item for item in session_summaries if item["validation_eligible"]),
+        key=lambda item: (
+            float(item["validation_training_consistency_score"]),
+            float(item["validation_training_mean_return_pct"] or 0.0),
+            int(item["validation_training_sessions"]),
+        ),
+        reverse=True,
+    )
+    validation_rank_by_key: dict[str, int] = {}
+    for rank, item in enumerate(validated_sessions, start=1):
+        item["validation_rank"] = rank
+        validation_rank_by_key[str(item["session_key"])] = rank
+    for row in session_daily:
+        if row.get("validation_partition") in ("TRAIN", "HOLDOUT"):
+            row["validation_rank"] = validation_rank_by_key.get(str(row["session_key"]))
 
     regime_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     if regime_labels is not None:
@@ -550,6 +649,12 @@ def analyse_session_performance(
             "rolling_window_sessions": rolling_window,
             "ranking_min_samples": ranking_min,
             "minimum_regime_coverage_pct": regime_coverage_min,
+            "validation_train_pct": validation_train_share,
+            "validation_min_holdout_samples": validation_holdout_min,
+            "validation_method": (
+                "Chronological split of accepted session-day observations; earliest rows are training, latest rows are holdout. "
+                "Ranking uses training metrics only; holdout metrics are reported separately."
+            ),
             "regime_classification_available": regime_labels is not None,
             "regime_classification_method": (
                 "Existing causal Regime Lab classifier; only current/past OHLC indicators and regime labels are used."
@@ -566,6 +671,8 @@ def analyse_session_performance(
         },
         "sessions": session_summaries,
         "ranked_sessions": eligible_rankings,
+        "chronological_validation": session_summaries,
+        "validated_sessions": validated_sessions,
         "overlaps": overlap_summaries,
         "regime_breakdown": regime_breakdown,
         "session_daily": session_daily,
@@ -585,6 +692,18 @@ def export_session_performance_csv(path: str | Path, analysis: dict[str, Any]) -
         "rolling_std_return_pct", "rolling_positive_rate_pct", "rolling_compounded_return_pct",
         "rolling_max_drawdown_pct", "rolling_consistency_score", "dominant_regime",
         "regime_coverage_pct", "regime_classified_bars", "regime_unclassified_bars",
+        "validation_partition", "validation_rank", "validation_status",
+        "validation_training_sessions", "validation_holdout_sessions",
+        "validation_training_start_date", "validation_training_end_date",
+        "validation_holdout_start_date", "validation_holdout_end_date",
+        "validation_training_mean_return_pct", "validation_training_median_return_pct",
+        "validation_training_std_return_pct", "validation_training_positive_rate_pct",
+        "validation_training_compounded_return_pct", "validation_training_max_drawdown_pct",
+        "validation_training_consistency_score", "validation_holdout_mean_return_pct",
+        "validation_holdout_median_return_pct", "validation_holdout_std_return_pct",
+        "validation_holdout_positive_rate_pct", "validation_holdout_compounded_return_pct",
+        "validation_holdout_max_drawdown_pct", "validation_holdout_consistency_score",
+        "validation_mean_return_gap_pct",
     )
     with destination.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")

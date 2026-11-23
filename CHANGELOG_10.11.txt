@@ -1,0 +1,37 @@
+VELTRIX TRADING CLOCK v10.11 — CHRONOLOGICAL HOLDOUT VALIDATION
+Release date: 24 November 2026
+
+CHRONOLOGICAL SESSION VALIDATION
+- Added a date-ordered training / holdout split for accepted session-day returns.
+- Default split assigns the earliest 70% of accepted observations to training and
+  the latest 30% to the holdout. The training share is configurable from 50% to
+  90%; the minimum holdout sample defaults to 5 observations.
+- Session ranking is calculated using the training segment's signed consistency
+  score, then training mean return. Holdout observations never influence the
+  training metrics or ranking.
+- The validation table reports training / holdout sample sizes, training mean
+  return and consistency score, holdout mean return, positive-day rate,
+  compounded gross return and maximum drawdown.
+- Ranking and segment metrics are withheld when the training sample is below
+  the configured minimum ranking sample or the holdout is below its minimum.
+- CSV exports now label accepted daily rows TRAIN or HOLDOUT and include the
+  split dates, sample sizes and separate segment metrics.
+
+METHODOLOGY / LIMITATIONS
+- The split is chronological, per session, and uses only accepted session-day
+  observations after the existing minimum-bars and coverage filters.
+- The rank is trained on the earliest segment only; the later holdout is not
+  used to select or order sessions.
+- This is a single chronological holdout check of descriptive session returns.
+  It is not a strategy backtest, rolling walk-forward process, forecast or proof
+  of a tradable edge.
+- Returns remain gross of spreads, commissions, slippage, financing and
+  execution effects. Data gaps, session definitions, regime classification
+  settings and structural market changes can affect results.
+
+VALIDATION
+- Five additional automated tests cover chronological split boundaries,
+  training-only ranking, holdout isolation, sample gating, parameter validation
+  and CSV output.
+- Automated unit tests and Windows packaging are executed by the Core Edition
+  GitHub Actions workflow. Manual Windows GUI review remains required.

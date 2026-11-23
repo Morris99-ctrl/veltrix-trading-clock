@@ -160,8 +160,29 @@ def build_session_performance_page(app) -> None:
     )
     app.session_performance_min_regime_coverage_spin.pack(side="left", padx=(5, 0))
 
+    validation_filters = app._frame(controls, bg="panel")
+    validation_filters.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+    app._label(validation_filters, "TRAINING SHARE %", bg="panel", fg="muted",
+               font=("Consolas", 7, "bold")).pack(side="left")
+    app.session_performance_validation_train_pct_var = tk.StringVar(value="70")
+    app.session_performance_validation_train_pct_spin = tk.Spinbox(
+        validation_filters, from_=50, to=90, increment=5,
+        textvariable=app.session_performance_validation_train_pct_var,
+        width=5, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0,
+    )
+    app.session_performance_validation_train_pct_spin.pack(side="left", padx=(5, 16))
+    app._label(validation_filters, "MIN HOLDOUT DAYS", bg="panel", fg="muted",
+               font=("Consolas", 7, "bold")).pack(side="left")
+    app.session_performance_validation_min_holdout_var = tk.StringVar(value="5")
+    app.session_performance_validation_min_holdout_spin = tk.Spinbox(
+        validation_filters, from_=1, to=250,
+        textvariable=app.session_performance_validation_min_holdout_var,
+        width=5, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0,
+    )
+    app.session_performance_validation_min_holdout_spin.pack(side="left", padx=(5, 0))
+
     actions = app._frame(controls, bg="panel")
-    actions.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+    actions.grid(row=6, column=0, sticky="ew", pady=(10, 0))
     app.session_performance_import_button = tk.Button(
         actions, text="IMPORT / MANAGE CSV IN REGIME LAB",
         command=lambda: app.show_page("regime"),
@@ -346,6 +367,36 @@ def build_session_performance_page(app) -> None:
         )
     app.session_performance_regime_tree.pack(fill="x")
 
+
+    validation_panel = app._frame(tables, bg="panel", padx=10, pady=9)
+    validation_panel.grid(row=4, column=0, sticky="nsew", pady=(7, 0))
+    app._label(
+        validation_panel, "CHRONOLOGICAL HOLDOUT CHECK · RANKED ON TRAINING DATA ONLY",
+        bg="panel", fg="bright", font=("Consolas", 8, "bold"),
+    ).pack(anchor="w", pady=(0, 5))
+    app.session_performance_validation_tree = ttk.Treeview(
+        validation_panel,
+        columns=("rank", "session", "train_n", "holdout_n", "train_mean", "train_score",
+                 "holdout_mean", "holdout_positive", "holdout_compound", "holdout_drawdown", "status"),
+        show="headings", height=5, style="Veltrix.Performance.Treeview", selectmode="browse",
+    )
+    validation_headings = {
+        "rank": ("TRAIN RANK", 70, "center"), "session": ("SESSION", 100, "w"),
+        "train_n": ("TRAIN N", 62, "center"), "holdout_n": ("HOLDOUT N", 72, "center"),
+        "train_mean": ("TRAIN MEAN %", 90, "center"), "train_score": ("TRAIN SCORE", 82, "center"),
+        "holdout_mean": ("HOLDOUT MEAN %", 105, "center"),
+        "holdout_positive": ("HOLDOUT POSITIVE %", 115, "center"),
+        "holdout_compound": ("HOLDOUT COMPOUND %", 125, "center"),
+        "holdout_drawdown": ("HOLDOUT MAX DD %", 115, "center"),
+        "status": ("STATUS", 115, "center"),
+    }
+    for key, (heading, width, anchor) in validation_headings.items():
+        app.session_performance_validation_tree.heading(key, text=heading)
+        app.session_performance_validation_tree.column(
+            key, width=width, minwidth=48, anchor=anchor, stretch=key == "session"
+        )
+    app.session_performance_validation_tree.pack(fill="x")
+
     note = app._frame(app.session_performance_content, bg="panel", padx=11, pady=9)
     note.pack(fill="x", pady=(0, 9))
     app._label(
@@ -364,6 +415,8 @@ def build_session_performance_page(app) -> None:
         "Regime attribution uses the existing causal Regime Lab classifier. A session day is assigned to its most frequent classified "
         "bar regime; ties go to the latest classified bar. Forward-return outcome fields are not used. Days below the regime-coverage "
         "threshold are not included in the regime breakdown. "
+        "The chronological holdout check splits accepted days in date order: the earliest training share determines the training-only rank, "
+        "while the later holdout is measured separately and cannot affect that rank. It is a session-return stability check, not a strategy backtest. "
         "These statistics do not adjust for exchange holidays, broker-specific schedules, spreads, liquidity, transaction costs or execution."
     )
     app.session_performance_methodology_label = app._label(
@@ -384,6 +437,7 @@ def _clear_session_performance_result(app) -> None:
     for tree_name in (
         "session_performance_tree", "session_performance_overlap_tree",
         "session_performance_ranking_tree", "session_performance_regime_tree",
+        "session_performance_validation_tree",
     ):
         tree = getattr(app, tree_name, None)
         if tree is not None:
@@ -617,13 +671,48 @@ def render_session_performance_result(app, metadata: dict, result: dict) -> None
         app.session_performance_regime_tree.insert("", "end", values=values, tags=(tag,))
 
     app.session_performance_export_button.configure(state="normal")
+    validation_rows = result.get("chronological_validation", [])
+    app.session_performance_validation_tree.delete(
+        *app.session_performance_validation_tree.get_children()
+    )
+    validation_order = sorted(
+        validation_rows,
+        key=lambda row: (
+            row.get("validation_rank") is None,
+            row.get("validation_rank") or 999,
+            row.get("session", ""),
+        ),
+    )
+    for row in validation_order:
+        holdout_mean = row.get("validation_holdout_mean_return_pct")
+        values = (
+            str(row["validation_rank"]) if row.get("validation_rank") is not None else "—",
+            row["session"],
+            str(row.get("validation_training_sessions", 0)),
+            str(row.get("validation_holdout_sessions", 0)),
+            _format(row.get("validation_training_mean_return_pct")),
+            (
+                f"{float(row['validation_training_consistency_score']):.1f}"
+                if row.get("validation_training_consistency_score") is not None else "N/A"
+            ),
+            _format(holdout_mean),
+            _plain_pct(row.get("validation_holdout_positive_rate_pct")),
+            _format(row.get("validation_holdout_compounded_return_pct")),
+            _format(row.get("validation_holdout_max_drawdown_pct")),
+            "READY" if row.get("validation_eligible") else "NEED MORE DATA",
+        )
+        tag = "positive" if (holdout_mean or 0) > 0 else "negative" if (holdout_mean or 0) < 0 else "neutral"
+        app.session_performance_validation_tree.insert("", "end", values=values, tags=(tag,))
+
     regime_sample_count = sum(row.get("sample_days", 0) for row in result.get("regime_breakdown", []))
+    validation_count = len(result.get("validated_sessions", []))
     app.session_performance_status_label.configure(
         text=(
             f"STUDY COMPLETE · {metadata.get('name', 'DATASET')} · "
             f"{meta.get('valid_bars', 0):,} VALID BARS · {total_samples:,} INCLUDED SESSION DAYS · "
             f"{excluded:,} EXCLUDED DAYS · {len(ranked)} RANKED SESSIONS · "
-            f"{regime_sample_count} REGIME-SAMPLED DAYS · {metadata.get('session_profile', 'CURRENT PROFILE')}"
+            f"{regime_sample_count} REGIME-SAMPLED DAYS · {validation_count} HOLDOUT-VALIDATED SESSIONS · "
+            f"{metadata.get('session_profile', 'CURRENT PROFILE')}"
         ),
         fg=palette["success"],
     )
@@ -666,6 +755,7 @@ def apply_session_performance_theme(app) -> None:
         for tree_name in (
             "session_performance_tree", "session_performance_overlap_tree",
             "session_performance_ranking_tree", "session_performance_regime_tree",
+            "session_performance_validation_tree",
         ):
             tree = getattr(app, tree_name)
             for tag, colour in (
