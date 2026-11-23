@@ -100,6 +100,22 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         ):
             self.assertIn(symbol, MAIN_SOURCE)
 
+    def test_alerts_workspace_uses_screenshot_inspired_market_watch_layout(self):
+        for symbol in (
+            "from alerts_dashboard import",
+            "def _build_alerts_page",
+            "MARKET WATCH · TRADING HOURS",
+            "GLOBAL SESSION MAP · UTC 00:00–24:00",
+            "CURRENT SESSION",
+            "SYMBOL WATCHLIST · 28 MAJOR / CROSS FX PAIRS",
+            "NEWS CALENDAR · HIGH / MEDIUM IMPACT",
+            "REFERENCE SCHEDULE ONLY",
+            "def _toggle_alert_settings",
+            "refresh_alerts_dashboard(self, now_utc, states)",
+            "apply_alerts_tree_theme(self)",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
