@@ -84,6 +84,18 @@ class CommandCenterEngineTests(unittest.TestCase):
         self.assertEqual(result["risks"][0]["severity"], "CAUTION")
         self.assertIn("1.80x", result["risks"][0]["detail"])
 
+    def test_cached_market_snapshot_does_not_create_live_volatility_warning(self):
+        result = self.snapshot(
+            market_reports={
+                "gold": [{
+                    "state": "LIVE SESSION", "regime": "EXPANSION", "ratio": 1.8,
+                    "asset_name": "Spot Gold",
+                }]
+            },
+            market_is_fresh=False,
+        )
+        self.assertEqual(result["risks"], [])
+
     def test_schedule_risk_flags_are_not_created_when_disabled(self):
         states = [get_session_state(self.london, self.now.replace(hour=8, minute=5))]
         result = self.snapshot(
