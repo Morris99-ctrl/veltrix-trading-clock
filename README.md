@@ -1,10 +1,12 @@
-# Veltrix Trading Clock — v10.13 Smooth Session Clocks
+# Veltrix Trading Clock — v10.14 Trading Command Center
 
-Veltrix v10.12 builds on the Core Edition with a refreshed, high-readability desktop interface. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.14 adds a Trading Command Center overview on top of the v10.13 smooth session clocks and v10.12 high-readability desktop interface. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
 ## Included workspaces
+
+- **Trading Command Center** — default landing workspace with live session summaries, upcoming provider calendar releases, indicative quote/ATR/expected-move snapshots, schedule and volatility cautions, separate data-freshness labels, and a locally saved daily preparation checklist.
 
 - **Global Sessions** — four instrument-style analog clocks with session-progress rings, opening/closing markers, local UTC offsets and day/night-cycle labels; a concentric world-session dial; and an interactive UTC map with click-and-drag time probing, live overlap summaries and optional official cash-exchange holiday/early-close overlays.
 - **Alerts & Events / Market Watch** — a terminal-style dashboard with a 24-hour UTC market-hours map, current-session status, searchable 28-pair FX reference watchlist, weekend countdowns, news ticker and high/medium impact calendar; all existing alert rules remain available in an expandable preferences area.
@@ -14,6 +16,20 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime; v10.11 adds chronological training/holdout validation.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
+
+## v10.14 Trading Command Center
+
+The Command Center is the default landing workspace. It consolidates information already available elsewhere in the application without starting duplicate data providers or changing existing analytics:
+
+- Four session summaries show each market centre's local time, exchange-aware open/closed state and next scheduled transition.
+- Summary tiles show open-session count, active configured overlap, provider calendar events within 24 hours and market/calendar feed freshness.
+- Upcoming economic events show currency, impact, status, home-timezone release time and countdown. Cancelled, malformed and past events are excluded.
+- Market snapshots reuse the existing Yahoo Finance chart cache and report latest indicative quote, ATR(14) and historical one-day 1σ expected-move estimate. Cached values are explicitly labelled; missing values remain N/A rather than being represented as zero.
+- Risk & Attention combines existing schedule-based holiday/opening/closing warnings with live-session volatility expansion observations. These are contextual warnings, not trade signals or measured order-book risk.
+- A four-item daily pre-market checklist persists locally by home-timezone date and retains a bounded 14-day history.
+- Quick navigation opens the existing Global Sessions, Alerts & Events, Economic Calendar and Volatility Lab workspaces. The refresh control starts the existing non-blocking market and calendar workers.
+
+The dashboard uses the same session states and data providers as the existing workspaces. Market data remains unofficial and indicative; calendar entries remain provider-supplied. Freshness is shown separately for the two feeds, and no trade execution or broker connection is introduced.
 
 ## v10.13 clock-motion refinement
 
@@ -35,7 +51,7 @@ The Global Sessions dashboard presents four separate analog dials in a two-by-tw
 
 The dials use a layered instrument-style case and glass bezel, a recessed minute track, all 60 graduated minute marks, clear 1–12 hour numerals, diagonal bezel fasteners and a small Veltrix dial signature. Layered hour and minute hands use shadow and highlight strokes; the seconds hand has a rear counterweight and raised centre hub. A 24-hour session-window ring marks the configured opening and closing positions and fills as the session progresses. Faces are rendered once per size/theme/schedule and their retained Canvas objects are reused.
 
-A dedicated 50 ms animation loop advances each dial using sub-second local time. That makes the seconds hand sweep smoothly and lets the minute/hour hands progress continuously, independently of the slower session-status refresh. The four dials still use their own IANA timezones and retain the existing digital readout, status, countdown and risk information. Each card also displays the actual UTC offset for that instant, including daylight-saving changes, and a DAY/NIGHT CYCLE label based on a 06:00–18:00 local wall-clock convention. The cycle label is not a sunrise/sunset or astronomical daylight calculation. A published early-close time shortens the progress calculation when the exchange-calendar overlay supplies one.
+A dedicated 16 ms animation target advances each dial using sub-second local time (approximately 60 FPS; actual frame pacing depends on the desktop event loop). That makes the seconds hand sweep smoothly and lets the minute/hour hands progress continuously, independently of the slower session-status refresh. The four dials still use their own IANA timezones and retain the existing digital readout, status, countdown and risk information. Each card also displays the actual UTC offset for that instant, including daylight-saving changes, and a DAY/NIGHT CYCLE label based on a 06:00–18:00 local wall-clock convention. The cycle label is not a sunrise/sunset or astronomical daylight calculation. A published early-close time shortens the progress calculation when the exchange-calendar overlay supplies one.
 
 Each card also shows its city, timezone, OPEN/CLOSED state and the countdown to its next scheduled opening or closing. An open session receives a highlighted card border. The six application themes recolour the dials and hands consistently.
 
