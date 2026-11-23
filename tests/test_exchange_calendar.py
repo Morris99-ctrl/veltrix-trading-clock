@@ -137,7 +137,7 @@ class ExchangeCalendarTests(unittest.TestCase):
         self.assertEqual(london.ends_at.astimezone(self.by_key["london"].tz).strftime("%H:%M"), "17:00")
 
     def test_full_holiday_suppresses_open_close_alerts(self):
-        session = self.by_key["nyse"]
+        session = self.by_key["new_york"]
         now = self.local_time("new_york", "2026-11-26", "09:00")
         alerts = due_session_alerts(
             [session], now,
