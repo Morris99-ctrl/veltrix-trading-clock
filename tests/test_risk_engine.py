@@ -50,7 +50,7 @@ class SessionRiskEngineTests(unittest.TestCase):
 
         self.assertEqual(assessment.level, "HIGH")
         self.assertIn("EXCHANGE_HOLIDAY", codes)
-        self.assertIn("PRE_HOLIDAY_LIQUIDITY", codes)
+        self.assertNotIn("PRE_HOLIDAY_LIQUIDITY", codes)
 
     def test_pre_holiday_caution_flags_the_last_configured_session_before_close(self):
         now, state = self.state("new_york", "2026-11-25T10:00")
