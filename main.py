@@ -3979,6 +3979,13 @@ class VeltrixTradingClock:
             if state.calendar_status == "EXCHANGE_HOLIDAY":
                 widgets["status"].configure(text="● HOLIDAY", fg=palette["error"])
                 transition_text = f"EXCHANGE CLOSED · OPENS IN {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status in {"OUT_OF_RANGE", "NO_VENUE_MAPPING"}:
+                widgets["status"].configure(text="● SCHEDULE ONLY", fg=palette["warning"])
+                transition_text = (
+                    f"BASE SCHEDULE CLOSE IN  {format_countdown(state.seconds_to_transition)}"
+                    if state.is_open
+                    else f"BASE SCHEDULE OPEN IN  {format_countdown(state.seconds_to_transition)}"
+                )
             elif state.calendar_status == "CLOSING_PROCESS" and state.transition_kind == "CLOSE_PROCESS":
                 widgets["status"].configure(text="● CLOSING PROCESS", fg=palette["warning"])
                 transition_text = f"PROCESS STARTS IN  {format_countdown(state.seconds_to_transition)}"
