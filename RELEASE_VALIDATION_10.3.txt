@@ -13,11 +13,13 @@ Important interpretation
 - Weekly hours are schedule calculations for each market's local Monday-Sunday week.
 - Historical overlap analytics reconstruct prior schedules using the currently selected profile and IANA timezone rules. They are not observed market history. Unknown public holidays, emergency closures, special sessions and broker-specific hours are not included.
 
-Required automated checks
-1. Run: python -m compileall -q .
-2. Run: python -m unittest discover -s tests -v
-3. Build the Windows desktop package with GitHub Actions.
-4. Verify the v10.3 Windows executable exists and the artifact upload succeeds.
+Completed automated checks (GitHub Actions run 92)
+1. Python 3.10, 3.11 and 3.12 compileall passed.
+2. All 138 unit tests passed on each Python version.
+3. Windows hash-pinned build dependencies installed successfully.
+4. PyInstaller built the Windows one-folder application.
+5. Executable existence verification passed.
+6. The Veltrix-Trading-Clock-v10.3-Windows artifact uploaded successfully.
 
 Required manual Windows checks
 1. Switch between all four built-in profiles and confirm the four clocks, open/closed states, timeline and transitions update together.
