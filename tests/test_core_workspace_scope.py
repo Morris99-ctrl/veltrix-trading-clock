@@ -39,7 +39,8 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("from session_timeline import build_session_timeline", MAIN_SOURCE)
         self.assertIn("def _build_session_timeline", MAIN_SOURCE)
         self.assertIn("def _draw_session_timeline", MAIN_SOURCE)
-        self.assertIn("build_session_timeline(self.sessions, start_utc, hours=24)", MAIN_SOURCE)
+        self.assertIn("build_session_timeline(", MAIN_SOURCE)
+        self.assertIn("apply_exchange_calendar=self.exchange_calendar_enabled_var.get()", MAIN_SOURCE)
         self.assertIn("self._draw_session_timeline(now_utc, states)", MAIN_SOURCE)
         self.assertIn("self.sessions_canvas", MAIN_SOURCE)
 
@@ -51,7 +52,7 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
             "def edit_custom_session_profile",
             "def _refresh_session_intelligence",
             "WEEKLY SCHEDULED HOURS · LOCAL MON–SUN",
-            "PAST {period}D SCHEDULED OVERLAP",
+            "PAST {period}D",
             "EDIT CUSTOM",
         ):
             self.assertIn(symbol, MAIN_SOURCE)
