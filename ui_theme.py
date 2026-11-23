@@ -131,7 +131,7 @@ def apply_veltrix_classic_widget_palette(
                             selectbackground=palette["button_active"],
                             selectforeground=palette["bright"],
                             highlightbackground=palette["panel"],
-                            highlightcolor=palette["panel"], highlightthickness=0, highlightthickness=0,
+                            highlightcolor=palette["panel"], highlightthickness=0,
                             disabledbackground=palette["panel"],
                             disabledforeground=palette["muted"],
                         )
