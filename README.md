@@ -1,6 +1,6 @@
-# Veltrix Trading Clock — v10.11 Core Edition
+# Veltrix Trading Clock — v10.12 Visual Refresh
 
-Veltrix v10.10 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.12 builds on the Core Edition with a refreshed, high-readability desktop interface. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -14,6 +14,14 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime; v10.11 adds chronological training/holdout validation.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
+
+## v10.12 interface refresh
+
+- Uses Segoe UI across the desktop interface for clearer labels, forms, buttons and tables.
+- Removes bright one-pixel outlines from card containers. Panels use layered surfaces, restrained separators and improved spacing instead.
+- Refreshes the dark palette with higher-contrast text, softer teal accents and clearer success, warning and error colours. LIGHT, AMBER, MATRIX, VIOLET and ICE themes remain available.
+- Rebalances the desktop window for a wider workstation layout and improves table row heights and control padding.
+- Preserves the session clocks, analytics, alerts, data behaviour and all v10.11 functionality.
 
 ## Global Sessions clock interface
 
@@ -35,7 +43,7 @@ The map honours each session's IANA timezone and weekday schedule, including day
 
 The Global Sessions page is vertically scrollable so the clock cards, world dial, 24-hour map and footer remain accessible on shorter displays. The World Session Dial plots Sydney, Tokyo, London and New York windows as four concentric UTC tracks and rotates a live UTC pointer around the 24-hour face. The horizontal timeline accepts click-and-drag probing: select any minute in the current UTC day to inspect which configured sessions are open at that instant. The probe is temporary and resets when the UTC day changes. The dial and timeline use the same session definitions and optional exchange-calendar overlay.
 
-## Session Performance Intelligence (v10.11)
+## Session Performance Intelligence (v10.12)
 
 Session Performance reuses datasets already imported in Regime Lab. Import an OHLC CSV once; the same local dataset appears in the Session Performance selector. The analysis uses the active session profile and each session's own IANA timezone. Changing the selected dataset or session profile invalidates old output.
 
