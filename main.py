@@ -1618,7 +1618,8 @@ class VeltrixTradingClock:
         actions.grid(row=3, column=0, sticky="ew", pady=(3, 0))
         self.regime_import_button = tk.Button(
             actions, text="IMPORT OHLC CSV", command=self.import_regime_csv,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7,
+            cursor="hand2", state="disabled",
         )
         self.regime_import_button.pack(side="left", padx=(0, 7))
         self.regime_run_button = tk.Button(
@@ -1774,6 +1775,7 @@ class VeltrixTradingClock:
 
         self.regime_datasets = dict(payload.get("datasets", {}))
         self.regime_cache_loading = False
+        self.regime_import_button.configure(state="normal")
         self._refresh_regime_dataset_choices(
             preferred_key=str(self.regime_settings.get("selected_asset") or "")
         )
@@ -1843,7 +1845,7 @@ class VeltrixTradingClock:
         self.regime_settings["selected_asset"] = mapping.get(target, "")
 
     def import_regime_csv(self) -> None:
-        if self.regime_import_in_progress:
+        if self.regime_cache_loading or self.regime_import_in_progress:
             return
         path = filedialog.askopenfilename(
             parent=self.root, title="Import OHLC history for Regime Lab",
