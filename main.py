@@ -3906,6 +3906,7 @@ class VeltrixTradingClock:
             for key in ("name", "city", "time", "zone", "transition", "transition_at", "risk"):
                 widgets[key].configure(bg=palette["panel"])
             widgets["name"].configure(fg=palette["text"])
+            widgets["risk"].configure(fg=palette["muted"])
             widgets["city"].configure(fg=palette["muted"])
             widgets["time"].configure(fg=palette["bright"])
             widgets["zone"].configure(fg=palette["muted"])
@@ -3944,7 +3945,7 @@ class VeltrixTradingClock:
             bg=palette["panel"], fg=palette["text"], selectcolor=palette["dim"],
             activebackground=palette["panel"], activeforeground=palette["bright"],
         )
-        for check in self.alert_checkbuttons:
+        for check in (*self.alert_checkbuttons, *self.risk_checkbuttons):
             check.configure(bg=palette["panel"], fg=palette["text"], selectcolor=palette["dim"],
                             activebackground=palette["panel"], activeforeground=palette["bright"])
         for spin in (
