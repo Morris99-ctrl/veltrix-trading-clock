@@ -84,6 +84,11 @@ class VeltrixTradingClock:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.config = self._load_config()
+        # Drop retired workspace preferences when an existing v9.x config is reused.
+        self.config.pop("research", None)
+        self.config.pop("backtest", None)
+        if isinstance(self.config.get("regime_lab"), dict):
+            self.config["regime_lab"].pop("selected_asset", None)
         self.sessions = load_session_definitions(self.config["sessions"])
         self.home_zone = ZoneInfo(self.config.get("home_timezone", "Africa/Nairobi"))
         self.refresh_ms = max(1000, min(5000, int(self.config.get("refresh_milliseconds", 1000))))
