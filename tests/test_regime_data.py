@@ -132,11 +132,13 @@ class RegimeDataTests(unittest.TestCase):
 
             result = load_regime_datasets(destination, legacy)
 
+            # The migration reads the previous cache but must never delete it.
+            self.assertTrue(legacy.exists())
+
         self.assertTrue(result["migrated_from_legacy"])
         self.assertEqual(set(result["datasets"]), {"broker_gold", "provider_gold"})
         self.assertEqual(result["skipped_tick_datasets"], 1)
         self.assertFalse(destination.exists())
-        self.assertTrue(legacy.exists())
 
     def test_existing_regime_store_takes_precedence_over_legacy_cache(self):
         with tempfile.TemporaryDirectory() as directory:
