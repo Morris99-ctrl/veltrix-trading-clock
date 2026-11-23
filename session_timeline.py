@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 
 from session_engine import SessionDefinition
+from exchange_calendar import EXCHANGE_BY_SESSION, get_exchange_event
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ def build_session_timeline(
     starts_at: datetime,
     *,
     hours: int = 24,
+    apply_exchange_calendar: bool = False,
 ) -> SessionTimeline:
     """Build local-weekday sessions clipped to a UTC timeline range.
 
@@ -77,8 +79,16 @@ def build_session_timeline(
             if local_date.weekday() not in session.weekdays:
                 continue
 
+            event = (
+                get_exchange_event(EXCHANGE_BY_SESSION[session.key], local_date)
+                if apply_exchange_calendar and session.key in EXCHANGE_BY_SESSION else None
+            )
+            if event and event.status == "CLOSED":
+                continue
+
             local_open = datetime.combine(local_date, session.opens, tzinfo=session.tz)
-            local_close = datetime.combine(local_date, session.closes, tzinfo=session.tz)
+            close_time = event.close_time if event and event.status == "EARLY_CLOSE" else session.closes
+            local_close = datetime.combine(local_date, close_time, tzinfo=session.tz)
             open_utc, close_utc = local_open.astimezone(timezone.utc), local_close.astimezone(timezone.utc)
             clipped_start = max(start_utc, open_utc)
             clipped_end = min(end_utc, close_utc)
