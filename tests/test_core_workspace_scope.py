@@ -29,9 +29,11 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
     def test_global_session_cards_use_live_analog_and_digital_clocks(self):
         self.assertIn("def _draw_session_analog_clock", MAIN_SOURCE)
         self.assertIn('"analog": analog_canvas', MAIN_SOURCE)
-        self.assertIn('self._draw_session_analog_clock(widgets["analog"], state.local_now)', MAIN_SOURCE)
+        self.assertIn('self._draw_session_analog_clock(widgets["analog_clock"], state.local_now)', MAIN_SOURCE)
         self.assertIn('font=("Consolas", 15, "bold")', MAIN_SOURCE)
         self.assertIn('widgets["analog"].configure(bg=palette["panel"])', MAIN_SOURCE)
+        self.assertIn('canvas.coords(clock_state["hands"][hand_name]', MAIN_SOURCE)
+        self.assertIn('widgets["card"].configure(', MAIN_SOURCE)
 
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
