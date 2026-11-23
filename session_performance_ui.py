@@ -292,9 +292,27 @@ def build_session_performance_page(app) -> None:
     refresh_session_performance_dataset_choices(app)
 
 
+def _clear_session_performance_result(app) -> None:
+    app.session_performance_result = None
+    app.session_performance_result_metadata = {}
+    if hasattr(app, "session_performance_export_button"):
+        app.session_performance_export_button.configure(state="disabled")
+    for tree_name in ("session_performance_tree", "session_performance_overlap_tree"):
+        tree = getattr(app, tree_name, None)
+        if tree is not None:
+            tree.delete(*tree.get_children())
+    for tile in getattr(app, "session_performance_metric_tiles", {}).values():
+        tile["value"].configure(text="N/A")
+    draw_session_performance_chart(app)
+
+
 def refresh_session_performance_dataset_choices(app) -> None:
     if not hasattr(app, "session_performance_dataset_combo"):
         return
+    if hasattr(app, "session_performance_profile_label"):
+        app.session_performance_profile_label.configure(
+            text=str(app.active_session_profile).upper()
+        )
     labels = []
     mapping = {}
     for label, key in app.regime_dataset_label_to_key.items():
@@ -322,6 +340,16 @@ def selected_dataset_key(app) -> str:
 
 def update_dataset_info(app) -> None:
     key = selected_dataset_key(app)
+    result_metadata = getattr(app, "session_performance_result_metadata", {})
+    if getattr(app, "session_performance_result", None) is not None and (
+        result_metadata.get("key") != key
+        or result_metadata.get("session_profile") != app.active_session_profile
+    ):
+        _clear_session_performance_result(app)
+        app.session_performance_status_label.configure(
+            text="DATASET OR SESSION PROFILE CHANGED · RUN A NEW STUDY BEFORE USING THESE RESULTS",
+            fg=THEMES[app.theme_name]["warning"],
+        )
     record = app.regime_datasets.get(key, {})
     if not isinstance(record, dict) or not record.get("bars"):
         app.session_performance_dataset_info.configure(

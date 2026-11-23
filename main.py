@@ -1178,6 +1178,7 @@ class VeltrixTradingClock:
         self.sessions = sessions
         self.config["sessions"] = schedules
         self.active_session_profile = selected
+        refresh_session_performance_dataset_choices(self)
         self.config["session_profiles"] = {
             "selected": selected,
             "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
