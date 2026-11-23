@@ -1,4 +1,4 @@
-VELTRIX TRADING CLOCK v10.2 — CORE EDITION
+VELTRIX TRADING CLOCK v10.3 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
