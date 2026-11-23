@@ -12,7 +12,6 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
@@ -22,17 +21,8 @@ from zoneinfo import ZoneInfo
 from typing import Any, Callable, Optional
 
 from alert_engine import due_session_alerts
-from market_data import fetch_chart, fetch_market_snapshot, load_market_cache, save_market_cache
+from market_data import fetch_market_snapshot, load_market_cache, save_market_cache
 from volatility_engine import instrument_summary, session_volatility_report, evaluate_volatility_regimes
-from bar_engine import build_bars_from_tick_csv, import_tick_csv
-from backtest_engine import (
-    BacktestConfig, export_backtest_html, export_trades_csv, run_out_of_sample, run_walk_forward,
-)
-from research_engine import (
-    analyse_research_assets, build_research_instrument_choices, custom_research_asset_key,
-    export_daily_observations_csv, export_html_report, export_summary_csv, import_ohlc_csv, infer_bar_interval_minutes,
-    load_research_cache, save_research_cache,
-)
 from calendar_engine import (
     calendar_is_due,
     calendar_retry_delay_seconds,
@@ -42,10 +32,6 @@ from calendar_engine import (
     save_calendar_cache,
 )
 from desktop_notifications import send_desktop_notification
-from data_gateway import (
-    CREDENTIAL_LOAD_ERROR, DataGatewayError, PROVIDER_CATALOG, audit_ohlc_bars, compare_ohlc_datasets,
-    fetch_massive_bars, fetch_twelve_data_bars, provider_statuses, test_provider_connection,
-)
 from session_engine import format_countdown, get_session_state, load_session_definitions
 from themes import THEMES
 from ui_theme import (
@@ -54,6 +40,7 @@ from ui_theme import (
 from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
+from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -67,12 +54,12 @@ BASE_DIR = APP_DATA_DIR
 CONFIG_PATH = BASE_DIR / "config.json"
 CALENDAR_CACHE_PATH = BASE_DIR / "calendar_cache.json"
 MARKET_CACHE_PATH = BASE_DIR / "market_cache.json"
-RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
-TICK_DATA_DIR = BASE_DIR / "tick_data"
+REGIME_DATA_PATH = BASE_DIR / "regime_data.json"
+LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "9.6"
+APP_VERSION = "10.0"
 UI_QUEUE_POLL_MS = 500
 
 DIGIT_SEGMENTS = {
@@ -262,41 +249,22 @@ class VeltrixTradingClock:
         self.market_summaries: dict[str, dict] = {}
         self.market_status_message = "WAITING FOR MARKET DATA"
 
-        # Phase 6 historical research datasets. Imported CSV data and provider
-        # history are kept separately so refreshes never silently overwrite a broker import.
-        # Large research caches are read after the UI is built, never during Tk startup.
-        self.research_cache: dict = {"assets": {}, "provider_assets": {}, "tick_sources": {}}
-        self.research_asset_data: dict[str, dict] = {}
-        self.research_provider_assets: dict[str, dict] = {}
-        self.research_tick_sources: dict[str, dict] = {}
-        self.tick_source_label_to_key: dict[str, str] = {}
-        self.tick_source_var = tk.StringVar(value="")
-        self.tick_bar_method_var = tk.StringVar(value="Tick Imbalance")
-        self.tick_fixed_size_var = tk.StringVar(value="500")
-        self.tick_seed_size_var = tk.StringVar(value="250")
-        self.tick_ewma_span_var = tk.StringVar(value="20")
-        self.tick_imbalance_ewma_span_var = tk.StringVar(value="20")
-        self.tick_min_imbalance_var = tk.StringVar(value="0.05")
-        self.tick_output_name_var = tk.StringVar(value="")
-        self.research_cache_loading = True
-        self.research_cache_load_queue: queue.Queue[dict | None] = queue.Queue()
-        self.research_cache_load_job: str | None = None
-        self.research_cache_write_queue: queue.Queue[dict | None] = queue.Queue(maxsize=1)
-        self.research_cache_error_queue: queue.Queue[str] = queue.Queue()
-        self.research_cache_writer_thread: threading.Thread | None = None
-        self.research_settings = {
-            "interval": "1h", "range": "3mo", "window_days": 90,
-            "csv_timezone": "UTC", "selected_asset": (self.market_instruments[0]["key"] if self.market_instruments else ""),
-            **self.config.get("research", {}),
-        }
-        # Phase 12: causal market-regime research. This is descriptive analysis only;
-        # it does not emit trade signals or submit orders.
+        # Core Edition: standalone local OHLC dataset library for Regime Lab.
+        self.regime_datasets: dict[str, dict[str, Any]] = {}
+        self.regime_dataset_label_to_key: dict[str, str] = {}
+        self.regime_cache_loading = True
+        self.regime_cache_load_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.regime_cache_load_job: str | None = None
+        self.regime_cache_write_queue: queue.Queue[dict[str, dict[str, Any]] | None] = queue.Queue(maxsize=1)
+        self.regime_cache_writer_thread: threading.Thread | None = None
+        self.regime_import_result_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.regime_import_queue_job: str | None = None
+        self.regime_import_in_progress = False
         self.regime_settings = {
             "lookback": 20, "atr_fast_period": 14, "atr_slow_period": 50,
             "range_er_max": 0.25, "trend_er_min": 0.35,
             "trend_slope_atr_min": 0.20, "shock_atr_ratio": 1.80,
             "shock_true_range_multiple": 2.50, "forward_horizon": 10,
-            "selected_asset": str(self.research_settings.get("selected_asset", "")),
             **self.config.get("regime_lab", {}),
         }
         self.regime_vars = {
@@ -313,70 +281,6 @@ class VeltrixTradingClock:
         self.regime_in_progress = False
         self.regime_result_queue: queue.Queue[tuple[str, dict, dict | None, str | None]] = queue.Queue()
         self.regime_queue_job: str | None = None
-        self.research_fetch_in_progress = False
-        self.research_result_queue: queue.Queue[tuple[dict | None, str | None]] = queue.Queue()
-        self.research_queue_job: str | None = None
-        self.research_analysis_result_queue: queue.Queue[tuple[int, list[dict] | None, dict | None, dict | None, str | None]] = queue.Queue()
-        self.research_analysis_queue_job: str | None = None
-        self.research_analysis_in_progress = False
-        self.research_data_revision = 0
-        self.research_analysis_revision = -1
-        self.research_analysis_failed_revision = -1
-        self.research_rows: list[dict] = []
-        self.research_observations: dict[str, list[dict]] = {}
-        self.research_metadata_cache: dict[str, dict] = {}
-        self.research_asset_var = tk.StringVar(value="")
-        self.research_window_var = tk.StringVar(value=str(self.research_settings.get("window_days", 90)))
-        self.research_timezone_var = tk.StringVar(value=str(self.research_settings.get("csv_timezone", "UTC")))
-
-        # Phase 10 provider-independent data gateway and benchmark workspace.
-        today_utc = datetime.now(timezone.utc).date()
-        self.data_provider_var = tk.StringVar(value="Twelve Data")
-        self.data_market_type_var = tk.StringVar(value="forex")
-        self.data_symbol_var = tk.StringVar(value="XAU/USD")
-        self.data_canonical_var = tk.StringVar(value="XAUUSD_SPOT")
-        self.data_interval_var = tk.StringVar(value="5m")
-        self.data_start_var = tk.StringVar(value=(today_utc - timedelta(days=7)).isoformat())
-        self.data_end_var = tk.StringVar(value=today_utc.isoformat())
-        self.data_dataset_name_var = tk.StringVar(value="XAUUSD Spot · Twelve Data")
-        self.data_center_status_var = tk.StringVar(value="PROVIDER GATEWAY READY · NO PROVIDER REQUEST HAS BEEN MADE")
-        self.data_compare_left_var = tk.StringVar(value="")
-        self.data_compare_right_var = tk.StringVar(value="")
-        self.data_provider_status_labels: dict[str, tk.Label] = {}
-        self.data_center_entries: list[tk.Entry] = []
-        self.data_compare_label_to_key: dict[str, str] = {}
-        self.data_center_result_queue: queue.Queue[dict] = queue.Queue()
-        self.data_center_queue_job: str | None = None
-        self.data_center_busy = False
-
-        # Phase 7 strategy research and event-driven backtesting state.
-        self.backtest_settings = {
-            "fast_period": 20, "slow_period": 50, "atr_period": 14,
-            "stop_atr_multiple": 2.0, "target_r_multiple": 2.0, "direction": "both",
-            "initial_capital": 10_000.0, "risk_per_trade_pct": 0.5,
-            "commission_bps": 1.0, "commission_per_unit": 0.0, "slippage_bps": 1.0,
-            "point_value": 1.0, "quantity_step": 0.01, "max_leverage": 1.0,
-            "train_fraction_pct": 70, "walk_forward_train_fraction_pct": 50,
-            "walk_forward_folds": 3, "account_currency": "USD",
-            **self.config.get("backtest", {}),
-        }
-        self.backtest_vars = {
-            key: tk.StringVar(value=str(self.backtest_settings.get(key, default)))
-            for key, default in {
-                "fast_period": 20, "slow_period": 50, "atr_period": 14,
-                "stop_atr_multiple": 2.0, "target_r_multiple": 2.0, "direction": "both",
-                "initial_capital": 10_000.0, "risk_per_trade_pct": 0.5,
-                "commission_bps": 1.0, "commission_per_unit": 0.0, "slippage_bps": 1.0,
-                "point_value": 1.0, "quantity_step": 0.01, "max_leverage": 1.0,
-                "train_fraction_pct": 70, "walk_forward_train_fraction_pct": 50,
-                "walk_forward_folds": 3,
-            }.items()
-        }
-        self.backtest_asset_var = tk.StringVar(value="")
-        self.backtest_result: dict[str, Any] | None = None
-        self.backtest_in_progress = False
-        self.backtest_result_queue: queue.Queue[tuple[dict | None, str | None]] = queue.Queue()
-        self.backtest_queue_job: str | None = None
 
         self._initialise_audio()
         self._build_interface()
@@ -390,21 +294,15 @@ class VeltrixTradingClock:
         self.market_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_market_results)
         self.market_startup_fetch_job = self.root.after(1200, lambda: self.refresh_market_data(silent=True))
         self._schedule_market_auto_refresh()
-        self.research_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_results)
-        self.research_analysis_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_analysis_results)
-        self.research_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_cache_load_results)
-        self.backtest_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_backtest_results)
         self.regime_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_results)
-        self.data_center_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_data_center_results)
+        self.regime_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_cache_load_results)
+        self.regime_import_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_import_results)
         self.focus_tick_job = self.root.after(1000, self._focus_timer_tick)
-        self.research_cache_writer_thread = threading.Thread(
-            target=self._research_cache_writer_loop, name="VeltrixResearchCacheWriter", daemon=False
+        self.regime_cache_writer_thread = threading.Thread(
+            target=self._regime_cache_writer_loop, name="VeltrixRegimeCacheWriter", daemon=False
         )
-        self.research_cache_writer_thread.start()
-        self._start_research_cache_load()
-        self._render_research_page()
-        self._refresh_data_center_providers()
-        self._refresh_data_center_registry()
+        self.regime_cache_writer_thread.start()
+        self._start_regime_cache_load()
 
     @staticmethod
     def _load_config() -> dict:
@@ -448,7 +346,7 @@ class VeltrixTradingClock:
         self.brand_label = self._label(brand_block, "VELTRIX", fg="bright", font=("Consolas", 23, "bold"))
         self.brand_label.pack(anchor="w")
         self.subtitle_label = self._label(
-            brand_block, "CAPITAL  /  GLOBAL TRADING & RESEARCH TERMINAL", fg="muted", font=("Consolas", 8, "bold")
+            brand_block, "CAPITAL  /  GLOBAL TRADING CLOCK", fg="muted", font=("Consolas", 8, "bold")
         )
         self.subtitle_label.pack(anchor="w", pady=(1, 0))
 
@@ -507,26 +405,11 @@ class VeltrixTradingClock:
             font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.volatility_nav_button.pack(side="left", padx=(0, 6))
-        self.research_nav_button = tk.Button(
-            nav, text="RESEARCH LAB", command=lambda: self.show_page("research"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-        )
-        self.research_nav_button.pack(side="left", padx=(0, 6))
         self.regime_nav_button = tk.Button(
             nav, text="REGIME LAB", command=lambda: self.show_page("regime"),
             font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
         self.regime_nav_button.pack(side="left", padx=(0, 6))
-        self.strategy_nav_button = tk.Button(
-            nav, text="STRATEGY LAB", command=lambda: self.show_page("strategy"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
-        )
-        self.strategy_nav_button.pack(side="left", padx=(0, 6))
-        self.data_center_nav_button = tk.Button(
-            nav, text="DATA CENTER", command=lambda: self.show_page("data_center"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
-        )
-        self.data_center_nav_button.pack(side="left", padx=(0, 6))
         self.focus_nav_button = tk.Button(
             nav, text="FOCUS & GOALS", command=lambda: self.show_page("focus"),
             font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
@@ -539,10 +422,7 @@ class VeltrixTradingClock:
         self.alerts_view = self._frame(self.page_host)
         self.calendar_view = self._frame(self.page_host)
         self.volatility_view = self._frame(self.page_host)
-        self.research_view = self._frame(self.page_host)
         self.regime_view = self._frame(self.page_host)
-        self.strategy_view = self._frame(self.page_host)
-        self.data_center_view = self._frame(self.page_host)
         self.focus_view = self._frame(self.page_host)
         self.sessions_view.pack(fill="both", expand=True)
 
@@ -576,10 +456,7 @@ class VeltrixTradingClock:
         self._build_alerts_page()
         self._build_calendar_page()
         self._build_market_page()
-        self._build_research_page()
         self._build_regime_page()
-        self._build_strategy_page()
-        self._build_data_center_page()
         self._build_focus_page()
         self.show_page("sessions")
 
@@ -1647,1009 +1524,6 @@ class VeltrixTradingClock:
         self.market_alert_listbox.pack(fill="x", pady=(4, 0))
         self.market_alert_listbox.insert("end", "No expansion or contraction alerts have been recorded this run.")
 
-    def _build_research_page(self) -> None:
-        """Build Phase 6 historical research, broker CSV import and report export workspace."""
-        self.research_canvas = tk.Canvas(self.research_view, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(self.research_view, orient="vertical", command=self.research_canvas.yview)
-        self.research_canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.research_canvas.pack(side="left", fill="both", expand=True)
-        self.research_content = self._frame(self.research_canvas)
-        self.research_content_window = self.research_canvas.create_window(
-            (0, 0), window=self.research_content, anchor="nw"
-        )
-        self.research_content.bind(
-            "<Configure>", lambda _event: self.research_canvas.configure(
-                scrollregion=self.research_canvas.bbox("all")
-            )
-        )
-        self.research_canvas.bind(
-            "<Configure>", lambda event: self.research_canvas.itemconfigure(
-                self.research_content_window, width=event.width
-            )
-        )
-
-        header = self._frame(self.research_content, bg="panel", padx=14, pady=11)
-        header.pack(fill="x", pady=(0, 9))
-        self._label(header, "HISTORICAL SESSION RESEARCH LAB", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
-        self._label(
-            header,
-            "30 / 60 / 90-CALENDAR-DAY DISTRIBUTIONS · VOLATILITY PERCENTILES · BROKER CSV IMPORT",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
-        ).pack(anchor="w", pady=(3, 6))
-        self.research_status_label = self._label(
-            header, "NO HISTORICAL RESEARCH DATA · FETCH PROVIDER HISTORY OR IMPORT A BROKER CSV",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=900,
-        )
-        self.research_status_label.pack(fill="x")
-
-        controls = self._frame(self.research_content, bg="panel", padx=12, pady=10)
-        controls.pack(fill="x", pady=(0, 9))
-        controls.grid_columnconfigure(0, weight=1)
-        controls.grid_columnconfigure(1, weight=1)
-        controls.grid_columnconfigure(2, weight=1)
-        self._label(controls, "INSTRUMENT", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self._label(controls, "ROLLING WINDOW", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=1, sticky="w", padx=8
-        )
-        self._label(controls, "TIMEZONE FOR NAIVE CSV TIMES", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        self.research_label_to_key: dict[str, str] = {}
-        self.research_asset_combo = ttk.Combobox(
-            controls, textvariable=self.research_asset_var, values=(),
-            state="readonly", width=32, style="Veltrix.Research.TCombobox",
-        )
-        self.research_asset_combo.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(4, 10))
-        self._refresh_research_instrument_choices(
-            preferred_key=str(self.research_settings.get("selected_asset", ""))
-        )
-        self.research_asset_combo.bind("<<ComboboxSelected>>", lambda _event: self._research_preferences_changed())
-
-        self.research_window_combo = ttk.Combobox(
-            controls, textvariable=self.research_window_var, values=("30", "60", "90"),
-            state="readonly", width=12, style="Veltrix.Research.TCombobox",
-        )
-        self.research_window_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=(4, 10))
-        self.research_window_combo.bind("<<ComboboxSelected>>", lambda _event: self._research_preferences_changed())
-        timezone_values = ("UTC", "Africa/Nairobi", "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney")
-        self.research_timezone_combo = ttk.Combobox(
-            controls, textvariable=self.research_timezone_var, values=timezone_values,
-            state="readonly", width=24, style="Veltrix.Research.TCombobox",
-        )
-        self.research_timezone_combo.grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(4, 10))
-        self.research_timezone_combo.bind("<<ComboboxSelected>>", lambda _event: self._research_preferences_changed())
-
-        action_row = self._frame(controls, bg="panel")
-        action_row.grid(row=2, column=0, columnspan=3, sticky="ew")
-        self.research_fetch_button = tk.Button(
-            action_row, text="FETCH 90D HISTORY", command=self.fetch_research_history,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_fetch_button.pack(side="left", padx=(0, 6))
-        self.research_import_button = tk.Button(
-            action_row, text="IMPORT CSV TO SELECTED", command=self.import_research_csv,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_import_button.pack(side="left", padx=6)
-        self.research_custom_import_button = tk.Button(
-            action_row, text="IMPORT AS NEW INSTRUMENT", command=self.import_research_csv_as_new_instrument,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_custom_import_button.pack(side="left", padx=6)
-        self.research_restore_button = tk.Button(
-            action_row, text="RESTORE PROVIDER DATA", command=self.restore_provider_research_data,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_restore_button.pack(side="left", padx=6)
-        export_row = self._frame(controls, bg="panel")
-        export_row.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 0))
-        self.research_csv_button = tk.Button(
-            export_row, text="EXPORT SUMMARY CSV", command=self.export_research_summary,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_csv_button.pack(side="left", padx=6)
-        self.research_detail_csv_button = tk.Button(
-            export_row, text="EXPORT DAILY CSV", command=self.export_research_daily,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_detail_csv_button.pack(side="left", padx=6)
-        self.research_html_button = tk.Button(
-            export_row, text="EXPORT HTML REPORT", command=self.export_research_html,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_html_button.pack(side="left", padx=6)
-
-        self._build_tick_bar_panel()
-
-        summary_panel = self._frame(self.research_content, bg="panel", padx=11, pady=9)
-        summary_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(summary_panel, "ROLLING SESSION DISTRIBUTION", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 3))
-        self._label(
-            summary_panel,
-            "RV = √Σ(log returns²) · P75/P90 = historical percentiles · Latest percentile ranks the latest session within its window",
-            bg="panel", fg="muted", font=("Segoe UI", 7),
-        ).pack(anchor="w", pady=(0, 7))
-        summary_frame = self._frame(summary_panel, bg="panel")
-        summary_frame.pack(fill="both", expand=True)
-        summary_columns = ("session", "samples", "mean", "median", "p75", "p90", "latest", "rank", "range", "win")
-        self.research_summary_tree = ttk.Treeview(
-            summary_frame, columns=summary_columns, show="headings", height=4,
-            style="Veltrix.Research.Treeview", selectmode="browse",
-        )
-        summary_headings = {
-            "session": ("SESSION", 100), "samples": ("SAMPLES", 65), "mean": ("MEAN RV %", 85),
-            "median": ("MEDIAN RV %", 90), "p75": ("P75 %", 75), "p90": ("P90 %", 75),
-            "latest": ("LATEST RV %", 95), "rank": ("LATEST PCTL", 95),
-            "range": ("MEDIAN RANGE %", 110), "win": ("WIN RATE %", 90),
-        }
-        for key, (heading, width) in summary_headings.items():
-            self.research_summary_tree.heading(key, text=heading)
-            self.research_summary_tree.column(key, width=width, minwidth=55, anchor="center", stretch=(key == "session"))
-        summary_scroll = ttk.Scrollbar(summary_frame, orient="vertical", command=self.research_summary_tree.yview)
-        self.research_summary_tree.configure(yscrollcommand=summary_scroll.set)
-        self.research_summary_tree.pack(side="left", fill="both", expand=True)
-        summary_scroll.pack(side="right", fill="y")
-
-        detail_panel = self._frame(self.research_content, bg="panel", padx=11, pady=9)
-        detail_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(detail_panel, "DAILY SESSION OBSERVATIONS · MOST RECENT 30", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        detail_frame = self._frame(detail_panel, bg="panel")
-        detail_frame.pack(fill="both", expand=True)
-        detail_columns = ("date", "session", "rv", "range", "return", "bars", "interval", "status")
-        self.research_detail_tree = ttk.Treeview(
-            detail_frame, columns=detail_columns, show="headings", height=9,
-            style="Veltrix.Research.Treeview", selectmode="browse",
-        )
-        detail_headings = {
-            "date": ("LOCAL SESSION DATE", 125), "session": ("SESSION", 105),
-            "rv": ("REALISED VOL %", 115), "range": ("RANGE %", 90),
-            "return": ("SESSION RETURN %", 115), "bars": ("BARS / RETURNS", 105),
-            "interval": ("MEDIAN ELAPSED (MIN)", 125), "status": ("OBSERVATION", 145),
-        }
-        for key, (heading, width) in detail_headings.items():
-            self.research_detail_tree.heading(key, text=heading)
-            self.research_detail_tree.column(key, width=width, minwidth=70, anchor="center")
-        detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical", command=self.research_detail_tree.yview)
-        self.research_detail_tree.configure(yscrollcommand=detail_scroll.set)
-        self.research_detail_tree.pack(side="left", fill="both", expand=True)
-        detail_scroll.pack(side="right", fill="y")
-
-        methodology = self._frame(self.research_content, bg="panel", padx=12, pady=9)
-        methodology.pack(fill="x", pady=(0, 8))
-        self._label(
-            methodology,
-            "METHODOLOGY: One observation per instrument, session and local date. Rolling windows are calendar days ending at the latest valid completed observation date. The first sampled bar's open-to-close return is included. For time bars, close-to-close returns across gaps greater than 1.6× the inferred interval (with a 2-minute tolerance) are excluded. For fixed-tick and TIB datasets, elapsed time varies by design, so adjacent within-session returns are retained; the displayed median elapsed minutes is descriptive, not a fixed sampling interval. An open current session is marked PARTIAL and excluded from historical distributions. Percentile rank uses mid-ranks for ties. Different bar constructions can produce different realised-volatility estimates and must not be compared as identical sampling schemes.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=950,
-        ).pack(fill="x")
-        self._apply_research_tree_theme()
-
-    def _build_tick_bar_panel(self) -> None:
-        """Add Phase 8 raw-tick import and alternative bar-construction controls."""
-        panel = self._frame(self.research_content, bg="panel", padx=12, pady=10)
-        panel.pack(fill="x", pady=(0, 9))
-        self._label(panel, "PHASE 8 · MULTI-RESOLUTION / INFORMATION-DRIVEN BAR BUILDER",
-                    bg="panel", fg="bright", font=("Consolas", 9, "bold")).pack(anchor="w")
-        self._label(
-            panel,
-            "IMPORT RAW TICK CSV, THEN BUILD FIXED-TICK OR TICK IMBALANCE BARS. OUTPUTS REMAIN STANDARD OHLC DATASETS FOR THE RESEARCH AND STRATEGY LABS.",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"), wraplength=980, justify="left",
-        ).pack(anchor="w", pady=(3, 8))
-
-        top = self._frame(panel, bg="panel")
-        top.pack(fill="x")
-        for column in range(3):
-            top.grid_columnconfigure(column, weight=1)
-        self._label(top, "RAW TICK SOURCE", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self._label(top, "BAR CONSTRUCTION", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=1, sticky="w", padx=8
-        )
-        self._label(top, "OUTPUT DATASET NAME", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        self.tick_source_combo = ttk.Combobox(
-            top, textvariable=self.tick_source_var, values=(), state="readonly", width=42,
-            style="Veltrix.Research.TCombobox",
-        )
-        self.tick_source_combo.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(4, 9))
-        self.tick_source_combo.bind("<<ComboboxSelected>>", lambda _event: self._tick_source_changed())
-        self.tick_bar_method_combo = ttk.Combobox(
-            top, textvariable=self.tick_bar_method_var,
-            values=("Fixed Tick", "Tick Imbalance"), state="readonly", width=22,
-            style="Veltrix.Research.TCombobox",
-        )
-        self.tick_bar_method_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=(4, 9))
-        self.tick_bar_method_combo.bind("<<ComboboxSelected>>", lambda _event: self._tick_source_changed())
-        self.tick_output_name_entry = tk.Entry(
-            top, textvariable=self.tick_output_name_var, font=("Consolas", 9), relief="flat", bd=0,
-        )
-        self.tick_output_name_entry.grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(4, 9), ipady=6)
-
-        parameters = self._frame(panel, bg="panel")
-        parameters.pack(fill="x")
-        parameter_fields = (
-            ("FIXED TICKS / BAR", self.tick_fixed_size_var, 10),
-            ("TIB SEED TICKS", self.tick_seed_size_var, 10),
-            ("BAR-LENGTH EWMA (BARS)", self.tick_ewma_span_var, 10),
-            ("IMBALANCE EWMA (TICKS)", self.tick_imbalance_ewma_span_var, 10),
-            ("MIN IMBALANCE FLOOR", self.tick_min_imbalance_var, 10),
-        )
-        for column, (label, variable, width) in enumerate(parameter_fields):
-            parameters.grid_columnconfigure(column, weight=1)
-            self._label(parameters, label, bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-                row=0, column=column, sticky="w", padx=(0, 8) if column == 0 else 8
-            )
-            entry = tk.Entry(parameters, textvariable=variable, width=width, font=("Consolas", 9), relief="flat", bd=0)
-            entry.grid(row=1, column=column, sticky="ew", padx=(0, 8) if column == 0 else 8, pady=(4, 8), ipady=5)
-
-        actions = self._frame(panel, bg="panel")
-        actions.pack(fill="x", pady=(2, 5))
-        self.tick_import_button = tk.Button(
-            actions, text="IMPORT RAW TICK CSV", command=self.import_raw_tick_csv,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.tick_import_button.pack(side="left", padx=(0, 7))
-        self.tick_build_button = tk.Button(
-            actions, text="BUILD OHLC BARS FROM TICKS", command=self.build_bars_from_ticks,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.tick_build_button.pack(side="left", padx=7)
-        self._label(
-            panel,
-            "DATA QUALITY: Last prices use the tick rule, not exchange-stamped aggressor side. If Last is unavailable, Bid/Ask midpoint is used and explicitly labelled as a quote-flow proxy. The TIB seed/calibration bar is retained and labelled. Volume is recorded only as supplied metadata; no volume bars are built until its meaning is verified.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=980,
-        ).pack(fill="x", pady=(3, 0))
-        self._refresh_tick_source_choices()
-
-    def _selected_tick_source_key(self) -> str:
-        return self.tick_source_label_to_key.get(self.tick_source_var.get(), "")
-
-    def _refresh_tick_source_choices(self, preferred_key: str | None = None) -> None:
-        labels: list[str] = []
-        mapping: dict[str, str] = {}
-        for key, record in self.research_tick_sources.items():
-            if not isinstance(record, dict):
-                continue
-            name = str(record.get("name") or key)
-            meta = record.get("metadata", {}) if isinstance(record.get("metadata"), dict) else {}
-            ticks = int(meta.get("valid_ticks", 0) or 0)
-            source_label = "LAST" if meta.get("price_source") == "last_price_tick_rule" else "MIDQUOTE PROXY"
-            label = f"{name} · {ticks:,} TICKS · {source_label}"
-            if label in mapping:
-                label = f"{label} · {key[-6:]}"
-            labels.append(label)
-            mapping[label] = str(key)
-        self.tick_source_label_to_key = mapping
-        if not hasattr(self, "tick_source_combo"):
-            return
-        self.tick_source_combo.configure(values=labels)
-        target_key = preferred_key or self._selected_tick_source_key()
-        target = next((label for label, key in mapping.items() if key == target_key), labels[0] if labels else "")
-        self.tick_source_var.set(target)
-        self.tick_build_button.configure(state="normal" if target else "disabled")
-
-    def _tick_source_changed(self) -> None:
-        key = self._selected_tick_source_key()
-        source = self.research_tick_sources.get(key, {})
-        name = str(source.get("name") or "Tick Data")
-        method = self.tick_bar_method_var.get()
-        if method == "Fixed Tick":
-            suffix = f"Fixed {self.tick_fixed_size_var.get().strip() or '500'}-tick Bars"
-        else:
-            suffix = "Tick Imbalance Bars"
-        self.tick_output_name_var.set(f"{name} · {suffix}" if key else "")
-
-    def import_raw_tick_csv(self) -> None:
-        """Copy, validate and register a raw tick CSV without blocking Tk."""
-        if self.research_fetch_in_progress:
-            return
-        path = filedialog.askopenfilename(
-            parent=self.root, title="Import broker raw tick CSV",
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
-        )
-        if not path:
-            return
-        default_name = Path(path).stem.replace("_", " ").replace("-", " ").strip().title()
-        name = simpledialog.askstring(
-            "Name raw tick source", "Source / instrument name (e.g. Spot Gold · Broker A):",
-            initialvalue=default_name, parent=self.root,
-        )
-        if name is None or not name.strip():
-            return
-        try:
-            slug = custom_research_asset_key(name.strip()).replace("csv_", "tick_", 1)
-        except ValueError as exc:
-            messagebox.showerror("Invalid tick source name", str(exc), parent=self.root)
-            return
-        source_key = f"{slug}_{uuid4().hex[:8]}"
-        storage_file = f"{source_key}.csv"
-        # Capture the selected timezone when this raw source is first imported.
-        zone = self.research_timezone_var.get().strip() or "UTC"
-        self.research_fetch_in_progress = True
-        for button_name in ("tick_import_button", "tick_build_button", "research_fetch_button", "research_import_button", "research_custom_import_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="disabled")
-        self.research_status_label.configure(
-            text=f"IMPORTING RAW TICKS · {Path(path).name} · VALIDATING TIMESTAMPS AND PRICE FIELDS IN BACKGROUND...",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-
-        def worker():
-            stored_path = TICK_DATA_DIR / storage_file
-            try:
-                TICK_DATA_DIR.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, stored_path)
-                ticks, meta = import_tick_csv(stored_path, naive_timezone=zone)
-                meta["original_file_name"] = Path(path).name
-                record = {
-                    "name": name.strip(),
-                    "storage_file": storage_file,
-                    "original_file_name": Path(path).name,
-                    "imported_at": datetime.now(timezone.utc).isoformat(),
-                    "metadata": meta,
-                }
-                result, error = {"kind": "tick_import", "source_key": source_key, "record": record}, None
-            except Exception as exc:
-                try:
-                    stored_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                result, error = None, str(exc)
-            self.research_result_queue.put((result, error))
-
-        threading.Thread(target=worker, name="VeltrixTickCSVImport", daemon=True).start()
-
-    def build_bars_from_ticks(self) -> None:
-        """Build a separate OHLC dataset from the selected raw tick source."""
-        if self.research_fetch_in_progress:
-            return
-        source_key = self._selected_tick_source_key()
-        source = self.research_tick_sources.get(source_key)
-        if not source:
-            messagebox.showinfo("Raw tick source required", "Import a raw tick CSV first.", parent=self.root)
-            return
-        storage_file = Path(str(source.get("storage_file") or "")).name
-        source_path = TICK_DATA_DIR / storage_file
-        if not storage_file or not source_path.is_file():
-            messagebox.showerror(
-                "Raw tick file not found",
-                f"The stored tick file is missing:\n{source_path}\nRe-import the broker tick CSV to restore it.",
-                parent=self.root,
-            )
-            return
-        method_label = self.tick_bar_method_var.get().strip()
-        method = "fixed_tick" if method_label == "Fixed Tick" else "tick_imbalance"
-        try:
-            ticks_per_bar = int(self.tick_fixed_size_var.get())
-            seed_ticks = int(self.tick_seed_size_var.get())
-            ewma_span = int(self.tick_ewma_span_var.get())
-            imbalance_ewma_span = int(self.tick_imbalance_ewma_span_var.get())
-            min_floor = float(self.tick_min_imbalance_var.get())
-        except (ValueError, tk.TclError):
-            messagebox.showerror("Invalid bar settings", "Tick counts and EWMA span must be whole numbers; the imbalance floor must be numeric.", parent=self.root)
-            return
-        output_name = self.tick_output_name_var.get().strip()
-        if not output_name:
-            suffix = f"Fixed {ticks_per_bar}-tick Bars" if method == "fixed_tick" else "Tick Imbalance Bars"
-            output_name = f"{source.get('name') or 'Tick Data'} · {suffix}"
-        try:
-            asset_key = custom_research_asset_key(output_name)
-        except ValueError as exc:
-            messagebox.showerror("Invalid output dataset name", str(exc), parent=self.root)
-            return
-        if asset_key in self.research_asset_data:
-            asset_key = f"{asset_key}_{uuid4().hex[:6]}"
-        # Reuse the timezone captured when this raw source was registered. Changing
-        # the UI timezone later must not silently reinterpret the same source file.
-        zone = str((source.get("metadata") or {}).get("timezone_for_naive_timestamps") or "UTC")
-        self.research_fetch_in_progress = True
-        for button_name in ("tick_import_button", "tick_build_button", "research_fetch_button", "research_import_button", "research_custom_import_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="disabled")
-        self.research_status_label.configure(
-            text=f"BUILDING {method_label.upper()} · {source.get('name')} · PROCESSING RAW TICKS IN BACKGROUND...",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-        source_name = str(source.get("name") or source_key)
-
-        def worker():
-            try:
-                bars, meta = build_bars_from_tick_csv(
-                    source_path, method=method, naive_timezone=zone,
-                    ticks_per_bar=ticks_per_bar, seed_ticks=seed_ticks,
-                    ewma_span=ewma_span, imbalance_ewma_span=imbalance_ewma_span,
-                    min_expected_imbalance_fraction=min_floor,
-                )
-                record = {
-                    "bars": [bar.to_dict() for bar in bars],
-                    "source": f"Broker tick CSV · {source_name} → {meta.get('bar_construction_label', method_label)}",
-                    "name": output_name,
-                    "symbol": "",
-                    "unit": "broker price units",
-                    "bar_interval_minutes": float(meta.get("median_bar_duration_minutes") or 0.0),
-                    "metadata": {
-                        **meta,
-                        "custom_instrument": True,
-                        "point_value": 1.0,
-                        "quantity_step": 0.01,
-                        "contract_spec_status": "Illustrative defaults; verify broker point value, contract size and quantity step before backtesting.",
-                        "source_tick_key": source_key,
-                        "source_tick_name": source_name,
-                    },
-                }
-                result, error = {"kind": "tick_bars", "asset_key": asset_key, "record": record}, None
-            except Exception as exc:
-                result, error = None, str(exc)
-            self.research_result_queue.put((result, error))
-
-        threading.Thread(target=worker, name="VeltrixTickBarBuilder", daemon=True).start()
-
-    def _build_data_center_page(self) -> None:
-        """Build Phase 10 provider connection, historical import and data benchmark UI."""
-        self.data_center_canvas = tk.Canvas(self.data_center_view, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(self.data_center_view, orient="vertical", command=self.data_center_canvas.yview)
-        self.data_center_canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.data_center_canvas.pack(side="left", fill="both", expand=True)
-        self.data_center_content = self._frame(self.data_center_canvas)
-        self.data_center_content_window = self.data_center_canvas.create_window(
-            (0, 0), window=self.data_center_content, anchor="nw"
-        )
-        self.data_center_content.bind(
-            "<Configure>", lambda _event: self.data_center_canvas.configure(
-                scrollregion=self.data_center_canvas.bbox("all")
-            )
-        )
-        self.data_center_canvas.bind(
-            "<Configure>", lambda event: self.data_center_canvas.itemconfigure(
-                self.data_center_content_window, width=event.width
-            )
-        )
-
-        header = self._frame(self.data_center_content, bg="panel", padx=14, pady=11)
-        header.pack(fill="x", pady=(0, 9))
-        self._label(header, "VELTRIX MARKET DATA GATEWAY", bg="panel", fg="bright",
-                    font=("Consolas", 11, "bold")).pack(anchor="w")
-        self._label(
-            header,
-            "PHASE 10 · PROVIDER ADAPTERS · HISTORICAL DATA · QUALITY AUDITS · CROSS-FEED BENCHMARKS",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
-        ).pack(anchor="w", pady=(3, 6))
-        self.data_center_status_label = self._label(
-            header, textvariable=self.data_center_status_var, bg="panel", fg="warning",
-            font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=1000,
-        )
-        self.data_center_status_label.pack(fill="x")
-
-        providers_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        providers_panel.pack(fill="x", pady=(0, 9))
-        self._label(providers_panel, "PROVIDER CANDIDATES", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        provider_grid = self._frame(providers_panel, bg="panel")
-        provider_grid.pack(fill="x")
-        for column in range(3):
-            provider_grid.grid_columnconfigure(column, weight=1, uniform="provider_card")
-        self.data_provider_cards: dict[str, dict[str, tk.Widget]] = {}
-        provider_copy = {
-            "massive": ("INDEX / FUTURES / FX", "Forex aggregates are bid-quote bars; the volume field is quote count, not traded volume. Verify ticker and plan access."),
-            "twelve_data": ("SPOT / FX CANDIDATE", "Broad multi-asset API. XAU/USD is an OTC composite price feed, not an exchange tape."),
-            "databento": ("EXCHANGE MICROSTRUCTURE", "Excellent futures research candidate. SDK adapter is not enabled in this release."),
-        }
-        for column, provider_id in enumerate(("massive", "twelve_data", "databento")):
-            spec = PROVIDER_CATALOG[provider_id]
-            subline, description = provider_copy[provider_id]
-            card = self._frame(
-                provider_grid, bg="panel", padx=10, pady=9, highlightthickness=1,
-                highlightbackground=THEMES[self.theme_name]["border"],
-            )
-            card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < 2 else 0))
-            self._label(card, spec["name"].upper(), bg="panel", fg="bright",
-                        font=("Consolas", 9, "bold")).pack(anchor="w")
-            self._label(card, subline, bg="panel", fg="muted",
-                        font=("Consolas", 7, "bold")).pack(anchor="w", pady=(2, 5))
-            self._label(card, description, bg="panel", fg="text", font=("Segoe UI", 8),
-                        justify="left", wraplength=300, height=3).pack(fill="x")
-            status = self._label(card, "CHECKING CREDENTIAL STATUS...", bg="panel", fg="warning",
-                                 font=("Consolas", 7, "bold"), anchor="w")
-            status.pack(fill="x", pady=(7, 5))
-            if spec["adapter"]:
-                command = lambda pid=provider_id: self._test_data_provider(pid)
-                button = tk.Button(card, text="TEST API CONNECTION", command=command,
-                                   font=("Consolas", 7, "bold"), relief="flat", bd=0,
-                                   padx=8, pady=6, cursor="hand2")
-            else:
-                button = tk.Button(card, text="ADAPTER NOT ENABLED", state="disabled",
-                                   font=("Consolas", 7, "bold"), relief="flat", bd=0,
-                                   padx=8, pady=6, cursor="arrow")
-            button.pack(anchor="w")
-            self.data_provider_cards[provider_id] = {"card": card, "status": status, "button": button}
-        self.data_test_massive_button = self.data_provider_cards["massive"]["button"]
-        self.data_test_twelve_button = self.data_provider_cards["twelve_data"]["button"]
-
-        security_note = self._label(
-            self.data_center_content,
-            "API KEYS ARE READ FROM THE LOCAL .env FILE IN THE VELTRIX DATA FOLDER OR PROCESS ENVIRONMENT VARIABLES. "
-            "EXISTING PROCESS/WINDOWS VARIABLES TAKE PRECEDENCE. KEYS ARE NEVER SAVED IN config.json OR THE RESEARCH CACHE. "
-            "Create .env from .env.example in the Veltrix data folder, add MASSIVE_API_KEY and/or TWELVE_DATA_API_KEY, then restart Veltrix. "
-            "Databento is a registered candidate only; its adapter is intentionally deferred until a separate cost/licence and schema review.",
-            fg="muted", font=("Segoe UI", 8), wraplength=1000, justify="left",
-        )
-        security_note.pack(fill="x", padx=3, pady=(0, 9))
-
-        fetch_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        fetch_panel.pack(fill="x", pady=(0, 9))
-        self._label(fetch_panel, "HISTORICAL DATA ACQUISITION", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 7))
-        for column in range(4):
-            fetch_panel.grid_columnconfigure(column, weight=1, uniform="data_fetch_field")
-
-        def add_combo(row: int, column: int, label: str, variable: tk.StringVar,
-                      values: tuple[str, ...], width: int = 22) -> ttk.Combobox:
-            self._label(fetch_panel, label, bg="panel", fg="muted",
-                        font=("Consolas", 7, "bold")).grid(row=row, column=column, sticky="w", padx=(0, 8))
-            combo = ttk.Combobox(fetch_panel, textvariable=variable, values=values, width=width,
-                                 state="readonly", style="Veltrix.Data.TCombobox")
-            combo.grid(row=row + 1, column=column, sticky="ew", padx=(0, 8), pady=(3, 8))
-            return combo
-
-        def add_entry(row: int, column: int, label: str, variable: tk.StringVar, width: int = 24) -> tk.Entry:
-            self._label(fetch_panel, label, bg="panel", fg="muted",
-                        font=("Consolas", 7, "bold")).grid(row=row, column=column, sticky="w", padx=(0, 8))
-            entry = tk.Entry(fetch_panel, textvariable=variable, width=width, relief="flat", bd=0,
-                             highlightthickness=1, font=("Consolas", 9))
-            entry.grid(row=row + 1, column=column, sticky="ew", padx=(0, 8), pady=(3, 8), ipady=5)
-            self.data_center_entries.append(entry)
-            return entry
-
-        self.data_provider_combo = add_combo(1, 0, "PROVIDER", self.data_provider_var,
-                                             ("Twelve Data", "Massive"), 18)
-        self.data_market_combo = add_combo(1, 1, "MASSIVE MARKET TYPE", self.data_market_type_var,
-                                           ("forex", "indices", "futures"), 16)
-        add_entry(1, 2, "PROVIDER-NATIVE SYMBOL", self.data_symbol_var, 22)
-        add_entry(1, 3, "CANONICAL INSTRUMENT ID", self.data_canonical_var, 22)
-        self.data_interval_combo = add_combo(3, 0, "BAR INTERVAL", self.data_interval_var,
-                                             ("1m", "5m", "15m", "30m", "1h", "1d"), 12)
-        add_entry(3, 1, "START DATE · PROVIDER BASIS", self.data_start_var, 18)
-        add_entry(3, 2, "END DATE · PROVIDER BASIS", self.data_end_var, 18)
-        add_entry(3, 3, "REGISTERED DATASET NAME", self.data_dataset_name_var, 26)
-        self.data_provider_combo.bind("<<ComboboxSelected>>", self._data_provider_selection_changed)
-
-        self._label(
-            fetch_panel,
-            "Twelve Data example: XAU/USD. Massive requires its own ticker format, e.g. C:XAUUSD or C:EURUSD for FX, I:SPX for an index, or an exact futures contract ticker. "
-            "Do not assign the same canonical ID to spot and futures merely because both reference Gold. "
-            "Date boundaries are provider-specific (Massive FX/index: ET; Massive futures and Twelve Data intraday: UTC; Twelve Data daily: exchange local). "
-            "Stored bar timestamps are normalised to UTC. Inspect the audit and actual returned coverage before research use.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), wraplength=980, justify="left",
-        ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(0, 8))
-        self.data_fetch_button = tk.Button(
-            fetch_panel, text="FETCH & REGISTER DATASET", command=self._fetch_provider_history,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=8, cursor="hand2",
-        )
-        self.data_fetch_button.grid(row=6, column=0, sticky="w", pady=(0, 2))
-        self.data_audit_button = tk.Button(
-            fetch_panel, text="RUN DATA QUALITY AUDIT", command=self._audit_registered_datasets,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=8, cursor="hand2",
-        )
-        self.data_audit_button.grid(row=6, column=1, sticky="w", pady=(0, 2))
-
-        registry_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        registry_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(registry_panel, "REGISTERED MARKET-DATASETS", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        registry_columns = ("name", "provider", "symbol", "interval", "bars", "invalid", "dupes", "large_gaps")
-        self.data_registry_tree = ttk.Treeview(
-            registry_panel, columns=registry_columns, show="headings", height=7, style="Veltrix.Data.Treeview",
-        )
-        headings = {
-            "name": ("DATASET", 205), "provider": ("SOURCE", 110), "symbol": ("SYMBOL", 105),
-            "interval": ("INTERVAL", 65), "bars": ("BARS", 65), "invalid": ("INVALID", 65),
-            "dupes": ("DUPLICATES", 80), "large_gaps": ("GAP CANDIDATES", 105),
-        }
-        for key, (heading, width) in headings.items():
-            self.data_registry_tree.heading(key, text=heading)
-            self.data_registry_tree.column(key, width=width, minwidth=48, anchor="center", stretch=(key == "name"))
-        registry_scroll = ttk.Scrollbar(registry_panel, orient="vertical", command=self.data_registry_tree.yview)
-        self.data_registry_tree.configure(yscrollcommand=registry_scroll.set)
-        self.data_registry_tree.pack(side="left", fill="both", expand=True)
-        registry_scroll.pack(side="right", fill="y")
-
-        compare_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        compare_panel.pack(fill="x", pady=(0, 9))
-        self._label(compare_panel, "CROSS-PROVIDER BENCHMARK", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 7))
-        for column in range(3):
-            compare_panel.grid_columnconfigure(column, weight=1)
-        self.data_compare_left_combo = ttk.Combobox(
-            compare_panel, textvariable=self.data_compare_left_var, state="readonly", width=45,
-            style="Veltrix.Data.TCombobox",
-        )
-        self.data_compare_left_combo.grid(row=1, column=0, sticky="ew", padx=(0, 7))
-        self.data_compare_right_combo = ttk.Combobox(
-            compare_panel, textvariable=self.data_compare_right_var, state="readonly", width=45,
-            style="Veltrix.Data.TCombobox",
-        )
-        self.data_compare_right_combo.grid(row=1, column=1, sticky="ew", padx=(0, 7))
-        self.data_compare_button = tk.Button(
-            compare_panel, text="COMPARE MATCHED BARS", command=self._compare_provider_datasets,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
-        )
-        self.data_compare_button.grid(row=1, column=2, sticky="ew")
-        self.data_compare_result_label = self._label(
-            compare_panel,
-            "Comparison requires the same canonical instrument ID and bar interval. It uses exact UTC timestamp matches; "
-            "a shared label is not proof that two feeds represent the same underlying product.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), wraplength=980, justify="left",
-        )
-        self.data_compare_result_label.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        self._apply_data_center_tree_theme()
-
-    def _set_data_center_status(self, message: str, kind: str = "muted") -> None:
-        self.data_center_status_var.set(message)
-        if hasattr(self, "data_center_status_label"):
-            palette = THEMES[self.theme_name]
-            colour = {"success": palette["success"], "warning": palette["warning"],
-                      "error": palette["error"]}.get(kind, palette["text"])
-            self.data_center_status_label.configure(fg=colour)
-
-    def _refresh_data_center_providers(self) -> None:
-        statuses = {item.provider_id: item for item in provider_statuses()}
-        palette = THEMES[self.theme_name]
-        for provider_id, card in getattr(self, "data_provider_cards", {}).items():
-            status = statuses[provider_id]
-            if not status.adapter_available:
-                text, colour = "CANDIDATE ONLY · ADAPTER NOT ENABLED", palette["warning"]
-            elif status.credential_configured:
-                text, colour = f"API KEY DETECTED · {status.env_var}", palette["success"]
-            else:
-                text, colour = f"API KEY MISSING · SET {status.env_var}", palette["warning"]
-            card["status"].configure(text=text, fg=colour)
-
-    def _apply_data_center_tree_theme(self) -> None:
-        palette = THEMES[self.theme_name]
-        style = ttk.Style(self.root)
-        style.configure(
-            "Veltrix.Data.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
-        )
-        style.configure(
-            "Veltrix.Data.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
-        )
-        style.map("Veltrix.Data.Treeview", background=[("selected", palette["button_active"])],
-                  foreground=[("selected", palette["bright"])])
-        style.configure(
-            "Veltrix.Data.TCombobox", fieldbackground=palette["entry_bg"],
-            background=palette["button_bg"], foreground=palette["entry_fg"], arrowcolor=palette["bright"],
-        )
-        if hasattr(self, "data_center_canvas"):
-            self.data_center_canvas.configure(bg=palette["bg"])
-
-    def _data_provider_selection_changed(self, _event=None) -> None:
-        provider_name = self.data_provider_var.get()
-        if provider_name == "Massive":
-            self._set_data_center_status(
-                "MASSIVE SELECTED · USE A MASSIVE-NATIVE TICKER AND VERIFY SYMBOL/PLAN ENTITLEMENT BEFORE COMPARISON.",
-                "warning",
-            )
-        else:
-            self._set_data_center_status(
-                "TWELVE DATA SELECTED · OTC FX / METALS PRICES ARE PROVIDER-SUPPLIED COMPOSITES, NOT CONSOLIDATED EXCHANGE TRADES.",
-                "warning",
-            )
-
-    def _test_data_provider(self, provider_id: str) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING.", "warning")
-            return
-        self.data_center_busy = True
-        for key in ("massive", "twelve_data"):
-            self.data_provider_cards[key]["button"].configure(state="disabled")
-        self._set_data_center_status(f"TESTING {PROVIDER_CATALOG[provider_id]['name'].upper()} API CONNECTION...")
-
-        def worker() -> None:
-            try:
-                result = test_provider_connection(provider_id)
-                self.data_center_result_queue.put({"kind": "provider_test_ok", "provider_id": provider_id, "result": result})
-            except Exception as exc:
-                self.data_center_result_queue.put({"kind": "provider_test_error", "provider_id": provider_id, "error": str(exc)})
-
-        threading.Thread(target=worker, name=f"Veltrix{provider_id.title()}ConnectionTest", daemon=True).start()
-
-    def _fetch_provider_history(self) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING. WAIT FOR IT TO FINISH.", "warning")
-            return
-        provider_id = {"Massive": "massive", "Twelve Data": "twelve_data"}.get(self.data_provider_var.get())
-        if not provider_id:
-            self._set_data_center_status("SELECT A SUPPORTED PROVIDER.", "error")
-            return
-        provider_symbol = self.data_symbol_var.get().strip()
-        canonical_symbol = self.data_canonical_var.get().strip().upper().replace(" ", "_")
-        dataset_name = self.data_dataset_name_var.get().strip()
-        interval = self.data_interval_var.get().strip()
-        start_date = self.data_start_var.get().strip()
-        end_date = self.data_end_var.get().strip()
-        asset_class = self.data_market_type_var.get().strip().lower()
-        if not provider_symbol or not canonical_symbol:
-            self._set_data_center_status("PROVIDER SYMBOL AND CANONICAL INSTRUMENT ID ARE REQUIRED.", "error")
-            return
-        if not dataset_name:
-            dataset_name = f"{canonical_symbol} · {PROVIDER_CATALOG[provider_id]['name']}"
-        self.data_center_busy = True
-        self.data_fetch_button.configure(state="disabled")
-        self.data_audit_button.configure(state="disabled")
-        self.data_compare_button.configure(state="disabled")
-        self._set_data_center_status(
-            f"FETCHING {provider_symbol} FROM {PROVIDER_CATALOG[provider_id]['name'].upper()} · {interval} BARS · UTC DATE RANGE...",
-            "warning",
-        )
-
-        def worker() -> None:
-            try:
-                if provider_id == "twelve_data":
-                    bars, metadata = fetch_twelve_data_bars(
-                        provider_symbol, interval=interval, start_date=start_date, end_date=end_date,
-                    )
-                else:
-                    bars, metadata = fetch_massive_bars(
-                        provider_symbol, asset_class=asset_class, interval=interval,
-                        start_date=start_date, end_date=end_date,
-                    )
-                quality = audit_ohlc_bars(bars)
-                quality["invalid_bars"] = int(metadata.get("invalid_rows_skipped", 0))
-                quality["duplicate_timestamps"] = int(metadata.get("duplicate_timestamps_removed", 0))
-                interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30,
-                                    "1h": 60, "1d": 1440}[interval]
-                metadata.update({
-                    "provider_id": provider_id,
-                    "provider": PROVIDER_CATALOG[provider_id]["name"],
-                    "provider_symbol": metadata.get("provider_symbol") or provider_symbol,
-                    "canonical_symbol": canonical_symbol,
-                    "requested_interval": interval,
-                    "requested_start": start_date,
-                    "requested_end": end_date,
-                    "asset_class": asset_class if provider_id == "massive" else "provider_defined",
-                    "source_mode": "historical_rest_api",
-                    "timestamp_basis": "UTC",
-                    "request_date_basis": metadata.get("request_date_basis") or metadata.get("request_window_timezone") or "Provider-defined; verify provider documentation.",
-                    "quality_audit": quality,
-                    "commercial_licence_reviewed": False,
-                })
-                record = {
-                    "bars": [bar.to_dict() for bar in bars],
-                    "source": f"{PROVIDER_CATALOG[provider_id]['name']} API · historical",
-                    "name": dataset_name,
-                    "symbol": provider_symbol,
-                    "unit": "provider price units",
-                    "bar_interval_minutes": interval_minutes,
-                    "metadata": metadata,
-                }
-                dataset_key = f"provider_{provider_id}_{uuid4().hex[:10]}"
-                self.data_center_result_queue.put({
-                    "kind": "provider_fetch_ok", "record": record, "dataset_key": dataset_key,
-                    "bar_count": len(bars), "quality": quality,
-                })
-            except Exception as exc:
-                self.data_center_result_queue.put({"kind": "provider_fetch_error", "error": str(exc)})
-
-        threading.Thread(target=worker, name=f"Veltrix{provider_id.title()}HistoricalFetch", daemon=True).start()
-
-    def _refresh_data_center_registry(self) -> None:
-        if not hasattr(self, "data_registry_tree"):
-            return
-        for item in self.data_registry_tree.get_children(""):
-            self.data_registry_tree.delete(item)
-        for key, record in sorted(self.research_asset_data.items(), key=lambda item: str(item[1].get("name", item[0])).casefold()):
-            bars = record.get("bars", []) if isinstance(record, dict) else []
-            if not bars:
-                continue
-            meta = record.get("metadata", {}) if isinstance(record, dict) else {}
-            audit = meta.get("quality_audit", {}) if isinstance(meta, dict) else {}
-            provider = meta.get("provider") or record.get("source", "Imported")
-            interval = meta.get("requested_interval") or record.get("bar_interval_minutes", "N/A")
-            interval_label = f"{interval}" if isinstance(interval, str) else f"{interval:g}m"
-            self.data_registry_tree.insert("", "end", iid=str(key), values=(
-                record.get("name", key), provider, record.get("symbol", ""), interval_label,
-                f"{len(bars):,}", audit.get("invalid_bars", meta.get("invalid_rows_skipped", "—")),
-                audit.get("duplicate_timestamps", meta.get("duplicate_timestamps_removed", "—")), audit.get("gaps_over_3x_median", "—"),
-            ))
-        self._refresh_data_compare_choices()
-
-    def _refresh_data_compare_choices(self) -> None:
-        options: list[str] = []
-        mapping: dict[str, str] = {}
-        for key, record in self.research_asset_data.items():
-            metadata = record.get("metadata", {}) if isinstance(record, dict) else {}
-            if not record.get("bars") or not metadata.get("canonical_symbol") or not metadata.get("provider_id"):
-                continue
-            label = f"{record.get('name', key)} · {metadata.get('provider', metadata.get('provider_id'))}"
-            if label in mapping:
-                label = f"{label} · {key}"
-            mapping[label] = key
-            options.append(label)
-        self.data_compare_label_to_key = mapping
-        if hasattr(self, "data_compare_left_combo"):
-            self.data_compare_left_combo.configure(values=options)
-            self.data_compare_right_combo.configure(values=options)
-            if self.data_compare_left_var.get() not in mapping:
-                self.data_compare_left_var.set(options[0] if options else "")
-            if self.data_compare_right_var.get() not in mapping:
-                self.data_compare_right_var.set(options[1] if len(options) > 1 else (options[0] if options else ""))
-
-    def _audit_registered_datasets(self) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING.", "warning")
-            return
-        snapshots = [(key, dict(record), list(record.get("bars", [])))
-                     for key, record in self.research_asset_data.items() if record.get("bars")]
-        if not snapshots:
-            self._set_data_center_status("NO REGISTERED RESEARCH DATASETS TO AUDIT.", "warning")
-            return
-        self.data_center_busy = True
-        self.data_audit_button.configure(state="disabled")
-        self.data_fetch_button.configure(state="disabled")
-        self._set_data_center_status(f"AUDITING {len(snapshots)} REGISTERED DATASET(S) IN A BACKGROUND WORKER...")
-
-        def worker() -> None:
-            try:
-                results = {}
-                for key, record, bars in snapshots:
-                    audit = audit_ohlc_bars(bars)
-                    metadata = record.get("metadata", {}) if isinstance(record.get("metadata"), dict) else {}
-                    audit["invalid_bars"] = max(audit.get("invalid_bars", 0), int(metadata.get("invalid_rows_skipped", 0) or 0))
-                    audit["duplicate_timestamps"] = max(
-                        audit.get("duplicate_timestamps", 0), int(metadata.get("duplicate_timestamps_removed", 0) or 0)
-                    )
-                    results[key] = audit
-                self.data_center_result_queue.put({"kind": "audit_ok", "results": results})
-            except Exception as exc:
-                self.data_center_result_queue.put({"kind": "audit_error", "error": str(exc)})
-
-        threading.Thread(target=worker, name="VeltrixDataQualityAudit", daemon=True).start()
-
-    def _compare_provider_datasets(self) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING.", "warning")
-            return
-        left_key = self.data_compare_label_to_key.get(self.data_compare_left_var.get())
-        right_key = self.data_compare_label_to_key.get(self.data_compare_right_var.get())
-        if not left_key or not right_key or left_key == right_key:
-            self._set_data_center_status("SELECT TWO DIFFERENT PROVIDER DATASETS TO COMPARE.", "error")
-            return
-        left = self.research_asset_data[left_key]
-        right = self.research_asset_data[right_key]
-        left_meta = left.get("metadata", {})
-        right_meta = right.get("metadata", {})
-        self.data_center_busy = True
-        self.data_compare_button.configure(state="disabled")
-        self._set_data_center_status("ALIGNING PROVIDER DATASETS ON EXACT UTC BAR TIMESTAMPS...")
-
-        def worker() -> None:
-            try:
-                result = compare_ohlc_datasets(
-                    list(left.get("bars", [])), list(right.get("bars", [])),
-                    left_group=str(left_meta.get("canonical_symbol", "")),
-                    right_group=str(right_meta.get("canonical_symbol", "")),
-                    left_interval=left.get("bar_interval_minutes"),
-                    right_interval=right.get("bar_interval_minutes"),
-                )
-                self.data_center_result_queue.put({"kind": "compare_ok", "result": result,
-                                                   "left": left.get("name", left_key),
-                                                   "right": right.get("name", right_key)})
-            except Exception as exc:
-                self.data_center_result_queue.put({"kind": "compare_error", "error": str(exc)})
-
-        threading.Thread(target=worker, name="VeltrixProviderBenchmark", daemon=True).start()
-
-    def _drain_data_center_results(self) -> None:
-        if self.is_closing:
-            return
-        try:
-            while True:
-                result = self.data_center_result_queue.get_nowait()
-                kind = result.get("kind")
-                self.data_center_busy = False
-                for provider_id, card in self.data_provider_cards.items():
-                    card["button"].configure(
-                        state="normal" if PROVIDER_CATALOG[provider_id]["adapter"] else "disabled"
-                    )
-                for button_name in ("data_fetch_button", "data_audit_button", "data_compare_button"):
-                    getattr(self, button_name).configure(state="normal")
-
-                if kind == "provider_test_ok":
-                    provider_id = result["provider_id"]
-                    detail = result["result"]
-                    self._set_data_center_status(
-                        f"{PROVIDER_CATALOG[provider_id]['name'].upper()} CONNECTION VERIFIED · "
-                        f"{detail.get('elapsed_ms')} MS · {detail.get('detail')}", "success",
-                    )
-                    self.data_provider_cards[provider_id]["status"].configure(
-                        text=f"CONNECTION OK · {detail.get('elapsed_ms')} MS", fg=THEMES[self.theme_name]["success"]
-                    )
-                elif kind == "provider_test_error":
-                    provider_id = result["provider_id"]
-                    self._set_data_center_status(
-                        f"{PROVIDER_CATALOG[provider_id]['name'].upper()} CONNECTION TEST FAILED · {result.get('error')}", "error"
-                    )
-                    self.data_provider_cards[provider_id]["status"].configure(
-                        text=f"TEST FAILED · {result.get('error')}", fg=THEMES[self.theme_name]["error"]
-                    )
-                elif kind == "provider_fetch_ok":
-                    key = result["dataset_key"]
-                    record = result["record"]
-                    self.research_asset_data[key] = record
-                    self._mark_research_data_changed()
-                    self._refresh_research_instrument_choices(preferred_key=key)
-                    self.save_research_preferences()
-                    self._save_research_cache()
-                    self._refresh_data_center_registry()
-                    self._render_research_page()
-                    quality = result["quality"]
-                    meta = record.get("metadata", {})
-                    warnings = []
-                    if meta.get("potentially_truncated"):
-                        warnings.append(f"Twelve Data reached its {meta.get('response_limit', 5000):,}-bar response limit; requested coverage may be truncated.")
-                    if meta.get("pagination_complete") is False:
-                        warnings.append("Massive pagination safety cap reached; requested coverage may be truncated.")
-                    if quality.get("invalid_bars", 0):
-                        warnings.append(f"{quality['invalid_bars']} malformed provider row(s) were skipped.")
-                    if quality.get("duplicate_timestamps", 0):
-                        warnings.append(f"{quality['duplicate_timestamps']} duplicate timestamp row(s) were removed.")
-                    suffix = (" · WARNING: " + " ".join(warnings)) if warnings else ""
-                    status_kind = "warning" if warnings else "success"
-                    self._set_data_center_status(
-                        f"DATASET REGISTERED · {record.get('name')} · {result['bar_count']:,} BARS · "
-                        f"INVALID {quality.get('invalid_bars', 0)} · DUPLICATES {quality.get('duplicate_timestamps', 0)} · "
-                        f"BASIS: {meta.get('price_basis', 'provider-defined')}" + suffix, status_kind,
-                    )
-                elif kind == "provider_fetch_error":
-                    self._set_data_center_status(f"HISTORICAL FETCH FAILED · {result.get('error')}", "error")
-                elif kind == "audit_ok":
-                    for key, audit in result["results"].items():
-                        if key in self.research_asset_data:
-                            metadata = self.research_asset_data[key].setdefault("metadata", {})
-                            metadata["quality_audit"] = audit
-                    self._save_research_cache()
-                    self._refresh_data_center_registry()
-                    invalid = sum(item.get("invalid_bars", 0) for item in result["results"].values())
-                    duplicates = sum(item.get("duplicate_timestamps", 0) for item in result["results"].values())
-                    self._set_data_center_status(
-                        f"AUDIT COMPLETE · {len(result['results'])} DATASETS · {invalid} INVALID BARS · "
-                        f"{duplicates} DUPLICATE TIMESTAMPS. LARGE GAPS ARE REVIEW CANDIDATES, NOT AUTOMATICALLY MISSING DATA.",
-                        "success",
-                    )
-                elif kind == "audit_error":
-                    self._set_data_center_status(f"DATA QUALITY AUDIT FAILED · {result.get('error')}", "error")
-                elif kind == "compare_ok":
-                    metrics = result["result"]
-                    corr = metrics.get("matched_return_correlation")
-                    corr_text = "N/A" if corr is None else f"{corr:.4f}"
-                    self.data_compare_result_label.configure(
-                        text=(f"{result['left']} vs {result['right']} · {metrics['matched_timestamps']:,} MATCHED BARS · "
-                              f"MEAN ABS CLOSE DIFF {metrics['mean_absolute_close_difference_bps']:.3f} BPS · "
-                              f"P95 ABS DIFF {metrics['p95_absolute_close_difference_bps']:.3f} BPS · "
-                              f"RETURN CORRELATION {corr_text} · COVERAGE {metrics['left_overlap_pct']:.1f}% / "
-                              f"{metrics['right_overlap_pct']:.1f}%. {metrics['method_note']}"),
-                    )
-                    self._set_data_center_status("PROVIDER COMPARISON COMPLETE · INTERPRET PRICE BASIS BEFORE JUDGING DIFFERENCES.", "success")
-                elif kind == "compare_error":
-                    self._set_data_center_status(f"PROVIDER COMPARISON NOT RUN · {result.get('error')}", "warning")
-        except queue.Empty:
-            pass
-        if not self.is_closing:
-            self.data_center_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_data_center_results)
-
     def _build_regime_page(self) -> None:
         """Build Phase 12 causal market-regime research workspace."""
         self.regime_canvas = tk.Canvas(self.regime_view, highlightthickness=0, bd=0)
@@ -2683,7 +1557,7 @@ class VeltrixTradingClock:
         ).pack(anchor="w", pady=(3, 6))
         self.regime_status_label = self._label(
             header,
-            "RESEARCH ONLY · LOAD OR IMPORT COMPLETED OHLC HISTORY IN RESEARCH LAB, THEN RUN CLASSIFICATION",
+            "LOCAL OHLC DATA · IMPORT A COMPLETED BAR CSV HERE, THEN RUN CLASSIFICATION",
             bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=980,
         )
         self.regime_status_label.pack(fill="x")
@@ -2695,14 +1569,14 @@ class VeltrixTradingClock:
                     font=("Consolas", 7, "bold")).grid(row=0, column=0, sticky="w")
         self.regime_asset_combo = ttk.Combobox(
             controls, textvariable=self.regime_asset_var,
-            values=list(self.research_label_to_key.keys()), state="readonly", width=54,
+            values=list(self.regime_dataset_label_to_key.keys()), state="readonly", width=54,
             style="Veltrix.Regime.TCombobox",
         )
         self.regime_asset_combo.grid(row=1, column=0, sticky="ew", pady=(4, 9))
-        selected_key = str(self.regime_settings.get("selected_asset") or self.research_settings.get("selected_asset") or "")
-        selected_label = next((label for label, key in self.research_label_to_key.items() if key == selected_key), "")
-        if not selected_label and self.research_label_to_key:
-            selected_label = next(iter(self.research_label_to_key))
+        selected_key = str(self.regime_settings.get("selected_asset") or "")
+        selected_label = next((label for label, key in self.regime_dataset_label_to_key.items() if key == selected_key), "")
+        if not selected_label and self.regime_dataset_label_to_key:
+            selected_label = next(iter(self.regime_dataset_label_to_key))
         self.regime_asset_var.set(selected_label)
         self.regime_asset_combo.bind("<<ComboboxSelected>>", lambda _event: self._regime_asset_changed())
 
@@ -2738,6 +1612,11 @@ class VeltrixTradingClock:
 
         actions = self._frame(controls, bg="panel")
         actions.grid(row=3, column=0, sticky="ew", pady=(3, 0))
+        self.regime_import_button = tk.Button(
+            actions, text="IMPORT OHLC CSV", command=self.import_regime_csv,
+            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+        )
+        self.regime_import_button.pack(side="left", padx=(0, 7))
         self.regime_run_button = tk.Button(
             actions, text="RUN REGIME ANALYSIS", command=self.run_regime_analysis,
             font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
@@ -2869,9 +1748,178 @@ class VeltrixTradingClock:
         ).pack(fill="x")
         self._apply_regime_tree_theme()
 
+    def _start_regime_cache_load(self) -> None:
+        """Load the compact Regime dataset store, migrating compatible old OHLC caches once."""
+        def worker() -> None:
+            try:
+                payload = load_regime_datasets(REGIME_DATA_PATH, LEGACY_RESEARCH_CACHE_PATH)
+            except Exception:
+                payload = {"datasets": {}, "migrated_from_legacy": False, "skipped_tick_datasets": 0}
+            self.regime_cache_load_queue.put(payload)
+
+        threading.Thread(target=worker, name="VeltrixRegimeCacheLoader", daemon=True).start()
+
+    def _drain_regime_cache_load_results(self) -> None:
+        if self.is_closing:
+            return
+        try:
+            payload = self.regime_cache_load_queue.get_nowait()
+        except queue.Empty:
+            self.regime_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_cache_load_results)
+            return
+
+        self.regime_datasets = dict(payload.get("datasets", {}))
+        self.regime_cache_loading = False
+        self._refresh_regime_dataset_choices(
+            preferred_key=str(self.regime_settings.get("selected_asset") or "")
+        )
+        if payload.get("migrated_from_legacy"):
+            self._save_regime_cache()
+        count = len(self.regime_datasets)
+        skipped = int(payload.get("skipped_tick_datasets", 0) or 0)
+        if count:
+            note = f" · {skipped} LEGACY TICK-BAR DATASET(S) LEFT IN THE OLD CACHE" if skipped else ""
+            self.regime_status_label.configure(
+                text=f"LOCAL OHLC DATA READY · {count} DATASET(S) · IMPORTS STAY ON THIS DEVICE{note}",
+                fg=THEMES[self.theme_name]["success"],
+            )
+        else:
+            self.regime_status_label.configure(
+                text="NO LOCAL OHLC DATASET · IMPORT A COMPLETED OHLC CSV TO BEGIN",
+                fg=THEMES[self.theme_name]["warning"],
+            )
+
+    def _regime_cache_writer_loop(self) -> None:
+        """Serialise local Regime datasets away from the Tk event loop."""
+        while True:
+            payload = self.regime_cache_write_queue.get()
+            try:
+                if payload is None:
+                    return
+                save_regime_datasets(REGIME_DATA_PATH, payload)
+            except Exception as exc:
+                self.regime_import_result_queue.put({"error": f"Dataset save failed: {exc}"})
+            finally:
+                self.regime_cache_write_queue.task_done()
+
+    def _save_regime_cache(self) -> None:
+        snapshot = {key: dict(value) for key, value in self.regime_datasets.items()}
+        try:
+            self.regime_cache_write_queue.put_nowait(snapshot)
+        except queue.Full:
+            try:
+                self.regime_cache_write_queue.get_nowait()
+                self.regime_cache_write_queue.task_done()
+            except queue.Empty:
+                pass
+            self.regime_cache_write_queue.put_nowait(snapshot)
+
+    def _refresh_regime_dataset_choices(self, preferred_key: str | None = None) -> None:
+        labels: list[str] = []
+        mapping: dict[str, str] = {}
+        for key, dataset in self.regime_datasets.items():
+            if not isinstance(dataset, dict) or not dataset.get("bars"):
+                continue
+            name = str(dataset.get("name") or key).strip()
+            symbol = str(dataset.get("symbol") or "").strip()
+            source = str(dataset.get("source") or "Local CSV").strip()
+            label = f"{name} · {symbol} · {source}" if symbol else f"{name} · {source}"
+            if label in mapping:
+                label = f"{label} · {key}"
+            labels.append(label)
+            mapping[label] = str(key)
+        self.regime_dataset_label_to_key = mapping
+        if hasattr(self, "regime_asset_combo"):
+            self.regime_asset_combo.configure(values=labels)
+        requested = str(preferred_key if preferred_key is not None else self.regime_settings.get("selected_asset") or "")
+        target = next((label for label, key in mapping.items() if key == requested), "")
+        if not target and labels:
+            target = labels[0]
+        self.regime_asset_var.set(target)
+        self.regime_settings["selected_asset"] = mapping.get(target, "")
+
+    def import_regime_csv(self) -> None:
+        if self.regime_import_in_progress:
+            return
+        path = filedialog.askopenfilename(
+            parent=self.root, title="Import OHLC history for Regime Lab",
+            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+        )
+        if not path:
+            return
+        default_name = Path(path).stem.replace("_", " ").replace("-", " ").strip().title()
+        name = simpledialog.askstring(
+            "Name OHLC dataset", "Dataset / instrument name:",
+            initialvalue=default_name, parent=self.root,
+        )
+        if name is None or not name.strip():
+            return
+        name = name.strip()
+        asset_key = f"regime_{uuid4().hex[:12]}"
+        timezone_name = self.home_zone.key
+        self.regime_import_in_progress = True
+        self.regime_import_button.configure(state="disabled")
+        self.regime_status_label.configure(
+            text=f"IMPORTING {Path(path).name} · NAIVE CSV TIMES ASSUMED {timezone_name}",
+            fg=THEMES[self.theme_name]["warning"],
+        )
+
+        def worker() -> None:
+            try:
+                bars, import_meta = import_ohlc_csv(path, naive_timezone=timezone_name)
+                record = {
+                    "bars": [bar.to_dict() for bar in bars],
+                    "source": f"Local CSV · {Path(path).name}",
+                    "name": name,
+                    "symbol": "",
+                    "unit": "source price units",
+                    "bar_interval_minutes": infer_bar_interval_minutes(bars),
+                    "metadata": {**import_meta, "imported_for": "regime_lab"},
+                }
+                self.regime_import_result_queue.put({"asset_key": asset_key, "record": record, "error": None})
+            except Exception as exc:
+                self.regime_import_result_queue.put({"asset_key": asset_key, "record": None, "error": str(exc)})
+
+        threading.Thread(target=worker, name="VeltrixRegimeCSVImport", daemon=True).start()
+
+    def _drain_regime_import_results(self) -> None:
+        if self.is_closing:
+            return
+        try:
+            while True:
+                result = self.regime_import_result_queue.get_nowait()
+                if result.get("error"):
+                    self.regime_import_in_progress = False
+                    self.regime_import_button.configure(state="normal")
+                    self.regime_status_label.configure(
+                        text=f"REGIME DATA TASK FAILED · {result['error']}",
+                        fg=THEMES[self.theme_name]["error"],
+                    )
+                    continue
+                key = str(result["asset_key"])
+                record = result["record"]
+                if record is None:
+                    continue
+                self.regime_import_in_progress = False
+                self.regime_import_button.configure(state="normal")
+                self.regime_datasets[key] = record
+                self._refresh_regime_dataset_choices(preferred_key=key)
+                self._clear_regime_results()
+                self._save_regime_cache()
+                metadata = record.get("metadata", {})
+                self.regime_status_label.configure(
+                    text=f"OHLC DATASET IMPORTED · {record['name']} · {len(record['bars']):,} BARS · "
+                         f"{metadata.get('invalid_rows', 0)} INVALID ROWS SKIPPED · SAVED LOCALLY",
+                    fg=THEMES[self.theme_name]["success"],
+                )
+        except queue.Empty:
+            pass
+        if not self.is_closing:
+            self.regime_import_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_import_results)
+
     def _selected_regime_asset_key(self) -> str:
         label = self.regime_asset_var.get() if hasattr(self, "regime_asset_var") else ""
-        return self.research_label_to_key.get(label, str(self.regime_settings.get("selected_asset", "")))
+        return self.regime_dataset_label_to_key.get(label, str(self.regime_settings.get("selected_asset", "")))
 
     def _clear_regime_results(self) -> None:
         """Clear prior output so stale results can never be mistaken for a new run."""
@@ -2930,19 +1978,19 @@ class VeltrixTradingClock:
     def run_regime_analysis(self) -> None:
         if self.regime_in_progress:
             return
-        if self.research_cache_loading:
+        if self.regime_cache_loading:
             self.regime_status_label.configure(
-                text="RESEARCH CACHE IS STILL LOADING · TRY AGAIN WHEN THE RESEARCH LAB IS READY",
+                text="LOCAL OHLC DATASET LIBRARY IS STILL LOADING · PLEASE RETRY",
                 fg=THEMES[self.theme_name]["warning"],
             )
             return
         asset_key = self._selected_regime_asset_key()
-        dataset = self.research_asset_data.get(asset_key)
+        dataset = self.regime_datasets.get(asset_key)
         bars = list(dataset.get("bars", [])) if isinstance(dataset, dict) else []
         if not bars:
             messagebox.showwarning(
                 "No historical bars",
-                "Load or import OHLC history for this instrument in Research Lab before running regime analysis.",
+                "Import an OHLC CSV in Regime Lab before running regime analysis.",
                 parent=self.root,
             )
             return
@@ -3195,1142 +2243,6 @@ class VeltrixTradingClock:
                 for tag, colour in tags.items():
                     tree.tag_configure(tag, foreground=colour)
 
-    def _build_strategy_page(self) -> None:
-        """Build the Phase 7 rule-based strategy and backtesting workspace."""
-        self.strategy_canvas = tk.Canvas(self.strategy_view, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(self.strategy_view, orient="vertical", command=self.strategy_canvas.yview)
-        self.strategy_canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.strategy_canvas.pack(side="left", fill="both", expand=True)
-        self.strategy_content = self._frame(self.strategy_canvas)
-        self.strategy_content_window = self.strategy_canvas.create_window(
-            (0, 0), window=self.strategy_content, anchor="nw"
-        )
-        self.strategy_content.bind(
-            "<Configure>", lambda _event: self.strategy_canvas.configure(
-                scrollregion=self.strategy_canvas.bbox("all")
-            )
-        )
-        self.strategy_canvas.bind(
-            "<Configure>", lambda event: self.strategy_canvas.itemconfigure(
-                self.strategy_content_window, width=event.width
-            )
-        )
-
-        header = self._frame(self.strategy_content, bg="panel", padx=14, pady=11)
-        header.pack(fill="x", pady=(0, 9))
-        self._label(header, "STRATEGY RESEARCH & BACKTESTING LAB", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
-        self._label(
-            header,
-            "SMA CROSSOVER · NEXT-BAR EXECUTION · ATR RISK · COSTS · CHRONOLOGICAL HOLDOUT · WALK-FORWARD",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
-        ).pack(anchor="w", pady=(3, 6))
-        self.backtest_status_label = self._label(
-            header,
-            "LOAD OR IMPORT INTRADAY OHLC HISTORY IN RESEARCH LAB, THEN RUN A STRATEGY TEST",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=980,
-        )
-        self.backtest_status_label.pack(fill="x")
-
-        controls = self._frame(self.strategy_content, bg="panel", padx=12, pady=10)
-        controls.pack(fill="x", pady=(0, 9))
-        controls.grid_columnconfigure(0, weight=1)
-        self._label(controls, "DATASET / INSTRUMENT", bg="panel", fg="muted",
-                    font=("Consolas", 7, "bold")).grid(row=0, column=0, sticky="w")
-        labels = list(self.research_label_to_key.keys())
-        self.strategy_asset_combo = ttk.Combobox(
-            controls, textvariable=self.backtest_asset_var, values=labels, state="readonly", width=54,
-            style="Veltrix.Strategy.TCombobox",
-        )
-        self.strategy_asset_combo.grid(row=1, column=0, sticky="ew", pady=(4, 9))
-        if labels:
-            selected = self.research_asset_var.get()
-            self.backtest_asset_var.set(selected if selected in labels else labels[0])
-        self.strategy_asset_combo.bind("<<ComboboxSelected>>", lambda _event: self._strategy_asset_changed())
-
-        field_specs = [
-            ("FAST SMA", "fast_period", "entry"),
-            ("SLOW SMA", "slow_period", "entry"),
-            ("ATR PERIOD", "atr_period", "entry"),
-            ("STOP · ATR MULTIPLE", "stop_atr_multiple", "entry"),
-            ("TARGET · R MULTIPLE", "target_r_multiple", "entry"),
-            ("DIRECTION", "direction", "direction"),
-            ("STARTING CAPITAL", "initial_capital", "entry"),
-            ("RISK PER TRADE %", "risk_per_trade_pct", "entry"),
-            ("COMMISSION · BPS / SIDE", "commission_bps", "entry"),
-            ("COMMISSION · PER UNIT / SIDE", "commission_per_unit", "entry"),
-            ("SLIPPAGE · BPS / SIDE", "slippage_bps", "entry"),
-            ("POINT / CONTRACT VALUE", "point_value", "entry"),
-            ("QUANTITY STEP", "quantity_step", "entry"),
-            ("MAX LEVERAGE", "max_leverage", "entry"),
-            ("HOLDOUT TRAIN %", "train_fraction_pct", "entry"),
-            ("WF INITIAL TRAIN %", "walk_forward_train_fraction_pct", "entry"),
-            ("WF FOLDS", "walk_forward_folds", "entry"),
-        ]
-        fields = self._frame(controls, bg="panel")
-        fields.grid(row=2, column=0, sticky="ew")
-        for column in range(4):
-            fields.grid_columnconfigure(column, weight=1, uniform="strategy_fields")
-        self.strategy_field_widgets: list[tk.Widget] = []
-        for index, (label, key, kind) in enumerate(field_specs):
-            row, column = divmod(index, 4)
-            cell = self._frame(fields, bg="panel")
-            cell.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 7, 7 if column < 3 else 0),
-                      pady=(0, 7))
-            self._label(cell, label, bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(anchor="w")
-            if kind == "direction":
-                widget = ttk.Combobox(
-                    cell, textvariable=self.backtest_vars[key], values=("both", "long_only", "short_only"),
-                    state="readonly", width=17, style="Veltrix.Strategy.TCombobox",
-                )
-            else:
-                widget = tk.Entry(
-                    cell, textvariable=self.backtest_vars[key], width=17, font=("Consolas", 9, "bold"),
-                    relief="flat", bd=0, highlightthickness=1,
-                )
-                self._register_theme(widget, "entry_bg", "entry_fg")
-            widget.pack(fill="x", pady=(3, 0), ipady=5)
-            self.strategy_field_widgets.append(widget)
-
-        actions = self._frame(controls, bg="panel")
-        actions.grid(row=3, column=0, sticky="ew", pady=(4, 0))
-        self.strategy_run_button = tk.Button(
-            actions, text="RUN BACKTEST + VALIDATION", command=self.run_strategy_backtest,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-        )
-        self.strategy_run_button.pack(side="left", padx=(0, 7))
-        self.strategy_export_csv_button = tk.Button(
-            actions, text="EXPORT OOS TRADES CSV", command=self.export_backtest_trades,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-            state="disabled",
-        )
-        self.strategy_export_csv_button.pack(side="left", padx=7)
-        self.strategy_export_html_button = tk.Button(
-            actions, text="EXPORT HTML REPORT", command=self.export_backtest_report,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-            state="disabled",
-        )
-        self.strategy_export_html_button.pack(side="left", padx=7)
-        self.strategy_all_buttons = [self.strategy_run_button, self.strategy_export_csv_button,
-                                     self.strategy_export_html_button]
-
-        metrics_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        metrics_panel.pack(fill="x", pady=(0, 9))
-        self._label(metrics_panel, "HOLDOUT · OUT-OF-SAMPLE PERFORMANCE", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        metrics_grid = self._frame(metrics_panel, bg="panel")
-        metrics_grid.pack(fill="x")
-        for column in range(4):
-            metrics_grid.grid_columnconfigure(column, weight=1, uniform="strategy_metrics")
-        self.strategy_metric_tiles: dict[str, dict[str, tk.Widget]] = {}
-        metric_specs = [
-            ("trades", "TEST TRADES", "N/A"), ("net_pnl", "NET P&L", "N/A"),
-            ("return", "TOTAL RETURN", "N/A"), ("win_rate", "WIN RATE", "N/A"),
-            ("profit_factor", "PROFIT FACTOR", "N/A"), ("drawdown", "MAX DRAWDOWN", "N/A"),
-            ("sharpe", "DAILY SHARPE", "N/A"), ("expectancy_r", "EXPECTANCY · R", "N/A"),
-        ]
-        for index, (key, title, initial) in enumerate(metric_specs):
-            row, column = divmod(index, 4)
-            tile = self._frame(metrics_grid, bg="panel", padx=9, pady=7, highlightthickness=1, bd=0)
-            tile.grid(row=row, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < 3 else 0),
-                      pady=(0, 6))
-            title_label = self._label(tile, title, bg="panel", fg="muted", font=("Consolas", 7, "bold"))
-            title_label.pack(anchor="w")
-            value_label = self._label(tile, initial, bg="panel", fg="text", font=("Consolas", 12, "bold"))
-            value_label.pack(anchor="w", pady=(3, 0))
-            self.strategy_metric_tiles[key] = {"frame": tile, "title": title_label, "value": value_label}
-
-        split_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        split_panel.pack(fill="x", pady=(0, 9))
-        self._label(split_panel, "CHRONOLOGICAL TRAIN / HOLDOUT SPLIT", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w")
-        self.strategy_split_label = self._label(
-            split_panel, "TRAIN: N/A  ·  OUT-OF-SAMPLE: N/A", bg="panel", fg="text",
-            font=("Consolas", 8, "bold"), wraplength=980, justify="left", anchor="w",
-        )
-        self.strategy_split_label.pack(fill="x", pady=(5, 0))
-
-        walk_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        walk_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(walk_panel, "WALK-FORWARD TEST FOLDS · EXPANDING HISTORY / FIXED PARAMETERS", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
-        wf_columns = ("fold", "train", "test", "period", "trades", "pnl", "return", "dd", "sharpe", "pf")
-        self.strategy_wf_tree = ttk.Treeview(
-            walk_panel, columns=wf_columns, show="headings", height=4, style="Veltrix.Strategy.Treeview",
-        )
-        wf_headings = {
-            "fold": ("FOLD", 48), "train": ("TRAIN BARS", 80), "test": ("TEST BARS", 75),
-            "period": ("TEST PERIOD", 205), "trades": ("TRADES", 60), "pnl": ("NET P&L", 90),
-            "return": ("RETURN %", 80), "dd": ("MAX DD %", 80), "sharpe": ("DAILY SHARPE", 92),
-            "pf": ("PROFIT FACTOR", 95),
-        }
-        for key, (heading, width) in wf_headings.items():
-            self.strategy_wf_tree.heading(key, text=heading)
-            self.strategy_wf_tree.column(key, width=width, minwidth=48, anchor="center", stretch=(key == "period"))
-        self.strategy_wf_tree.pack(fill="x", expand=True)
-
-        trade_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        trade_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(trade_panel, "OUT-OF-SAMPLE TRADE LOG", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
-        trade_columns = ("side", "entry", "exit", "entry_price", "exit_price", "quantity", "net", "r", "reason")
-        self.strategy_trade_tree = ttk.Treeview(
-            trade_panel, columns=trade_columns, show="headings", height=8, style="Veltrix.Strategy.Treeview",
-        )
-        trade_headings = {
-            "side": ("SIDE", 60), "entry": ("ENTRY TIME", 155), "exit": ("EXIT TIME", 155),
-            "entry_price": ("ENTRY", 85), "exit_price": ("EXIT", 85), "quantity": ("QUANTITY", 85),
-            "net": ("NET P&L", 95), "r": ("R MULTIPLE", 85), "reason": ("EXIT REASON", 140),
-        }
-        for key, (heading, width) in trade_headings.items():
-            self.strategy_trade_tree.heading(key, text=heading)
-            self.strategy_trade_tree.column(key, width=width, minwidth=50, anchor="center", stretch=(key in {"entry", "exit"}))
-        trade_scroll = ttk.Scrollbar(trade_panel, orient="vertical", command=self.strategy_trade_tree.yview)
-        self.strategy_trade_tree.configure(yscrollcommand=trade_scroll.set)
-        self.strategy_trade_tree.pack(side="left", fill="both", expand=True)
-        trade_scroll.pack(side="right", fill="y")
-
-        methodology = self._frame(self.strategy_content, bg="panel", padx=12, pady=9)
-        methodology.pack(fill="x", pady=(0, 8))
-        self._label(
-            methodology,
-            "EXECUTION MODEL: SMA crossover is detected only after a bar closes and enters at the next bar open. ATR is calculated with Wilder smoothing. Stops and targets are evaluated against OHLC; when both are touched in one bar, stop-first is assumed. Tick-derived bars retain OHLC extremes, but this is not tick-by-tick order replay and cannot recover the exact stop/target path inside each bar. Gaps fill at the open. Commission and slippage apply on both sides. One position at a time; no pyramiding. Holdout and walk-forward tests use fixed parameters and reset flat at each test boundary. No parameter optimisation, order-book modelling, broker spread replay, exchange fee schedules, funding, borrow costs or partial fills are included. Daily Sharpe uses observed UTC daily equity returns and √252 annualisation. Match point value, quantity step, commission and slippage to your broker before interpreting results.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=980,
-        ).pack(fill="x")
-        self._apply_strategy_tree_theme()
-        for variable in self.backtest_vars.values():
-            variable.trace_add("write", self._invalidate_backtest_result)
-        self._strategy_asset_changed()
-
-    def _invalidate_backtest_result(self, *_args) -> None:
-        if self.backtest_result is not None:
-            self.backtest_result = None
-            for button in (self.strategy_export_csv_button, self.strategy_export_html_button):
-                button.configure(state="disabled")
-            if not self.backtest_in_progress:
-                self.backtest_status_label.configure(
-                    text="STRATEGY SETTINGS CHANGED · RUN THE BACKTEST AGAIN BEFORE EXPORTING",
-                    fg=THEMES[self.theme_name]["warning"],
-                )
-
-    def _apply_strategy_tree_theme(self) -> None:
-        palette = THEMES[self.theme_name]
-        style = ttk.Style(self.root)
-        style.configure(
-            "Veltrix.Strategy.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
-        )
-        style.configure(
-            "Veltrix.Strategy.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
-        )
-        style.map("Veltrix.Strategy.Treeview", background=[("selected", palette["button_active"])],
-                  foreground=[("selected", palette["bright"])])
-        style.configure(
-            "Veltrix.Strategy.TCombobox", fieldbackground=palette["entry_bg"],
-            background=palette["button_bg"], foreground=palette["entry_fg"], arrowcolor=palette["bright"],
-        )
-        if hasattr(self, "strategy_canvas"):
-            self.strategy_canvas.configure(bg=palette["bg"])
-
-    def _selected_backtest_asset_key(self) -> str:
-        label = self.backtest_asset_var.get()
-        return self.research_label_to_key.get(label, str(self.backtest_settings.get("selected_asset", "")))
-
-    def _strategy_asset_changed(self) -> None:
-        key = self._selected_backtest_asset_key()
-        instrument = next((item for item in self.market_instruments if str(item.get("key")) == key), None)
-        if instrument is not None:
-            self.backtest_vars["point_value"].set(str(instrument.get("point_value", 1.0)))
-            self.backtest_vars["quantity_step"].set(str(instrument.get("quantity_step", 0.01)))
-        else:
-            dataset = self.research_asset_data.get(key, {})
-            metadata = dataset.get("metadata", {}) if isinstance(dataset, dict) else {}
-            self.backtest_vars["point_value"].set(str(metadata.get("point_value", 1.0)))
-            self.backtest_vars["quantity_step"].set(str(metadata.get("quantity_step", 0.01)))
-            if hasattr(self, "backtest_status_label") and dataset:
-                self.backtest_status_label.configure(
-                    text="BROKER CSV DATASET SELECTED · VERIFY POINT VALUE, QUANTITY STEP, CONTRACT SIZE AND COSTS BEFORE BACKTESTING",
-                    fg=THEMES[self.theme_name]["warning"],
-                )
-        self.backtest_result = None
-        for button in (getattr(self, "strategy_export_csv_button", None), getattr(self, "strategy_export_html_button", None)):
-            if button is not None:
-                button.configure(state="disabled")
-
-    def _collect_backtest_config(self) -> tuple[BacktestConfig, float, float, int]:
-        values = self.backtest_vars
-        try:
-            mapping = {
-                "fast_period": int(values["fast_period"].get()),
-                "slow_period": int(values["slow_period"].get()),
-                "atr_period": int(values["atr_period"].get()),
-                "stop_atr_multiple": float(values["stop_atr_multiple"].get()),
-                "target_r_multiple": float(values["target_r_multiple"].get()),
-                "direction": values["direction"].get().strip(),
-                "initial_capital": float(values["initial_capital"].get()),
-                "risk_per_trade_pct": float(values["risk_per_trade_pct"].get()),
-                "commission_bps": float(values["commission_bps"].get()),
-                "commission_per_unit": float(values["commission_per_unit"].get()),
-                "slippage_bps": float(values["slippage_bps"].get()),
-                "point_value": float(values["point_value"].get()),
-                "quantity_step": float(values["quantity_step"].get()),
-                "max_leverage": float(values["max_leverage"].get()),
-            }
-            train_fraction = int(values["train_fraction_pct"].get()) / 100.0
-            wf_train_fraction = int(values["walk_forward_train_fraction_pct"].get()) / 100.0
-            folds = int(values["walk_forward_folds"].get())
-        except (ValueError, tk.TclError) as exc:
-            raise ValueError("Check the strategy inputs. Numeric fields must contain valid numbers.") from exc
-        config = BacktestConfig.from_mapping(mapping)
-        if not 50 <= train_fraction * 100 <= 85:
-            raise ValueError("Holdout training percentage must be between 50 and 85.")
-        if not 40 <= wf_train_fraction * 100 <= 80:
-            raise ValueError("Walk-forward initial training percentage must be between 40 and 80.")
-        if not 2 <= folds <= 10:
-            raise ValueError("Walk-forward folds must be between 2 and 10.")
-        return config, train_fraction, wf_train_fraction, folds
-
-    def save_backtest_preferences(self) -> None:
-        for key, variable in self.backtest_vars.items():
-            raw = variable.get().strip()
-            if key in {"direction"}:
-                self.backtest_settings[key] = raw
-            else:
-                try:
-                    self.backtest_settings[key] = float(raw) if "." in raw else int(raw)
-                except ValueError:
-                    continue
-        self.backtest_settings["selected_asset"] = self._selected_backtest_asset_key()
-        self.config["backtest"] = dict(self.backtest_settings)
-        self._save_config()
-
-    def run_strategy_backtest(self) -> None:
-        if self.backtest_in_progress:
-            return
-        asset_key = self._selected_backtest_asset_key()
-        dataset = self.research_asset_data.get(asset_key)
-        if not dataset or not dataset.get("bars"):
-            messagebox.showinfo(
-                "Historical data required",
-                "No historical bars are loaded for this instrument. Open RESEARCH LAB and fetch provider history or import broker OHLC data first.",
-                parent=self.root,
-            )
-            return
-        try:
-            config, train_fraction, wf_train_fraction, folds = self._collect_backtest_config()
-        except ValueError as exc:
-            messagebox.showerror("Invalid strategy settings", str(exc), parent=self.root)
-            return
-        bars = list(dataset["bars"])
-        metadata = {
-            "asset_key": asset_key,
-            "asset_name": str(dataset.get("name", asset_key)),
-            "symbol": str(dataset.get("symbol", "")),
-            "source": str(dataset.get("source", "Unknown source")),
-            "bar_interval_minutes": float(dataset.get("bar_interval_minutes") or 0.0),
-            "bar_construction_label": str((dataset.get("metadata") or {}).get("bar_construction_label") or "Time-based OHLC bars"),
-            "variable_interval_bars": bool((dataset.get("metadata") or {}).get("variable_interval_bars", False)),
-        }
-        self.backtest_settings.update(config.__dict__)
-        self.backtest_settings.update({
-            "train_fraction_pct": round(train_fraction * 100),
-            "walk_forward_train_fraction_pct": round(wf_train_fraction * 100),
-            "walk_forward_folds": folds,
-            "selected_asset": asset_key,
-        })
-        self.config["backtest"] = dict(self.backtest_settings)
-        self._save_config()
-        self.backtest_in_progress = True
-        self.backtest_result = None
-        self.strategy_export_csv_button.configure(state="disabled")
-        self.strategy_export_html_button.configure(state="disabled")
-        self.strategy_run_button.configure(state="disabled")
-        self.backtest_status_label.configure(
-            text=f"RUNNING BACKTEST · {metadata['asset_name']} · {len(bars):,} BARS · {metadata['bar_construction_label']} · {metadata['source']}",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-
-        def worker():
-            try:
-                holdout = run_out_of_sample(bars, config, train_fraction=train_fraction)
-                walk = run_walk_forward(bars, config, train_fraction=wf_train_fraction, folds=folds)
-                self.backtest_result_queue.put(({
-                    "holdout": holdout, "walk_forward": walk, "metadata": metadata, "config": config,
-                }, None))
-            except Exception as exc:
-                self.backtest_result_queue.put((None, str(exc)))
-
-        threading.Thread(target=worker, name="VeltrixStrategyBacktest", daemon=True).start()
-
-    def _drain_backtest_results(self) -> None:
-        try:
-            while True:
-                result, error = self.backtest_result_queue.get_nowait()
-                self.backtest_in_progress = False
-                self.strategy_run_button.configure(state="normal")
-                if error:
-                    self.backtest_status_label.configure(
-                        text=f"BACKTEST NOT COMPLETED · {error}", fg=THEMES[self.theme_name]["error"]
-                    )
-                    continue
-                if result is None:
-                    continue
-                self.backtest_result = result
-                self._render_backtest_result()
-                self.strategy_export_csv_button.configure(state="normal")
-                self.strategy_export_html_button.configure(state="normal")
-        except queue.Empty:
-            pass
-        if not self.is_closing:
-            self.backtest_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_backtest_results)
-
-    def _render_backtest_result(self) -> None:
-        if not self.backtest_result:
-            return
-        result = self.backtest_result
-        holdout, walk = result["holdout"], result["walk_forward"]
-        train_metrics = holdout["train"]["metrics"]
-        test_metrics = holdout["test"]["metrics"]
-        fmt = lambda value, digits=2: "N/A" if value is None else f"{float(value):,.{digits}f}"
-        metrics_map = {
-            "trades": str(test_metrics["trade_count"]),
-            "net_pnl": fmt(test_metrics["net_pnl"]),
-            "return": f"{fmt(test_metrics['total_return_pct'])}%",
-            "win_rate": f"{fmt(test_metrics['win_rate_pct'])}%",
-            "profit_factor": fmt(test_metrics["profit_factor"]),
-            "drawdown": f"{fmt(test_metrics['max_drawdown_pct'])}%",
-            "sharpe": fmt(test_metrics["sharpe_daily_annualised"]),
-            "expectancy_r": f"{fmt(test_metrics['expectancy_r'])}R",
-        }
-        for key, value in metrics_map.items():
-            self.strategy_metric_tiles[key]["value"].configure(text=value)
-        self.strategy_split_label.configure(
-            text=(
-                f"IN-SAMPLE: {holdout['train']['start_timestamp'][:10]} → {holdout['train']['end_timestamp'][:10]} "
-                f"· {holdout['train']['bars_tested']:,} BARS · {train_metrics['trade_count']} TRADES · "
-                f"NET {fmt(train_metrics['net_pnl'])} ({fmt(train_metrics['total_return_pct'])}%)\n"
-                f"OUT-OF-SAMPLE: {holdout['test']['start_timestamp'][:10]} → {holdout['test']['end_timestamp'][:10]} "
-                f"· {holdout['test']['bars_tested']:,} BARS · {test_metrics['trade_count']} TRADES · "
-                f"NET {fmt(test_metrics['net_pnl'])} ({fmt(test_metrics['total_return_pct'])}%)"
-            )
-        )
-        for item in self.strategy_wf_tree.get_children():
-            self.strategy_wf_tree.delete(item)
-        for fold in walk["folds"]:
-            self.strategy_wf_tree.insert("", "end", values=(
-                fold["fold"], fold["training_bars"], fold["test_bars"],
-                f"{fold['test_start'][:10]} → {fold['test_end'][:10]}", fold["trade_count"],
-                fmt(fold["net_pnl"]), fmt(fold["total_return_pct"]) + "%",
-                fmt(fold["max_drawdown_pct"]) + "%", fmt(fold["sharpe_daily_annualised"]),
-                fmt(fold["profit_factor"]),
-            ))
-        for item in self.strategy_trade_tree.get_children():
-            self.strategy_trade_tree.delete(item)
-        trades = holdout["test"]["trades"]
-        for trade in reversed(trades[-150:]):
-            self.strategy_trade_tree.insert("", "end", values=(
-                trade["side"], trade["entry_time"][:19].replace("T", " "),
-                trade["exit_time"][:19].replace("T", " "), fmt(trade["entry_price"], 4),
-                fmt(trade["exit_price"], 4), fmt(trade["quantity"], 4), fmt(trade["net_pnl"]),
-                fmt(trade["r_multiple"], 2), trade["exit_reason"],
-            ))
-        metadata = result["metadata"]
-        config = result["config"]
-        self.backtest_status_label.configure(
-            text=(
-                f"VALIDATION COMPLETE · {metadata['asset_name']} ({metadata['symbol']}) · "
-                f"{metadata['source']} · {metadata['bar_construction_label']} · "
-                f"MEDIAN {metadata['bar_interval_minutes']:.2f} MIN ELAPSED · "
-                f"POINT VALUE {config.point_value:g} · QUANTITY STEP {config.quantity_step:g} · "
-                f"{len(trades)} HOLDOUT TRADES · FIXED PARAMETERS / NO OPTIMISATION"
-            ),
-            fg=THEMES[self.theme_name]["success"],
-        )
-
-    def export_backtest_trades(self) -> None:
-        if not self.backtest_result:
-            return
-        path = filedialog.asksaveasfilename(
-            parent=self.root, title="Export out-of-sample trade log", defaultextension=".csv",
-            initialfile="veltrix_oos_trades.csv", filetypes=(("CSV files", "*.csv"),),
-        )
-        if path:
-            try:
-                export_trades_csv(path, self.backtest_result["holdout"]["test"]["trades"])
-                self.backtest_status_label.configure(
-                    text=f"OUT-OF-SAMPLE TRADES EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"]
-                )
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def export_backtest_report(self) -> None:
-        if not self.backtest_result:
-            return
-        path = filedialog.asksaveasfilename(
-            parent=self.root, title="Export strategy validation report", defaultextension=".html",
-            initialfile="veltrix_strategy_backtest.html", filetypes=(("HTML reports", "*.html"),),
-        )
-        if path:
-            try:
-                metadata = self.backtest_result["metadata"]
-                export_backtest_html(
-                    path, asset_name=metadata["asset_name"], source=metadata["source"],
-                    interval_minutes=metadata["bar_interval_minutes"],
-                    sampling_label=metadata.get("bar_construction_label", "Time-based OHLC bars"),
-                    config=self.backtest_result["config"],
-                    oos=self.backtest_result["holdout"], walk_forward=self.backtest_result["walk_forward"],
-                )
-                self.backtest_status_label.configure(
-                    text=f"STRATEGY REPORT EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"]
-                )
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def _selected_research_asset_key(self) -> str:
-        label = self.research_asset_var.get()
-        return self.research_label_to_key.get(label, str(self.research_settings.get("selected_asset", "")))
-
-    def _refresh_research_instrument_choices(self, preferred_key: str | None = None) -> None:
-        """Expose broker-imported datasets as first-class Research/Strategy instruments."""
-        requested_key = str(preferred_key) if preferred_key is not None else self._selected_research_asset_key()
-        labels, mapping = build_research_instrument_choices(self.market_instruments, self.research_asset_data)
-        self.research_label_to_key = mapping
-        if hasattr(self, "research_asset_combo"):
-            self.research_asset_combo.configure(values=labels)
-        target_label = next((label for label, key in mapping.items() if key == requested_key), "")
-        if not target_label and labels:
-            target_label = labels[0]
-        if hasattr(self, "research_asset_var") and target_label:
-            self.research_asset_var.set(target_label)
-            # A saved custom key may not be in the selector until its large cache
-            # finishes loading. Do not overwrite that preference with the first
-            # built-in instrument during initial interface construction.
-            if requested_key in mapping or not requested_key:
-                self.research_settings["selected_asset"] = mapping[target_label]
-
-        if hasattr(self, "strategy_asset_combo"):
-            previous_strategy_key = requested_key or self._selected_backtest_asset_key()
-            self.strategy_asset_combo.configure(values=labels)
-            strategy_label = next((label for label, key in mapping.items() if key == previous_strategy_key), target_label)
-            if strategy_label:
-                self.backtest_asset_var.set(strategy_label)
-                self._strategy_asset_changed()
-
-        if hasattr(self, "regime_asset_combo"):
-            previous_regime_key = str(self.regime_settings.get("selected_asset") or requested_key)
-            self.regime_asset_combo.configure(values=labels)
-            regime_label = next((label for label, key in mapping.items() if key == previous_regime_key), target_label)
-            if regime_label:
-                self.regime_asset_var.set(regime_label)
-                self.regime_settings["selected_asset"] = mapping[regime_label]
-
-    def _set_research_export_state(self, state: str) -> None:
-        for button_name in ("research_csv_button", "research_detail_csv_button", "research_html_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state=state)
-
-    def _start_research_cache_load(self) -> None:
-        """Read the potentially large JSON research cache away from the Tk thread."""
-        def worker() -> None:
-            try:
-                payload = load_research_cache(RESEARCH_CACHE_PATH)
-            except Exception:
-                payload = None
-            self.research_cache_load_queue.put(payload)
-
-        threading.Thread(target=worker, name="VeltrixResearchCacheLoader", daemon=True).start()
-
-    def _drain_research_cache_load_results(self) -> None:
-        if self.is_closing:
-            return
-        try:
-            payload = self.research_cache_load_queue.get_nowait()
-        except queue.Empty:
-            self.research_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_cache_load_results)
-            return
-
-        self.research_cache = payload or {"assets": {}, "provider_assets": {}}
-        self.research_asset_data = dict(self.research_cache.get("assets", {}))
-        self.research_provider_assets = dict(self.research_cache.get("provider_assets", {}))
-        self.research_tick_sources = dict(self.research_cache.get("tick_sources", {}))
-        for cached_key, cached_asset in self.market_snapshot.get("assets", {}).items():
-            if cached_key not in self.research_asset_data and cached_asset.get("intraday_bars"):
-                self.research_asset_data[cached_key] = {
-                    "bars": list(cached_asset.get("intraday_bars", [])),
-                    "source": "Yahoo Finance · existing 5m cache",
-                    "name": cached_asset.get("name", cached_key),
-                    "symbol": cached_asset.get("symbol", ""), "unit": cached_asset.get("unit", ""),
-                    "bar_interval_minutes": 5,
-                    "metadata": {"inherited_from_market_cache": True},
-                }
-        self.research_cache_loading = False
-        self.research_data_revision += 1
-        self._refresh_research_instrument_choices(
-            preferred_key=str(self.research_settings.get("selected_asset", ""))
-        )
-        self._refresh_tick_source_choices()
-        self._refresh_data_center_registry()
-        for button_name in ("research_fetch_button", "research_import_button", "research_custom_import_button", "research_restore_button", "tick_import_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="normal")
-        self._render_research_page()
-
-    def _mark_research_data_changed(self) -> None:
-        self.research_data_revision += 1
-        self.research_analysis_failed_revision = -1
-
-    def _research_cache_writer_loop(self) -> None:
-        """Serialise cache writes off the UI thread, coalescing obsolete pending snapshots."""
-        while True:
-            payload = self.research_cache_write_queue.get()
-            try:
-                if payload is None:
-                    return
-                save_research_cache(RESEARCH_CACHE_PATH, payload)
-            except Exception as exc:
-                self.research_cache_error_queue.put(str(exc))
-            finally:
-                self.research_cache_write_queue.task_done()
-
-    def _render_research_page(self) -> None:
-        if not hasattr(self, "research_summary_tree"):
-            return
-        if self.research_cache_loading:
-            self.research_status_label.configure(
-                text="LOADING HISTORICAL CACHE IN BACKGROUND · THE REST OF VELTRIX REMAINS AVAILABLE",
-                fg=THEMES[self.theme_name]["warning"],
-            )
-            for button_name in ("research_fetch_button", "research_import_button", "research_restore_button"):
-                button = getattr(self, button_name, None)
-                if button is not None:
-                    button.configure(state="disabled")
-            self._set_research_export_state("disabled")
-            return
-
-        total_bars = sum(len(item.get("bars", [])) for item in self.research_asset_data.values())
-        if total_bars <= 0:
-            self.research_rows = []
-            self.research_observations = {}
-            self.research_metadata_cache = {}
-            self.research_analysis_revision = self.research_data_revision
-            for tree in (self.research_summary_tree, self.research_detail_tree):
-                for item in tree.get_children():
-                    tree.delete(item)
-            self.research_status_label.configure(
-                text="NO HISTORICAL RESEARCH DATA · FETCH PROVIDER HISTORY OR IMPORT A BROKER CSV",
-                fg=THEMES[self.theme_name]["warning"],
-            )
-            self._set_research_export_state("disabled")
-            return
-
-        if self.research_analysis_revision == self.research_data_revision:
-            self._display_research_results()
-            return
-
-        if self.research_analysis_failed_revision == self.research_data_revision:
-            self.research_status_label.configure(
-                text="RESEARCH ANALYSIS FAILED · CHECK THE ERROR ABOVE OR CHANGE DATA, THEN RETRY",
-                fg=THEMES[self.theme_name]["error"],
-            )
-            return
-        if self.research_analysis_in_progress:
-            return
-
-        # Shallow-copy each record. Bar lists are immutable after a dataset is installed;
-        # later imports replace the record, so this snapshot is safe for the worker.
-        snapshot = {key: dict(value) for key, value in self.research_asset_data.items()}
-        sessions = tuple(self.sessions)
-        revision = self.research_data_revision
-        self.research_analysis_in_progress = True
-        self._set_research_export_state("disabled")
-        self.research_status_label.configure(
-            text=f"ANALYSING {total_bars:,} HISTORICAL BARS IN BACKGROUND · UI REMAINS RESPONSIVE",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-
-        def worker() -> None:
-            try:
-                rows, observations, metadata = analyse_research_assets(
-                    snapshot, list(sessions), windows=(30, 60, 90)
-                )
-                self.research_analysis_result_queue.put((revision, rows, observations, metadata, None))
-            except Exception as exc:
-                self.research_analysis_result_queue.put((revision, None, None, None, str(exc)))
-
-        threading.Thread(target=worker, name="VeltrixResearchAnalysis", daemon=True).start()
-
-    def _display_research_results(self) -> None:
-        for tree in (self.research_summary_tree, self.research_detail_tree):
-            for item in tree.get_children():
-                tree.delete(item)
-        metadata = self.research_metadata_cache
-        if not metadata:
-            self.research_status_label.configure(
-                text="NO VALID OHLC DATA · CHECK THE IMPORTED FILE OR PROVIDER DATASET",
-                fg=THEMES[self.theme_name]["warning"],
-            )
-            self._set_research_export_state("disabled")
-            return
-
-        asset_key = self._selected_research_asset_key()
-        if asset_key not in metadata:
-            asset_key = next(iter(metadata))
-            label = next((label for label, key in self.research_label_to_key.items() if key == asset_key), "")
-            if label:
-                self.research_asset_var.set(label)
-        try:
-            window_days = int(self.research_window_var.get())
-        except (ValueError, tk.TclError):
-            window_days = 90
-            self.research_window_var.set("90")
-        selected_rows = [row for row in self.research_rows
-                         if row["asset_key"] == asset_key and row["window_days"] == window_days]
-
-        def fmt(value, digits=3):
-            return "N/A" if value is None else f"{float(value):.{digits}f}"
-
-        for row in selected_rows:
-            self.research_summary_tree.insert("", "end", values=(
-                row["session_name"], row["sample_count"], fmt(row["mean_rv_pct"]),
-                fmt(row["median_rv_pct"]), fmt(row["p75_rv_pct"]), fmt(row["p90_rv_pct"]),
-                fmt(row["latest_rv_pct"]), fmt(row["latest_percentile"], 1),
-                fmt(row["median_range_pct"]), fmt(row["win_rate_pct"], 1),
-            ))
-        observations = self.research_observations.get(asset_key, [])
-        for row in sorted(observations, key=lambda item: (item["date"], item["session_key"]), reverse=True)[:30]:
-            self.research_detail_tree.insert("", "end", values=(
-                row["date"], row["session_name"], fmt(row["realised_vol_pct"]),
-                fmt(row["range_pct"]), fmt(row["session_return_pct"]),
-                f"{row['bars']} / {row['returns']}", f"{row['bar_interval_minutes']:.1f}",
-                "PARTIAL · EXCLUDED" if row.get("is_partial") else "COMPLETE / HISTORY",
-            ))
-        asset_meta = metadata[asset_key]
-        valid_observations = [row for row in observations if row["valid"]]
-        coverage = (
-            f"{min(row['date'] for row in valid_observations)} → {max(row['date'] for row in valid_observations)}"
-            if valid_observations else "NO VALID SESSION OBSERVATIONS"
-        )
-        self.research_status_label.configure(
-            text=f"{asset_meta['name']} · {asset_meta['bar_count']:,} BARS · {coverage} · "
-                 f"{asset_meta['bar_interval_minutes']:.1f} MIN BARS · SOURCE: {asset_meta['source']} · {window_days}D WINDOW",
-            fg=THEMES[self.theme_name]["success"],
-        )
-        self._set_research_export_state("normal")
-
-    def _drain_research_analysis_results(self) -> None:
-        if self.is_closing:
-            return
-        received = False
-        while True:
-            try:
-                revision, rows, observations, metadata, error = self.research_analysis_result_queue.get_nowait()
-            except queue.Empty:
-                break
-            received = True
-            self.research_analysis_in_progress = False
-            if revision != self.research_data_revision:
-                continue  # A newer import/fetch arrived while this snapshot was being analysed.
-            if error:
-                self.research_analysis_failed_revision = revision
-                self.research_status_label.configure(
-                    text=f"RESEARCH ANALYSIS FAILED · {error}", fg=THEMES[self.theme_name]["error"]
-                )
-                self._set_research_export_state("disabled")
-                continue
-            self.research_rows = rows or []
-            self.research_observations = observations or {}
-            self.research_metadata_cache = metadata or {}
-            self.research_analysis_revision = revision
-            self.research_analysis_failed_revision = -1
-            self._display_research_results()
-
-        if not self.research_analysis_in_progress and self.research_analysis_revision != self.research_data_revision:
-            if self.research_analysis_failed_revision != self.research_data_revision:
-                self._render_research_page()
-        if not self.is_closing:
-            self.research_analysis_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_analysis_results)
-
-    def _save_research_cache(self) -> None:
-        """Queue a shallow, immutable dataset snapshot for background JSON persistence."""
-        payload = {
-            "assets": {key: dict(value) for key, value in self.research_asset_data.items()},
-            "provider_assets": {key: dict(value) for key, value in self.research_provider_assets.items()},
-            "tick_sources": {key: dict(value) for key, value in self.research_tick_sources.items()},
-            "saved_at": datetime.now(timezone.utc).isoformat(),
-        }
-        self.research_cache = payload
-        try:
-            self.research_cache_write_queue.put_nowait(payload)
-        except queue.Full:
-            # Keep only the newest not-yet-written snapshot; an active write is never interrupted.
-            try:
-                self.research_cache_write_queue.get_nowait()
-                self.research_cache_write_queue.task_done()
-            except queue.Empty:
-                pass
-            self.research_cache_write_queue.put_nowait(payload)
-
-    def fetch_research_history(self) -> None:
-        if self.research_fetch_in_progress:
-            return
-        self.research_fetch_in_progress = True
-        self.research_fetch_button.configure(state="disabled")
-        self.research_import_button.configure(state="disabled")
-        self.research_status_label.configure(
-            text="FETCHING HISTORICAL 1H BARS · REQUESTING UP TO 3 MONTHS FROM YAHOO FINANCE...",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-        instruments = [dict(item) for item in self.market_instruments]
-
-        def worker():
-            fetched: dict[str, dict] = {}
-            errors: list[str] = []
-            def fetch_one(instrument: dict) -> tuple[str, dict | None, str | None]:
-                key = str(instrument["key"])
-                symbol = str(instrument["symbol"])
-                try:
-                    bars, meta = fetch_chart(symbol, interval="1h", range_="3mo")
-                    interval = 60.0
-                    range_label = "3mo"
-                except Exception as first_error:
-                    try:
-                        bars, meta = fetch_chart(symbol, interval="1h", range_="1mo")
-                        interval = 60.0
-                        range_label = "1mo fallback"
-                    except Exception as second_error:
-                        return key, None, f"{symbol}: {second_error} (3mo attempt: {first_error})"
-                record = {
-                    "bars": [bar.to_dict() for bar in bars], "source": "Yahoo Finance public chart · 1h",
-                    "name": instrument.get("name", key), "symbol": symbol,
-                    "unit": instrument.get("unit", ""), "bar_interval_minutes": interval,
-                    "metadata": {**meta, "requested_range": range_label, "requested_interval": "1h"},
-                }
-                return key, record, None
-            with ThreadPoolExecutor(max_workers=min(3, max(1, len(instruments)))) as pool:
-                futures = [pool.submit(fetch_one, item) for item in instruments]
-                for future in as_completed(futures):
-                    try:
-                        key, record, error = future.result()
-                        if record:
-                            fetched[key] = record
-                        if error:
-                            errors.append(error)
-                    except Exception as exc:
-                        errors.append(str(exc))
-            self.research_result_queue.put(({"kind": "provider", "assets": fetched, "errors": errors}, None))
-
-        threading.Thread(target=worker, name="VeltrixResearchFetch", daemon=True).start()
-
-    def import_research_csv(self) -> None:
-        """Replace the selected instrument's dataset with a broker CSV."""
-        asset_key = self._selected_research_asset_key()
-        instrument = next((item for item in self.market_instruments if str(item["key"]) == asset_key), None)
-        if instrument is None:
-            dataset = self.research_asset_data.get(asset_key, {})
-            if dataset:
-                instrument = {
-                    "key": asset_key, "name": dataset.get("name", asset_key),
-                    "symbol": dataset.get("symbol", ""), "unit": dataset.get("unit", "broker price units"),
-                }
-        if instrument is None:
-            messagebox.showerror("Choose an instrument", "Select an instrument or use IMPORT AS NEW INSTRUMENT.", parent=self.root)
-            return
-        path = filedialog.askopenfilename(
-            parent=self.root, title="Import broker OHLC CSV for selected instrument",
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
-        )
-        if not path:
-            return
-        self._start_research_csv_import(
-            path, asset_key=asset_key, instrument_name=str(instrument.get("name", asset_key)),
-            symbol=str(instrument.get("symbol", "")), unit=str(instrument.get("unit", "broker price units")),
-            custom_instrument=False,
-        )
-
-    def import_research_csv_as_new_instrument(self) -> None:
-        """Import a CSV first, then register its dataset as a selectable instrument."""
-        path = filedialog.askopenfilename(
-            parent=self.root, title="Import CSV as a new research instrument",
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
-        )
-        if not path:
-            return
-        default_name = Path(path).stem.replace("_", " ").replace("-", " ").strip().title()
-        name = simpledialog.askstring(
-            "Name new instrument", "Instrument name (e.g. Spot Gold · Broker A):",
-            initialvalue=default_name, parent=self.root,
-        )
-        if name is None or not name.strip():
-            return
-        name = name.strip()
-        try:
-            asset_key = custom_research_asset_key(name)
-        except ValueError as exc:
-            messagebox.showerror("Invalid instrument name", str(exc), parent=self.root)
-            return
-        self._start_research_csv_import(
-            path, asset_key=asset_key, instrument_name=name, symbol="",
-            unit="broker price units", custom_instrument=True,
-        )
-
-    def _start_research_csv_import(
-        self, path: str, *, asset_key: str, instrument_name: str,
-        symbol: str = "", unit: str = "broker price units", custom_instrument: bool = False,
-    ) -> None:
-        zone = self.research_timezone_var.get().strip() or "UTC"
-        self.research_fetch_in_progress = True
-        for button_name in ("research_import_button", "research_custom_import_button", "research_fetch_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="disabled")
-        action = "REGISTERING NEW INSTRUMENT" if custom_instrument else "IMPORTING SELECTED INSTRUMENT"
-        self.research_status_label.configure(
-            text=f"{action} · {Path(path).name} · {zone} FOR NAIVE TIMESTAMPS...",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-
-        def worker():
-            try:
-                bars, import_meta = import_ohlc_csv(path, naive_timezone=zone)
-                record = {
-                    "bars": [bar.to_dict() for bar in bars],
-                    "source": f"Broker CSV · {Path(path).name}",
-                    "name": instrument_name, "symbol": symbol, "unit": unit,
-                    "bar_interval_minutes": infer_bar_interval_minutes(bars),
-                    "metadata": {**import_meta, "custom_instrument": custom_instrument,
-                                 "point_value": 1.0, "quantity_step": 0.01},
-                }
-                result, error = {
-                    "kind": "import", "asset_key": asset_key,
-                    "record": record, "custom_instrument": custom_instrument,
-                }, None
-            except Exception as exc:
-                result, error = None, str(exc)
-            self.research_result_queue.put((result, error))
-
-        threading.Thread(target=worker, name="VeltrixCSVImport", daemon=True).start()
-
-    def restore_provider_research_data(self) -> None:
-        asset_key = self._selected_research_asset_key()
-        provider = self.research_provider_assets.get(asset_key)
-        if provider:
-            self.research_asset_data[asset_key] = dict(provider)
-        else:
-            market_asset = self.market_snapshot.get("assets", {}).get(asset_key, {})
-            bars = market_asset.get("intraday_bars", [])
-            if not bars:
-                messagebox.showinfo("No provider dataset", "No provider dataset is cached for this instrument. Fetch historical history first.", parent=self.root)
-                return
-            instrument = next((item for item in self.market_instruments if str(item["key"]) == asset_key), {})
-            self.research_asset_data[asset_key] = {
-                "bars": list(bars), "source": "Yahoo Finance · existing market cache",
-                "name": instrument.get("name", asset_key), "symbol": instrument.get("symbol", ""),
-                "unit": instrument.get("unit", ""), "bar_interval_minutes": 5,
-                "metadata": {"inherited_from_market_cache": True},
-            }
-        self._mark_research_data_changed()
-        self._save_research_cache()
-        self._render_research_page()
-
-    def _drain_research_results(self) -> None:
-        try:
-            while True:
-                cache_error = self.research_cache_error_queue.get_nowait()
-                self.research_status_label.configure(
-                    text=f"RESEARCH CACHE SAVE FAILED · {cache_error}", fg=THEMES[self.theme_name]["error"]
-                )
-        except queue.Empty:
-            pass
-        try:
-            while True:
-                result, error = self.research_result_queue.get_nowait()
-                self.research_fetch_in_progress = False
-                for button_name in ("research_fetch_button", "research_import_button", "research_custom_import_button", "tick_import_button", "tick_build_button"):
-                    button = getattr(self, button_name, None)
-                    if button is not None:
-                        button.configure(state="normal")
-                if error:
-                    self.research_status_label.configure(text=f"RESEARCH TASK FAILED · {error}", fg=THEMES[self.theme_name]["error"])
-                    continue
-                if not result:
-                    continue
-                if result.get("kind") == "provider":
-                    updated = result.get("assets", {})
-                    for key, record in updated.items():
-                        self.research_provider_assets[key] = record
-                        current = self.research_asset_data.get(key)
-                        if not current or not str(current.get("source", "")).lower().startswith("broker csv"):
-                            self.research_asset_data[key] = record
-                    if updated:
-                        self._mark_research_data_changed()
-                    self._save_research_cache()
-                    errors = result.get("errors", [])
-                    if updated:
-                        status = f"HISTORICAL DATA UPDATED · {len(updated)} INSTRUMENT(S) · 1H BARS"
-                        if errors:
-                            status += f" · {len(errors)} PARTIAL ERROR(S)"
-                        self.research_status_label.configure(text=status, fg=THEMES[self.theme_name]["warning"] if errors else THEMES[self.theme_name]["success"])
-                    else:
-                        self.research_status_label.configure(text="HISTORICAL FETCH FAILED · " + " | ".join(errors),
-                                                             fg=THEMES[self.theme_name]["error"])
-                elif result.get("kind") == "import":
-                    key = result["asset_key"]
-                    self.research_asset_data[key] = result["record"]
-                    self._mark_research_data_changed()
-                    if result.get("custom_instrument"):
-                        self._refresh_research_instrument_choices(preferred_key=key)
-                        self.save_research_preferences()
-                        custom_label = "NEW INSTRUMENT REGISTERED"
-                    else:
-                        custom_label = "SELECTED INSTRUMENT UPDATED"
-                    self._save_research_cache()
-                    meta = result["record"].get("metadata", {})
-                    self.research_status_label.configure(
-                        text=f"{custom_label} · {result['record'].get('name', key)} · "
-                             f"{meta.get('valid_bars', len(result['record']['bars'])):,} VALID BARS · "
-                             f"{meta.get('invalid_rows', 0)} INVALID ROWS SKIPPED",
-                        fg=THEMES[self.theme_name]["success"],
-                    )
-                elif result.get("kind") == "tick_import":
-                    key = result["source_key"]
-                    self.research_tick_sources[key] = result["record"]
-                    self._refresh_tick_source_choices(preferred_key=key)
-                    self._save_research_cache()
-                    meta = result["record"].get("metadata", {})
-                    price_label = "LAST PRICE / TICK RULE" if meta.get("price_source") == "last_price_tick_rule" else "BID/ASK MIDQUOTE PROXY"
-                    self.research_status_label.configure(
-                        text=f"RAW TICK SOURCE REGISTERED · {result['record'].get('name', key)} · "
-                             f"{meta.get('valid_ticks', 0):,} TICKS · {price_label} · "
-                             f"{meta.get('invalid_rows', 0)} INVALID ROWS SKIPPED",
-                        fg=THEMES[self.theme_name]["success"],
-                    )
-                elif result.get("kind") == "tick_bars":
-                    key = result["asset_key"]
-                    self.research_asset_data[key] = result["record"]
-                    self._mark_research_data_changed()
-                    self._refresh_research_instrument_choices(preferred_key=key)
-                    self.save_research_preferences()
-                    self._save_research_cache()
-                    meta = result["record"].get("metadata", {})
-                    warning = " · QUOTE MIDPOINT PROXY, NOT TRADE ORDER FLOW" if meta.get("price_source") == "bid_ask_midquote_proxy" else ""
-                    self.research_status_label.configure(
-                        text=f"NEW {meta.get('bar_construction_label', 'TICK BAR')} DATASET REGISTERED · "
-                             f"{result['record'].get('name', key)} · {len(result['record']['bars']):,} BARS · "
-                             f"{meta.get('trailing_ticks_discarded', 0):,} TRAILING TICKS DISCARDED{warning}",
-                        fg=THEMES[self.theme_name]["success"],
-                    )
-                self._render_research_page()
-        except queue.Empty:
-            pass
-        if not self.is_closing:
-            self.research_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_results)
-
-    def _all_research_outputs(self) -> tuple[list[dict], dict[str, list[dict]]]:
-        if self.research_analysis_revision != self.research_data_revision:
-            return [], {}
-        return self.research_rows, self.research_observations
-
-    def _research_exports_ready(self) -> bool:
-        if self.research_analysis_revision == self.research_data_revision:
-            return True
-        message = "Research analysis is still running. Exports will be enabled when it finishes."
-        if self.research_cache_loading:
-            message = "The historical research cache is still loading in the background."
-        elif self.research_analysis_failed_revision == self.research_data_revision:
-            message = "Research analysis failed. Check the status message and reload or replace the dataset."
-        messagebox.showinfo("Research is busy", message, parent=self.root)
-        return False
-
-    def export_research_summary(self) -> None:
-        if not self._research_exports_ready():
-            return
-        rows, _observations = self._all_research_outputs()
-        if not rows:
-            messagebox.showinfo("No research data", "Fetch historical data or import a broker CSV before exporting.", parent=self.root)
-            return
-        path = filedialog.asksaveasfilename(parent=self.root, title="Export research summary CSV",
-                                            defaultextension=".csv", initialfile="veltrix_research_summary.csv",
-                                            filetypes=(("CSV files", "*.csv"),))
-        if path:
-            try:
-                export_summary_csv(path, rows)
-                self.research_status_label.configure(text=f"SUMMARY EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"])
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def export_research_daily(self) -> None:
-        if not self._research_exports_ready():
-            return
-        _rows, observations = self._all_research_outputs()
-        if not any(observations.values()):
-            messagebox.showinfo("No research data", "No daily observations are available to export.", parent=self.root)
-            return
-        path = filedialog.asksaveasfilename(parent=self.root, title="Export daily observations CSV",
-                                            defaultextension=".csv", initialfile="veltrix_daily_observations.csv",
-                                            filetypes=(("CSV files", "*.csv"),))
-        if path:
-            try:
-                export_daily_observations_csv(path, observations)
-                self.research_status_label.configure(text=f"DAILY OBSERVATIONS EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"])
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def export_research_html(self) -> None:
-        if not self._research_exports_ready():
-            return
-        rows, observations = self._all_research_outputs()
-        if not rows:
-            messagebox.showinfo("No research data", "Fetch historical data or import a broker CSV before exporting.", parent=self.root)
-            return
-        path = filedialog.asksaveasfilename(parent=self.root, title="Export historical research HTML report",
-                                            defaultextension=".html", initialfile="veltrix_historical_research.html",
-                                            filetypes=(("HTML reports", "*.html"),))
-        if path:
-            try:
-                export_html_report(path, rows, observations)
-                self.research_status_label.configure(text=f"HTML REPORT EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"])
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def _apply_research_tree_theme(self) -> None:
-        palette = THEMES[self.theme_name]
-        style = ttk.Style(self.root)
-        style.configure(
-            "Veltrix.Research.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
-        )
-        style.configure(
-            "Veltrix.Research.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
-        )
-        style.map("Veltrix.Research.Treeview", background=[("selected", palette["button_active"])],
-                  foreground=[("selected", palette["bright"])])
-        style.configure("Veltrix.Research.TCombobox", fieldbackground=palette["entry_bg"],
-                        background=palette["button_bg"], foreground=palette["entry_fg"],
-                        arrowcolor=palette["bright"])
-        if hasattr(self, "research_canvas"):
-            self.research_canvas.configure(bg=palette["bg"])
-
-    def _research_preferences_changed(self) -> None:
-        self.save_research_preferences()
-        self._render_research_page()
-
-    def save_research_preferences(self) -> None:
-        try:
-            self.research_settings["window_days"] = int(self.research_window_var.get())
-        except (ValueError, tk.TclError):
-            self.research_settings["window_days"] = 90
-        self.research_settings["csv_timezone"] = self.research_timezone_var.get()
-        self.research_settings["selected_asset"] = self._selected_research_asset_key()
-        self.config["research"] = dict(self.research_settings)
-        self._save_config()
-
     def save_market_preferences(self) -> None:
         try:
             expansion = float(self.market_expansion_var.get())
@@ -4571,16 +2483,15 @@ class VeltrixTradingClock:
             "alerts": (self.alerts_view, self.alerts_nav_button),
             "calendar": (self.calendar_view, self.calendar_nav_button),
             "volatility": (self.volatility_view, self.volatility_nav_button),
-            "research": (self.research_view, self.research_nav_button),
             "regime": (self.regime_view, self.regime_nav_button),
-            "strategy": (self.strategy_view, self.strategy_nav_button),
-            "data_center": (self.data_center_view, self.data_center_nav_button),
             "focus": (self.focus_view, self.focus_nav_button),
         }
         if page not in page_map:
             page = "sessions"
-        for view in (self.sessions_view, self.alerts_view, self.calendar_view, self.volatility_view,
-                     self.research_view, self.regime_view, self.strategy_view, self.data_center_view, self.focus_view):
+        for view in (
+            self.sessions_view, self.alerts_view, self.calendar_view,
+            self.volatility_view, self.regime_view, self.focus_view,
+        ):
             view.pack_forget()
         active_view, active_button = page_map[page]
         active_view.pack(fill="both", expand=True)
@@ -4593,17 +2504,9 @@ class VeltrixTradingClock:
         self.current_page = page
         if page == "volatility" and hasattr(self, "volatility_canvas"):
             self.volatility_canvas.yview_moveto(0.0)
-        if page == "research" and hasattr(self, "research_canvas"):
-            self.research_canvas.yview_moveto(0.0)
-            self._render_research_page()
         if page == "regime" and hasattr(self, "regime_canvas"):
             self.regime_canvas.yview_moveto(0.0)
             self._draw_regime_chart()
-        if page == "strategy" and hasattr(self, "strategy_canvas"):
-            self.strategy_canvas.yview_moveto(0.0)
-        if page == "data_center" and hasattr(self, "data_center_canvas"):
-            self.data_center_canvas.yview_moveto(0.0)
-            self._refresh_data_center_registry()
         if page == "focus" and hasattr(self, "focus_canvas"):
             self.focus_canvas.yview_moveto(0.0)
             self._refresh_focus_workspace()
@@ -5141,19 +3044,15 @@ class VeltrixTradingClock:
         for button in (self.set_button, self.cancel_button):
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
-        for button in (self.sessions_nav_button, self.alerts_nav_button, self.calendar_nav_button,
-                       self.volatility_nav_button, self.research_nav_button, self.regime_nav_button, self.strategy_nav_button,
-                       self.data_center_nav_button,
-                       self.save_alert_button, self.test_alert_button,
-                       self.add_event_button, self.remove_event_button, self.refresh_calendar_button,
-                       self.save_calendar_preferences_button, self.refresh_market_button,
-                       self.save_market_settings_button, self.research_fetch_button,
-                       self.research_import_button, self.research_restore_button,
-                       self.research_csv_button, self.research_detail_csv_button, self.research_html_button,
-                       self.regime_run_button, self.regime_export_button, self.regime_save_button,
-                       *self.strategy_all_buttons, self.data_test_massive_button,
-                       self.data_test_twelve_button, self.data_fetch_button,
-                       self.data_audit_button, self.data_compare_button):
+        for button in (
+            self.sessions_nav_button, self.alerts_nav_button, self.calendar_nav_button,
+            self.volatility_nav_button, self.regime_nav_button, self.focus_nav_button,
+            self.save_alert_button, self.test_alert_button, self.add_event_button,
+            self.remove_event_button, self.refresh_calendar_button,
+            self.save_calendar_preferences_button, self.refresh_market_button,
+            self.save_market_settings_button, self.regime_import_button,
+            self.regime_run_button, self.regime_export_button, self.regime_save_button,
+        ):
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
         for check in self.alert_checkbuttons:
@@ -5172,17 +3071,10 @@ class VeltrixTradingClock:
             )
         self._apply_calendar_tree_theme()
         self._apply_market_tree_theme()
-        self._apply_research_tree_theme()
         self._apply_regime_tree_theme()
-        self._apply_strategy_tree_theme()
-        self._apply_data_center_tree_theme()
         # Apply shared ttk styles globally: standard controls, all Treeviews,
         # tabs, headers, scrollbars, progress bars and every named selector.
         apply_veltrix_ttk_palette(self.ttk_style, palette, self.root)
-        for entry in self.data_center_entries:
-            entry.configure(bg=palette["entry_bg"], fg=palette["entry_fg"],
-                            insertbackground=palette["bright"], highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"])
         for listbox in (self.event_listbox, self.alert_listbox, self.market_alert_listbox):
             listbox.configure(bg=palette["bg"], fg=palette["text"], selectbackground=palette["button_active"],
                               selectforeground=palette["bright"], highlightthickness=1,
@@ -5605,12 +3497,13 @@ class VeltrixTradingClock:
 
     def on_close(self) -> None:
         self.is_closing = True
-        for job in (self.clock_job, self.alarm_job, self.bell_job, self.calendar_auto_refresh_job,
-                    self.calendar_startup_fetch_job, self.calendar_queue_job,
-                    self.market_auto_refresh_job, self.market_startup_fetch_job, self.market_queue_job,
-                    self.research_queue_job, self.research_analysis_queue_job,
-                    self.research_cache_load_job, self.backtest_queue_job, self.regime_queue_job,
-                    self.data_center_queue_job, self.focus_tick_job):
+        for job in (
+            self.clock_job, self.alarm_job, self.bell_job,
+            self.calendar_auto_refresh_job, self.calendar_startup_fetch_job, self.calendar_queue_job,
+            self.market_auto_refresh_job, self.market_startup_fetch_job, self.market_queue_job,
+            self.regime_queue_job, self.regime_cache_load_job, self.regime_import_queue_job,
+            self.focus_tick_job,
+        ):
             if job is not None:
                 try:
                     self.root.after_cancel(job)
@@ -5625,32 +3518,11 @@ class VeltrixTradingClock:
         self.config["market_data"] = dict(self.market_settings)
         self.config["market_instruments"] = list(self.market_instruments)
         try:
-            self.research_settings["window_days"] = int(self.research_window_var.get())
-            self.research_settings["csv_timezone"] = self.research_timezone_var.get()
-            self.research_settings["selected_asset"] = self._selected_research_asset_key()
-        except (AttributeError, ValueError, tk.TclError):
-            pass
-        self.config["research"] = dict(self.research_settings)
-        try:
             self.regime_settings.update(asdict(self._collect_regime_config()))
             self.regime_settings["selected_asset"] = self._selected_regime_asset_key()
         except (AttributeError, ValueError, tk.TclError):
             pass
         self.config["regime_lab"] = dict(self.regime_settings)
-        try:
-            for key, variable in self.backtest_vars.items():
-                raw = variable.get().strip()
-                if key == "direction":
-                    self.backtest_settings[key] = raw
-                elif key in {"fast_period", "slow_period", "atr_period", "train_fraction_pct",
-                             "walk_forward_train_fraction_pct", "walk_forward_folds"}:
-                    self.backtest_settings[key] = int(raw)
-                else:
-                    self.backtest_settings[key] = float(raw)
-            self.backtest_settings["selected_asset"] = self._selected_backtest_asset_key()
-        except (AttributeError, ValueError, tk.TclError):
-            pass
-        self.config["backtest"] = dict(self.backtest_settings)
         try:
             daily_target = max(0.5, min(24.0, float(self.focus_daily_target_var.get())))
         except (AttributeError, ValueError, tk.TclError):
@@ -5662,11 +3534,10 @@ class VeltrixTradingClock:
             pass
         self._persist_alarm_state()
         self._save_config()
-        if self.research_cache_writer_thread is not None and self.research_cache_writer_thread.is_alive():
-            if not self.research_cache_loading:
-                self._save_research_cache()
-            # Non-daemon writer drains the latest cache snapshot before process exit.
-            self.research_cache_write_queue.put(None)
+        if self.regime_cache_writer_thread is not None and self.regime_cache_writer_thread.is_alive():
+            if not self.regime_cache_loading:
+                self._save_regime_cache()
+            self.regime_cache_write_queue.put(None)
         self.focus_store.close()
         if self.audio_available:
             try:
@@ -5680,12 +3551,6 @@ def main() -> None:
     try:
         root = tk.Tk()
         VeltrixTradingClock(root)
-        if CREDENTIAL_LOAD_ERROR:
-            messagebox.showwarning(
-                "API credentials unavailable",
-                CREDENTIAL_LOAD_ERROR,
-                parent=root,
-            )
         root.mainloop()
     except Exception as exc:
         try:
