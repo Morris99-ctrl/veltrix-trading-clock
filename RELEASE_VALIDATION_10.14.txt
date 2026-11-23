@@ -1,0 +1,25 @@
+VELTRIX TRADING CLOCK v10.14 — RELEASE VALIDATION
+
+Automated validation
+- Python 3.10, 3.11 and 3.12 unit-test matrix.
+- Compile all Python modules.
+- Windows PyInstaller standalone package build and executable-existence check.
+- Command Center engine tests cover session/overlap summary, transition selection, event filtering and timezone conversion, missing market data, volatility caution surfacing and disabled risk flags.
+
+Manual Windows review checklist
+1. Confirm Command Center opens by default and scrolls on a shorter desktop.
+2. Confirm session local times, open/closed states and countdowns match Global Sessions.
+3. Confirm economic-event times use the configured home timezone and cancelled/past events do not appear.
+4. Confirm market values show cached/unverified status until a successful provider fetch occurs in the current run.
+5. Confirm missing quote, ATR and expected-move values show N/A rather than zero.
+6. Confirm risk flags retain their schedule/volatility context and are not described as trade signals.
+7. Tick all four preparation items, restart the app, and confirm today's checklist remains checked.
+8. Change the application theme and confirm dashboard panels, buttons and checklist controls follow the selected palette.
+9. Verify quick links open the existing detailed workspaces and the refresh action remains non-blocking.
+10. Confirm the pre-existing alarm, alerts, session clocks, calendar, Volatility Lab, Regime Lab, Session Performance and Focus & Goals still work.
+
+Data limitations
+- Market quotes and volatility statistics retain the existing unofficial Yahoo Finance source limitations.
+- Economic events retain the existing public provider, cache and coverage limitations.
+- Session status is based on configured schedules with optional published cash-exchange calendar overlay.
+- This dashboard is a monitoring and preparation surface, not a forecast or trading system.
