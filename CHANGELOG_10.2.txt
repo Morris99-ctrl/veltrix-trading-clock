@@ -1,0 +1,25 @@
+VELTRIX TRADING CLOCK — v10.2 / GLOBAL SESSION INTELLIGENCE
+
+GLOBAL SESSION DASHBOARD
+- Added a UTC-aligned 24-hour market-session timeline beneath the four analog clocks.
+- Added one lane each for Sydney, Tokyo, London and New York, showing configured local weekday windows converted to UTC.
+- Added an overlap lane highlighting intervals where at least two configured sessions are scheduled open.
+- Added live overlap participants, UTC interval times and total scheduled overlap duration.
+- Added the next three session transition summaries, using the existing session engine states.
+- Added a live UTC current-time marker and 3-hour axis labels.
+- Made the Global Sessions page vertically scrollable so the four clocks, timeline and footer fit shorter displays.
+
+SESSION TIMELINE ENGINE
+- Added session_timeline.py with timezone-aware UTC clipping, weekday schedules, daylight-saving conversion and interval-overlap segmentation.
+- Rejects naive timeline timestamps, invalid ranges and overnight session definitions that the existing session engine does not support.
+- Added tests for 24-hour bounds, Sydney/Tokyo and London/New York overlaps, weekends, London BST/GMT conversion and input validation.
+
+DOCUMENTATION AND RELEASE
+- Updated README, desktop installation guide, quick start and Windows executable metadata to v10.2.
+- Updated Windows CI artifact name to v10.2.
+- Previous v10.1 CI completed successfully on Python 3.10, 3.11 and 3.12; its Windows PyInstaller package job also succeeded.
+- v10.2 must pass a fresh unit-test matrix, compileall and Windows packaging run before release approval.
+
+SCHEDULE LIMITATIONS
+- The map visualises the configured weekday schedules, not official exchange calendars or a live market-status feed.
+- Public holidays, emergency closures, broker-specific hours and overnight sessions are not automatically modelled.
