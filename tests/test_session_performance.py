@@ -136,6 +136,22 @@ class SessionPerformanceTests(unittest.TestCase):
                 minimum_bars_per_session=1, minimum_coverage_pct=0,
             )
 
+    def test_overlap_coverage_uses_actual_pairwise_schedule_intersection(self):
+        london = self.session("london", "London", "UTC", "08:00", "12:00")
+        ny = self.session("ny", "New York", "UTC", "10:00", "14:00")
+        bars = [
+            bar(datetime(2026, 11, 23, hour, 0, tzinfo=timezone.utc).isoformat(),
+                100, 101, 99, 100.5)
+            for hour in (10, 11)
+        ]
+        result = analyse_session_performance(
+            bars, [london, ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+        )
+        self.assertEqual(result["overlaps"][0]["sample_days"], 1)
+        self.assertEqual(result["overlap_daily"][0]["expected_bars"], 2)
+        self.assertEqual(result["overlap_daily"][0]["coverage_pct"], 100.0)
+
     def test_daily_bar_interval_is_too_coarse_for_intraday_sessions(self):
         ny = self.session("ny", "New York", "America/New_York", "08:00", "17:00")
         stamp = datetime(2026, 11, 23, 0, tzinfo=timezone.utc)

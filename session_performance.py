@@ -24,8 +24,11 @@ def _coerce_bars(raw_bars: Iterable[OHLCBar | dict[str, Any]]) -> list[OHLCBar]:
         try:
             bar = raw if isinstance(raw, OHLCBar) else OHLCBar.from_dict(raw)
             stamp = datetime.fromisoformat(bar.timestamp_utc.replace("Z", "+00:00"))
-            if stamp.tzinfo is None or stamp.utcoffset() is None:
-                raise ValueError("OHLC bar timestamps must include a timezone or UTC offset.")
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise ValueError("OHLC bar timestamps must include a timezone or UTC offset.")
+        try:
             values = (float(bar.open), float(bar.high), float(bar.low), float(bar.close))
             if not all(math.isfinite(value) and value > 0 for value in values):
                 continue
@@ -91,6 +94,41 @@ def _daily_metrics(bars: list[OHLCBar], expected_bars: int) -> dict[str, Any]:
     }
 
 
+def _expected_overlap_bars(
+    left: SessionDefinition,
+    right: SessionDefinition,
+    utc_date: date,
+    interval_minutes: float,
+) -> int:
+    """Estimate expected observations in the pairwise schedule overlap on one UTC date."""
+    day_start = datetime.combine(utc_date, time.min, tzinfo=timezone.utc)
+    from datetime import timedelta
+    day_end = day_start + timedelta(days=1)
+    intervals: set[tuple[datetime, datetime]] = set()
+    left_local_date = day_start.astimezone(left.tz).date()
+    right_local_date = day_start.astimezone(right.tz).date()
+    left_windows = []
+    right_windows = []
+    for offset in (-1, 0, 1):
+        ldate = left_local_date + timedelta(days=offset)
+        if ldate.weekday() in left.weekdays:
+            left_windows.append(_session_window(left, ldate))
+        rdate = right_local_date + timedelta(days=offset)
+        if rdate.weekday() in right.weekdays:
+            right_windows.append(_session_window(right, rdate))
+    total_seconds = 0.0
+    for left_open, left_close in left_windows:
+        for right_open, right_close in right_windows:
+            overlap_open = max(day_start, left_open, right_open)
+            overlap_close = min(day_end, left_close, right_close)
+            if overlap_close > overlap_open:
+                key = (overlap_open, overlap_close)
+                if key not in intervals:
+                    intervals.add(key)
+                    total_seconds += (overlap_close - overlap_open).total_seconds()
+    return max(0, int(math.ceil(total_seconds / (interval_minutes * 60.0))))
+
+
 def analyse_session_performance(
     raw_bars: Iterable[OHLCBar | dict[str, Any]],
     sessions: Iterable[SessionDefinition],
@@ -123,15 +161,18 @@ def analyse_session_performance(
     definitions = list(sessions)
     if not definitions:
         raise ValueError("At least one configured market session is required.")
-    bars = _coerce_bars(raw_bars)
+    raw_list = list(raw_bars)
+    bars = _coerce_bars(raw_list)
     if not bars:
         raise ValueError("No valid timezone-aware OHLC bars were supplied.")
 
     min_window_minutes = min(
-        (_session_window(session, datetime.now(session.tz).date())[1]
-         - _session_window(session, datetime.now(session.tz).date())[0]).total_seconds() / 60.0
+        (session.closes.hour * 60 + session.closes.minute)
+        - (session.opens.hour * 60 + session.opens.minute)
         for session in definitions
     )
+    if min_window_minutes <= 0:
+        raise ValueError("Overnight or same-time session schedules are not supported by this study.")
     if interval >= min_window_minutes:
         raise ValueError(
             "The imported bar interval is too coarse for the configured session windows. "
@@ -226,7 +267,12 @@ def analyse_session_performance(
         accepted: list[dict[str, Any]] = []
         for utc_date, overlap_bars in sorted(days.items()):
             ordered = sorted(overlap_bars, key=lambda item: item.timestamp)
-            metrics = _daily_metrics(ordered, max(1, int(math.ceil(60 / interval))))
+            left_session = next(item for item in definitions if item.key == pair[0])
+            right_session = next(item for item in definitions if item.key == pair[1])
+            expected_overlap = _expected_overlap_bars(
+                left_session, right_session, utc_date, interval
+            )
+            metrics = _daily_metrics(ordered, max(1, expected_overlap))
             first_open = ordered[0].open
             # Per-bar OHLC returns describe the bars whose open timestamps fell
             # inside the pairwise overlap. They are not stitched across unobserved gaps.
@@ -272,7 +318,7 @@ def analyse_session_performance(
 
     return {
         "metadata": {
-            "input_bars": len(list(raw_bars)) if not isinstance(raw_bars, (list, tuple)) else len(raw_bars),
+            "input_bars": len(raw_list),
             "valid_bars": len(bars),
             "bar_interval_minutes": interval,
             "first_timestamp_utc": bars[0].timestamp.isoformat(),
