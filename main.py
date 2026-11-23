@@ -2970,21 +2970,66 @@ class VeltrixTradingClock:
         status.pack(side="right")
         city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 8))
         city.grid(row=1, column=0, sticky="w", pady=(3, 1))
-        local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 25, "bold"))
-        local_time.grid(row=2, column=0, sticky="w")
+        analog_canvas = tk.Canvas(
+            card, width=224, height=224, bg=THEMES[self.theme_name]["panel"],
+            highlightthickness=0, bd=0,
+        )
+        analog_canvas.grid(row=2, column=0, sticky="n", pady=(4, 0))
+        local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 15, "bold"))
+        local_time.grid(row=3, column=0, sticky="n", pady=(0, 2))
         zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Consolas", 8))
-        zone.grid(row=3, column=0, sticky="w", pady=(0, 6))
+        zone.grid(row=4, column=0, sticky="n", pady=(0, 7))
         divider = self._frame(card, bg="border", height=1)
-        divider.grid(row=4, column=0, sticky="ew", pady=(0, 6))
+        divider.grid(row=5, column=0, sticky="ew", pady=(0, 6))
         transition = self._label(card, "Calculating next transition...", bg="card", fg="text", font=("Consolas", 9, "bold"))
-        transition.grid(row=5, column=0, sticky="w")
+        transition.grid(row=6, column=0, sticky="w")
         transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 8))
-        transition_at.grid(row=6, column=0, sticky="w", pady=(2, 0))
+        transition_at.grid(row=7, column=0, sticky="w", pady=(2, 0))
         self.cards[session.key] = {
             "card": card, "top": top, "name": name, "country": country, "status": status,
-            "city": city, "time": local_time, "zone": zone, "divider": divider,
+            "city": city, "time": local_time, "analog": analog_canvas, "zone": zone, "divider": divider,
             "transition": transition, "transition_at": transition_at,
         }
+
+    def _draw_session_analog_clock(self, canvas: tk.Canvas, local_now: datetime) -> None:
+        """Draw a compact neon analog clock for one market's local timezone."""
+        palette = THEMES[self.theme_name]
+        canvas.delete("all")
+        canvas.configure(bg=palette["panel"])
+        canvas.update_idletasks()
+        width = max(150, canvas.winfo_width())
+        height = max(150, canvas.winfo_height())
+        size = min(width, height) - 14
+        cx, cy = width / 2, height / 2
+        radius = size / 2
+        face = palette["bg"]
+        accent = palette["error"]
+        canvas.create_oval(cx-radius, cy-radius, cx+radius, cy+radius,
+                           fill=face, outline=palette["border"], width=2)
+        canvas.create_oval(cx-radius+7, cy-radius+7, cx+radius-7, cy+radius-7,
+                           outline=palette["dim"], width=1)
+        for tick in range(60):
+            angle = math.radians(tick * 6 - 90)
+            major = tick % 5 == 0
+            outer = radius - 10
+            inner = outer - (11 if major else 4)
+            x1, y1 = cx + math.cos(angle)*inner, cy + math.sin(angle)*inner
+            x2, y2 = cx + math.cos(angle)*outer, cy + math.sin(angle)*outer
+            canvas.create_line(x1, y1, x2, y2, fill=accent if major else palette["muted"],
+                               width=2 if major else 1)
+        def hand(angle_degrees: float, length: float, colour: str, thickness: int) -> None:
+            angle = math.radians(angle_degrees - 90)
+            canvas.create_line(cx, cy, cx + math.cos(angle)*length,
+                               cy + math.sin(angle)*length, fill=colour,
+                               width=thickness, capstyle=tk.ROUND)
+        seconds = local_now.second + local_now.microsecond / 1_000_000
+        minutes = local_now.minute + seconds / 60
+        hours = (local_now.hour % 12) + minutes / 60
+        hand(hours * 30, radius * 0.48, palette["bright"], 4)
+        hand(minutes * 6, radius * 0.69, palette["bright"], 3)
+        hand(seconds * 6, radius * 0.78, accent, 1)
+        canvas.create_oval(cx-5, cy-5, cx+5, cy+5, fill=accent, outline=accent)
+        canvas.create_oval(cx-1.8, cy-1.8, cx+1.8, cy+1.8, fill=palette["bright"], outline=palette["bright"])
 
     # ------------------------------------------------------------------
     # Theme and visual clock
@@ -3025,6 +3070,7 @@ class VeltrixTradingClock:
         for widgets in self.cards.values():
             widgets["card"].configure(bg=palette["panel"], highlightbackground=palette["border"])
             widgets["top"].configure(bg=palette["panel"])
+            widgets["analog"].configure(bg=palette["panel"])
             for key in ("name", "city", "time", "zone", "transition", "transition_at"):
                 widgets[key].configure(bg=palette["panel"])
             widgets["name"].configure(fg=palette["text"])
@@ -3248,6 +3294,7 @@ class VeltrixTradingClock:
         for state in states:
             widgets = self.cards[state.definition.key]
             widgets["time"].configure(text=state.local_now.strftime("%H:%M:%S"))
+            self._draw_session_analog_clock(widgets["analog"], state.local_now)
             widgets["zone"].configure(text=f"{state.definition.timezone_name}  ·  {state.timezone_label}")
             if state.is_open:
                 widgets["status"].configure(text="● OPEN", fg=palette["success"])
