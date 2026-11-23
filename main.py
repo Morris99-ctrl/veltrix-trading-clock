@@ -677,7 +677,7 @@ class VeltrixTradingClock:
         )
         self.session_history_period_label.pack(side="right", padx=(0, 6))
         self.weekly_session_hours_label = self._label(
-            analytics, "WEEKLY SCHEDULED HOURS · CALCULATING",
+            analytics, "WEEKLY SCHEDULED HOURS · LOCAL MON–SUN · CALCULATING",
             bg="panel", fg="text", font=("Consolas", 8, "bold"),
             anchor="w", justify="left", wraplength=1050,
         )
@@ -992,7 +992,7 @@ class VeltrixTradingClock:
             for item in weekly
         ]
         self.weekly_session_hours_label.configure(
-            text="WEEKLY HOURS · LOCAL MON–SUN  |  " + "  ·  ".join(weekly_parts)
+            text="WEEKLY SCHEDULED HOURS · LOCAL MON–SUN  |  " + "  ·  ".join(weekly_parts)
         )
         busiest = (
             f"{history.busiest_utc_date} {history.busiest_day_hours:.1f}H"
