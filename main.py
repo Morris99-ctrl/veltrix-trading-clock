@@ -1825,7 +1825,7 @@ class VeltrixTradingClock:
         overrides_title.pack(anchor="w", pady=(12, 2))
         self._label(
             settings_panel,
-            "Each market can use its own lead time. Values inherit the global defaults until changed.",
+            "Each market has independent lead times, initially set to the global default values.",
             bg="panel", fg="muted", font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(0, 5))
         self.session_lead_vars = {}
