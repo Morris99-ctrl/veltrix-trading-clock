@@ -7,18 +7,14 @@ from typing import Any, Iterable
 
 COMBOBOX_STYLES = (
     "TCombobox",
-    "Veltrix.Research.TCombobox",
-    "Veltrix.Strategy.TCombobox",
-    "Veltrix.Data.TCombobox",
+    "Veltrix.Regime.TCombobox",
 )
 
 TREEVIEW_STYLES = (
     "Treeview",
     "Veltrix.Treeview",
     "Veltrix.Market.Treeview",
-    "Veltrix.Research.Treeview",
-    "Veltrix.Strategy.Treeview",
-    "Veltrix.Data.Treeview",
+    "Veltrix.Regime.Treeview",
 )
 
 
