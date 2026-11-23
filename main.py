@@ -62,7 +62,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.2"
+APP_VERSION = "10.3"
 UI_QUEUE_POLL_MS = 500
 
 DIGIT_SEGMENTS = {
@@ -96,12 +96,18 @@ class VeltrixTradingClock:
         profile_settings = self.config.get("session_profiles", {})
         if not isinstance(profile_settings, dict):
             profile_settings = {}
+        raw_base_sessions = profile_settings.get("base_sessions")
+        if not isinstance(raw_base_sessions, list) or not raw_base_sessions:
+            raw_base_sessions = self.config["sessions"]
         self.session_profile_base_sessions = [
-            dict(item) for item in profile_settings.get("base_sessions", self.config["sessions"])
+            dict(item) for item in raw_base_sessions if isinstance(item, dict)
         ]
+        raw_custom_schedules = profile_settings.get("custom", {})
+        if not isinstance(raw_custom_schedules, dict):
+            raw_custom_schedules = {}
         self.custom_session_schedules = {
             str(key): dict(value)
-            for key, value in profile_settings.get("custom", {}).items()
+            for key, value in raw_custom_schedules.items()
             if isinstance(value, dict)
         }
         self.active_session_profile = str(
@@ -4114,15 +4120,6 @@ class VeltrixTradingClock:
         self.config["calendar"] = dict(self.calendar_settings)
         self.config["market_data"] = dict(self.market_settings)
         self.config["market_instruments"] = list(self.market_instruments)
-        self.config["sessions"] = [
-            {
-                **dict(item),
-                "open": item.opens.strftime("%H:%M"),
-                "close": item.closes.strftime("%H:%M"),
-                "weekdays": list(item.weekdays),
-            }
-            for item in self.sessions
-        ]
         self.config["session_profiles"] = {
             "selected": self.active_session_profile,
             "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
