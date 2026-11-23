@@ -78,9 +78,9 @@ class VeltrixTtkThemeTests(unittest.TestCase):
         for combo_style in COMBOBOX_STYLES:
             self.assertIn(combo_style, mapped_names)
         tree_config = next(call for call in style.configure.call_args_list
-                           if call.args[0] == "Veltrix.Data.Treeview")
+                           if call.args[0] == "Veltrix.Regime.Treeview")
         heading_config = next(call for call in style.configure.call_args_list
-                              if call.args[0] == "Veltrix.Data.Treeview.Heading")
+                              if call.args[0] == "Veltrix.Regime.Treeview.Heading")
         self.assertEqual(tree_config.kwargs["fieldbackground"], palette["bg"])
         self.assertEqual(heading_config.kwargs["background"], palette["panel"])
         self.assertEqual(root.option_add.call_count, 50)
@@ -91,8 +91,8 @@ class VeltrixTtkThemeTests(unittest.TestCase):
         for theme_name in ("CYAN", "AMBER", "MATRIX", "VIOLET", "ICE", "LIGHT"):
             apply_veltrix_ttk_palette(style, THEMES[theme_name], root)
 
-        self.assertEqual(style.configure.call_count, 6 * 33)
-        self.assertEqual(style.map.call_count, 6 * 24)
+        self.assertEqual(style.configure.call_count, 6 * 25)
+        self.assertEqual(style.map.call_count, 6 * 16)
         self.assertEqual(root.option_add.call_count, 50 * len(THEMES))
 
     def test_missing_dropdown_option_database_does_not_crash(self):
