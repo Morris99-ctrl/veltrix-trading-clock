@@ -91,8 +91,8 @@ class VeltrixTtkThemeTests(unittest.TestCase):
         for theme_name in ("CYAN", "AMBER", "MATRIX", "VIOLET", "ICE", "LIGHT"):
             apply_veltrix_ttk_palette(style, THEMES[theme_name], root)
 
-        self.assertEqual(style.configure.call_count, 6 * 25)
-        self.assertEqual(style.map.call_count, 6 * 16)
+        self.assertEqual(style.configure.call_count, 6 * 27)
+        self.assertEqual(style.map.call_count, 6 * 18)
         self.assertEqual(root.option_add.call_count, 50 * len(THEMES))
 
     def test_missing_dropdown_option_database_does_not_crash(self):
