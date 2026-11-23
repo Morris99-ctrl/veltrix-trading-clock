@@ -26,7 +26,7 @@ PROFILE_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
         "new_york": {"open": "07:00", "close": "18:00"},
     },
 }
-PROFILE_NAMES = (*PROFILE_PRESETS.keys(), "Custom")
+PROFILE_NAMES = ("Current Configuration", *PROFILE_PRESETS.keys(), "Custom")
 
 
 def validate_session_schedule(schedule: dict[str, Any], *, name: str = "Session") -> dict[str, Any]:
@@ -68,6 +68,8 @@ def apply_session_profile(
         key = str(item["key"])
         if profile_name == "Custom":
             chosen = custom_schedules.get(key, item)
+        elif profile_name == "Current Configuration":
+            chosen = item
         else:
             chosen = {**item, **profile.get(key, {})}
         validated = validate_session_schedule(chosen, name=str(item.get("name") or key))
