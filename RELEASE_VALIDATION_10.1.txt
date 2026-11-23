@@ -1,6 +1,8 @@
 VELTRIX TRADING CLOCK v10.1 — SESSION CLOCK 2.0 VALIDATION STATUS
 
 Source-level checks
+- Added GitHub Actions workflow for Python 3.10/3.11/3.12 compile and unit-test checks on pushes and pull requests.
+- Added a Windows PyInstaller package job and downloadable build artifact, gated on the test matrix.
 - Four individual analog canvas instances are created by the four-session card builder.
 - Each card has its own clock state, face signature and retained hand item IDs.
 - The analog dial is rebuilt only when its dimensions or theme changes.
@@ -10,6 +12,11 @@ Source-level checks
 - Open cards receive a highlighted border using the active theme's success colour.
 - Added pure geometry tests and extended the Core Edition UI source regression test.
 - README, quick-start, installation guide, changelog and executable metadata now identify v10.1.
+
+Not yet confirmed
+- The new GitHub Actions workflow has been committed, but its first run result has not yet been inspected.
+- The complete Python unit-test suite has not been independently run in this editing session.
+- Native Windows GUI interaction has not been smoke-tested.
 
 Not executed in this validation pass
 - The complete Python unit-test suite has not been run against the final branch.
