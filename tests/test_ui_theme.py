@@ -136,6 +136,7 @@ class VeltrixTtkThemeTests(unittest.TestCase):
         self.assertEqual(button.options["bg"], palette["button_bg"])
         self.assertEqual(button.options["activebackground"], palette["button_active"])
         self.assertEqual(entry.options["bg"], palette["entry_bg"])
+        self.assertEqual(entry.options["highlightthickness"], 0)
         self.assertEqual(entry.options["insertbackground"], palette["bright"])
         self.assertEqual(label.options["bg"], palette["panel"])
         self.assertEqual(listbox.options["selectbackground"], palette["button_active"])
@@ -158,7 +159,7 @@ class VeltrixTtkThemeTests(unittest.TestCase):
             def configure(self, **kwargs):
                 allowed = {
                     "bg", "fg", "insertbackground", "selectbackground", "selectforeground",
-                    "highlightbackground", "highlightcolor", "disabledbackground",
+                    "highlightbackground", "highlightcolor", "highlightthickness", "disabledbackground",
                     "disabledforeground", "buttonbackground",
                 }
                 unsupported = set(kwargs) - allowed
