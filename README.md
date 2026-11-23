@@ -1,18 +1,26 @@
-# Veltrix Trading Clock — v10.0 Core Edition
+# Veltrix Trading Clock — v10.1 Core Edition
 
-Veltrix v10.0 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.1 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
 ## Included workspaces
 
-- **Global Sessions** — independent Sydney, Tokyo, London and New York clocks, open/closed status, next-transition countdowns and overlap summary.
+- **Global Sessions** — four individual neon analog clocks for Sydney, Tokyo, London and New York, each with a compact digital local-time display beneath it, open/closed status, next-transition countdowns and an overlap summary.
 - **Alerts & Events** — configurable session opening/closing alerts, overlap warnings and personal economic-event reminders.
 - **Economic Calendar** — third-party public calendar feed, impact filters, cached results and high-impact reminders.
 - **Volatility Lab** — indicative Yahoo Finance market monitoring, ATR, one-day historical expected move and session volatility observations.
 - **Regime Lab** — import completed OHLC history from a CSV, classify bars as range, trend-up, trend-down, volatility shock or transition, inspect historical conditional outcomes and export classifications.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
+
+## Global Sessions clock interface
+
+The Global Sessions dashboard presents four separate analog dials in a two-by-two layout. Each dial uses the timezone of its own market centre and has a mini digital clock directly beneath it, so the time can be read precisely without losing the visual character of an analog face.
+
+The dials use a dark face, concentric rings, 60 minute marks, four red cardinal markers and contrasting hour, minute and second hands. The static face is rendered once per theme/size; subsequent clock updates move the existing hand objects rather than rebuilding the whole dial. This keeps the four clocks lightweight while the session state refreshes.
+
+Each card also shows its city, timezone, OPEN/CLOSED state and the countdown to its next scheduled opening or closing. An open session receives a highlighted card border. The six application themes recolour the dials and hands consistently.
 
 ## Regime Lab data
 
@@ -62,14 +70,14 @@ See DESKTOP_INSTALL_GUIDE.md for migration, upgrade and uninstall details.
 
     python -m unittest discover -s tests -v
 
-The automated suite covers session/DST handling, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
+The automated suite covers session/DST handling, analog-clock hand geometry, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
 A passing unit suite does not prove live provider uptime, native Windows rendering, data licensing or trading profitability.
 
 ## Project structure
 
 - main.py — integrated Tkinter interface and orchestration.
-- session_engine.py / alert_engine.py — timezone-aware session states and alert scheduling.
+- session_engine.py / session_clock.py / alert_engine.py — timezone-aware session states, analog-hand geometry and alert scheduling.
 - calendar_engine.py — public calendar client, cache and reminders.
 - market_data.py / volatility_engine.py — indicative market monitoring, ATR and expected-move calculations.
 - regime_engine.py — causal OHLC regime classification and outcome summaries.
