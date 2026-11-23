@@ -56,6 +56,19 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         ):
             self.assertIn(symbol, MAIN_SOURCE)
 
+    def test_cash_exchange_calendar_overlay_is_optional_and_wired_into_clocks_alerts_and_timeline(self):
+        for symbol in (
+            "from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events",
+            "CASH EXCHANGE HOLIDAYS / EARLY CLOSES",
+            "def _toggle_exchange_calendar",
+            "def _update_exchange_calendar_summary",
+            "get_exchange_aware_session_state(",
+            "apply_exchange_calendar=self.exchange_calendar_enabled_var.get()",
+            "EXCHANGE_HOLIDAY",
+            "CLOSING_PROCESS",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
