@@ -89,3 +89,22 @@ def timeline_probe_from_x(x: float,left: float,right: float,day_start_utc: datet
     minute=min(1439,int(fraction*1440))
     start=day_start_utc.astimezone(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0)
     return start+timedelta(minutes=minute)
+
+
+def session_calendar_close_override(session, local_now: datetime, state) -> datetime | None:
+    """Return only a published actual early-close instant, never a process-start marker.
+
+    LSE closing-process notices are deliberately excluded: a process-start
+    marker is not a verified continuous-trading cutoff.
+    """
+    if local_now.tzinfo is None:
+        raise ValueError("Session close override requires a timezone-aware datetime.")
+    if state is None or getattr(state, "calendar_status", None) not in {
+        "EARLY_CLOSE", "EARLY_CLOSE_PASSED"
+    }:
+        return None
+    close_time = getattr(state, "calendar_close_time", None)
+    if close_time is None:
+        return None
+    local = local_now.astimezone(session.tz)
+    return datetime.combine(local.date(), close_time, tzinfo=session.tz)

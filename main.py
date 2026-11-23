@@ -43,7 +43,7 @@ from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime
 from session_clock import session_clock_hand_endpoints
 from session_visuals import (
     session_window_progress, session_window_arc_angles, utc_offset_label,
-    local_day_phase, timeline_probe_from_x,
+    local_day_phase, timeline_probe_from_x, session_calendar_close_override,
 )
 from session_timeline import build_session_timeline
 from session_intelligence import historical_overlap_report, weekly_session_hours
@@ -4167,14 +4167,7 @@ class VeltrixTradingClock:
 
         progress = None
         if session is not None:
-            effective_close = None
-            if state is not None and state.calendar_close_time is not None:
-                if state.is_open and state.transition_kind in {"CLOSE", "CLOSE_PROCESS"}:
-                    effective_close = state.transition_at
-                else:
-                    effective_close = datetime.combine(
-                        local_now.date(), state.calendar_close_time, tzinfo=session.tz
-                    )
+            effective_close = session_calendar_close_override(session, local_now, state)
             progress = session_window_progress(session, local_now, close_at=effective_close)
             arc_close = progress.closes_at or datetime.combine(
                 local_now.date(), session.closes, tzinfo=session.tz

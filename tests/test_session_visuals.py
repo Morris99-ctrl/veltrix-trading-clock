@@ -1,11 +1,12 @@
 from __future__ import annotations
 import json
 import unittest
-from datetime import datetime,timezone
+from datetime import datetime,time,timezone
+from types import SimpleNamespace
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from session_engine import load_session_definitions
-from session_visuals import local_day_phase,session_window_arc_angles,session_window_progress,timeline_probe_from_x,utc_offset_label
+from session_visuals import local_day_phase,session_calendar_close_override,session_window_arc_angles,session_window_progress,timeline_probe_from_x,utc_offset_label
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -62,6 +63,19 @@ class SessionVisualsTests(unittest.TestCase):
         start,extent=session_window_arc_angles(self.sessions["new_york"])
         self.assertAlmostEqual(start,-30.0)
         self.assertAlmostEqual(extent,-135.0)
+
+    def test_published_actual_early_close_shortens_session_ring(self):
+        session=self.sessions["new_york"]
+        local_now=datetime(2026,11,27,12,0,tzinfo=ZoneInfo("America/New_York"))
+        state=SimpleNamespace(calendar_status="EARLY_CLOSE",calendar_close_time=time(13,0))
+        close=session_calendar_close_override(session,local_now,state)
+        self.assertEqual(close,datetime(2026,11,27,13,0,tzinfo=ZoneInfo("America/New_York")))
+
+    def test_lse_closing_process_marker_does_not_shortcut_continuous_session_ring(self):
+        session=self.sessions["london"]
+        local_now=datetime(2026,12,24,12,0,tzinfo=ZoneInfo("Europe/London"))
+        state=SimpleNamespace(calendar_status="CLOSING_PROCESS",calendar_close_time=time(12,30))
+        self.assertIsNone(session_calendar_close_override(session,local_now,state))
 
     def test_timeline_probe_maps_left_middle_and_right(self):
         start=datetime(2026,11,23,tzinfo=timezone.utc)
