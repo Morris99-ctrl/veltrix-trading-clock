@@ -88,27 +88,33 @@ def historical_overlap_report(
     end = _aware_utc(end_utc)
     start = end - timedelta(days=days)
     session_list = list(sessions)
-    timeline = build_session_timeline(session_list, start, hours=days * 24)
     daily: dict[str, float] = {}
     pairs: dict[tuple[str, str], float] = {}
     names = {session.key: session.name for session in session_list}
     union_seconds = 0.0
 
-    for overlap in timeline.overlaps:
-        cursor = overlap.starts_at
-        while cursor < overlap.ends_at:
-            next_midnight = (cursor + timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            segment_end = min(overlap.ends_at, next_midnight)
-            seconds = (segment_end - cursor).total_seconds()
-            day_key = cursor.date().isoformat()
-            daily[day_key] = daily.get(day_key, 0.0) + seconds / 3600.0
-            union_seconds += seconds
-            for left, right in combinations(overlap.session_keys, 2):
-                pair = (left, right)
-                pairs[pair] = pairs.get(pair, 0.0) + seconds / 3600.0
-            cursor = segment_end
+    # Keep the interactive timeline's seven-day cap; analyse longer windows in weekly chunks.
+    chunk_start = start
+    while chunk_start < end:
+        chunk_end = min(end, chunk_start + timedelta(days=7))
+        chunk_hours = int((chunk_end - chunk_start).total_seconds() // 3600)
+        timeline = build_session_timeline(session_list, chunk_start, hours=chunk_hours)
+        for overlap in timeline.overlaps:
+            cursor = overlap.starts_at
+            while cursor < overlap.ends_at:
+                next_midnight = (cursor + timedelta(days=1)).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                segment_end = min(overlap.ends_at, next_midnight)
+                seconds = (segment_end - cursor).total_seconds()
+                day_key = cursor.date().isoformat()
+                daily[day_key] = daily.get(day_key, 0.0) + seconds / 3600.0
+                union_seconds += seconds
+                for left, right in combinations(overlap.session_keys, 2):
+                    pair = (left, right)
+                    pairs[pair] = pairs.get(pair, 0.0) + seconds / 3600.0
+                cursor = segment_end
+        chunk_start = chunk_end
 
     daily_rows = tuple(sorted(daily.items()))
     busiest = max(daily_rows, key=lambda item: item[1]) if daily_rows else (None, 0.0)
