@@ -992,7 +992,7 @@ class VeltrixTradingClock:
             for item in weekly
         ]
         self.weekly_session_hours_label.configure(
-            text="WEEKLY HOURS · MON–SUN UTC  |  " + "  ·  ".join(weekly_parts)
+            text="WEEKLY HOURS · LOCAL MON–SUN  |  " + "  ·  ".join(weekly_parts)
         )
         busiest = (
             f"{history.busiest_utc_date} {history.busiest_day_hours:.1f}H"
