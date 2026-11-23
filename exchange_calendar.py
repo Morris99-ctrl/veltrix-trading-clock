@@ -301,5 +301,12 @@ def get_exchange_aware_session_state(
                 calendar_close_time=event.close_time,
             )
 
+        return replace(
+            state,
+            calendar_status="EARLY_CLOSE",
+            calendar_event=event.title,
+            calendar_close_time=event.close_time,
+        )
+
     status = "SCHEDULED" if coverage == "PUBLISHED" else "OUT_OF_RANGE"
     return replace(state, calendar_status=status, calendar_event=None, calendar_close_time=None)
