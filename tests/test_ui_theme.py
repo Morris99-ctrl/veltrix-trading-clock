@@ -6,6 +6,7 @@ from ui_theme import (
     COMBOBOX_STYLES,
     TREEVIEW_STYLES,
     apply_veltrix_classic_widget_palette,
+    apply_veltrix_font_defaults,
     apply_veltrix_ttk_palette,
     prepare_veltrix_ttk_theme,
 )
@@ -82,8 +83,23 @@ class VeltrixTtkThemeTests(unittest.TestCase):
         heading_config = next(call for call in style.configure.call_args_list
                               if call.args[0] == "Veltrix.Regime.Treeview.Heading")
         self.assertEqual(tree_config.kwargs["fieldbackground"], palette["bg"])
+        self.assertEqual(tree_config.kwargs["font"], ("Segoe UI", 9))
+        self.assertEqual(tree_config.kwargs["rowheight"], 29)
         self.assertEqual(heading_config.kwargs["background"], palette["panel"])
+        self.assertEqual(heading_config.kwargs["font"], ("Segoe UI", 9, "bold"))
         self.assertEqual(root.option_add.call_count, 50)
+
+    def test_native_widget_font_defaults_use_segoe_ui(self):
+        root = Mock()
+
+        apply_veltrix_font_defaults(root)
+
+        options = {call.args[0]: call.args[1] for call in root.option_add.call_args_list}
+        self.assertEqual(options["*Font"], ("Segoe UI", 10))
+        self.assertEqual(options["*Label.font"], ("Segoe UI", 10))
+        self.assertEqual(options["*Button.font"], ("Segoe UI", 10, "bold"))
+        self.assertEqual(options["*Entry.font"], ("Segoe UI", 10))
+        self.assertGreaterEqual(len(options), 10)
 
     def test_palette_switch_updates_all_global_selection_styles(self):
         style = Mock()
