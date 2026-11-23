@@ -1,0 +1,51 @@
+VELTRIX TRADING CLOCK v10.9 — SESSION PERFORMANCE INTELLIGENCE
+Release date: 24 November 2026
+
+SESSION PERFORMANCE WORKSPACE
+- Added a dedicated Session Performance workspace and navigation tab.
+- Reuses the same locally persisted OHLC datasets imported in Regime Lab; no
+  duplicate import or provider feed is introduced.
+- Added per-session daily return, observed high-low range, realised volatility,
+  positive-day rate, sample count, bars used and estimated coverage.
+- Added pairwise session-overlap performance based only on OHLC bars whose
+  bar-open timestamps fall within both configured session windows.
+- Added configurable minimum bars per sample day and minimum coverage filters.
+- Daily exports contain both session and overlap rows, including excluded rows
+  and their filter reason.
+- Analysis runs in a background worker to keep the Tk interface responsive.
+- Existing results are invalidated when the selected dataset or session profile
+  changes, preventing stale outputs from being mistaken for current settings.
+
+METHODOLOGY
+- Session membership uses the active SessionDefinition profile, local IANA
+  timezone, configured weekdays and [open, close) bar-open timestamp rule.
+- Session return is first observed session bar open to last observed close.
+- Session range is observed high-low divided by the first observed open.
+- Realised volatility is root-sum-square of observed log returns, expressed as
+  a percentage and not annualised.
+- Pairwise overlap return compounds each selected bar's open-to-close return;
+  missing intervals are not stitched. Overlap volatility uses those per-bar
+  returns as well.
+- Coverage is observed bars / expected bars estimated from median bar interval,
+  capped at 100%. It is a count-based estimate, not guaranteed minute coverage.
+- User-selected minimum bars and coverage apply to session and overlap samples.
+
+LIMITATIONS
+- Uses imported, fixed-interval OHLC datasets only. Variable/tick bars are not
+  supported by this study.
+- Session windows follow the current profile; this study does not separately
+  apply exchange holidays/early closes or broker-specific hours and breaks.
+- No future labels are used. Results are descriptive historical statistics,
+  not forecasts, trading signals or profitability guarantees.
+- Returns are gross of spreads, commissions, slippage, financing and execution.
+
+PRESERVED
+- Existing Regime Lab importer/store is reused without changing its CSV schema.
+- Market Watch, session clocks, exchange calendar, alert engine, Volatility Lab,
+  Focus & Goals and alarm clock remain available.
+
+VALIDATION
+- New tests cover session return/range/volatility calculations, local-time
+  assignment, DST changes, pairwise overlap calculations and sample filters.
+- Full test matrix and Windows standalone build results are recorded in CI.
+- Manual GUI review remains required.

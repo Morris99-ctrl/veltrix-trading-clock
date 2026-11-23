@@ -1,8 +1,21 @@
-# Veltrix Trading Clock v10.8 — Core Edition
+# Veltrix Trading Clock v10.9 — Core Edition
 
-The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes four detailed timezone-aware instrument clocks, live session-progress rings, actual UTC-offset readouts, a concentric 24-hour World Session Dial and an interactive UTC session map with click-and-drag time probing. Alerts & Events now opens a Market Watch command centre with a 24-hour session map, current market status, a searchable FX reference watchlist and a filtered macro-news calendar. Existing alert rules remain available in an expandable settings area. The app retains selectable market-hours profiles, editable local schedules, weekly scheduled-hours summaries, historical overlap reconstruction, alarms, calendar, volatility monitoring, Regime Lab and Focus & Goals.
+The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes four detailed timezone-aware instrument clocks, live session-progress rings, actual UTC-offset readouts, a concentric 24-hour World Session Dial and an interactive UTC session map with click-and-drag time probing. Alerts & Events now opens a Market Watch command centre with a 24-hour session map, current market status, a searchable FX reference watchlist and a filtered macro-news calendar. The new Session Performance workspace reuses Regime Lab's local OHLC datasets to measure per-session and pairwise-overlap behaviour. Existing alert rules remain available in an expandable settings area. The app retains selectable market-hours profiles, editable local schedules, weekly scheduled-hours summaries, historical overlap reconstruction, alarms, calendar, volatility monitoring, Regime Lab and Focus & Goals.
 
 The Research Lab, Strategy Lab, Tick Research and Data Center workspaces are removed. No provider API keys, tick-bar construction, strategy backtesting, MT5 connection or order execution are required.
+
+## Session Performance Intelligence (v10.9)
+
+1. Open **Regime Lab** and select **IMPORT OHLC CSV**.
+2. Import a fixed-interval OHLC CSV with timestamp (or date/time), open, high, low and close columns. Naive timestamps are interpreted in the selected home IANA timezone during import; timestamps containing UTC offsets are converted using those offsets.
+3. Open **SESSION PERFORMANCE** and choose the imported dataset. No second import is needed.
+4. Confirm the active session profile and set the minimum bars per session day and minimum estimated coverage. Defaults are 3 bars and 50%.
+5. Select **RUN SESSION STUDY**. The computation runs in a background worker. Session rows and pairwise overlap rows show the qualifying sample count and summary metrics.
+6. Select **EXPORT DAILY CSV** to export the daily session and overlap observations, including excluded rows and their exclusion reasons.
+
+The analysis uses bar-open timestamps against each session's configured local [open, close) schedule and weekday list. Returns are gross observed historical returns; range is the observed high-low movement as a percentage of the first observed open; realised volatility is the root-sum-square of observed bar log returns and is not annualised. Pairwise overlap returns compound each selected OHLC bar's open-to-close return without stitching gaps. Coverage is an estimate based on observed versus expected bars using the dataset's median interval.
+
+The active session profile is used. If the dataset or profile changes, previously displayed results are cleared. The study does not apply a separate exchange-holiday calendar, model broker-specific trading hours or adjust returns for transaction costs. It is descriptive research, not a signal, forecast or profitability claim. The source, interval, sample counts and limitations should be considered before comparing markets.
 
 ## Market Watch & Alerts (v10.8)
 

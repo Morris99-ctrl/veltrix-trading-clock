@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(10, 8, 0, 0),
-    prodvers=(10, 8, 0, 0),
+    filevers=(10, 9, 0, 0),
+    prodvers=(10, 9, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x4,
@@ -15,11 +15,11 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'Veltrix Capital'),
          StringStruct('FileDescription', 'Veltrix Trading Clock'),
-         StringStruct('FileVersion', '10.8.0'),
+         StringStruct('FileVersion', '10.9.0'),
          StringStruct('InternalName', 'VeltrixTradingClock'),
          StringStruct('OriginalFilename', 'VeltrixTradingClock.exe'),
          StringStruct('ProductName', 'Veltrix Trading Clock'),
-         StringStruct('ProductVersion', '10.8.0')]
+         StringStruct('ProductVersion', '10.9.0')]
       )
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])

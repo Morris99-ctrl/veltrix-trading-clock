@@ -1,6 +1,6 @@
-# Veltrix Trading Clock — v10.8 Core Edition
+# Veltrix Trading Clock — v10.9 Core Edition
 
-Veltrix v10.8 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
+Veltrix v10.9 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -11,6 +11,7 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Economic Calendar** — third-party public calendar feed, impact filters, cached results and high-impact reminders.
 - **Volatility Lab** — indicative Yahoo Finance market monitoring, ATR, one-day historical expected move and session volatility observations.
 - **Regime Lab** — import completed OHLC history from a CSV, classify bars as range, trend-up, trend-down, volatility shock or transition, inspect historical conditional outcomes and export classifications.
+- **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
 
@@ -33,6 +34,20 @@ Each market has its own lane showing its scheduled local trading window converte
 The map honours each session's IANA timezone and weekday schedule, including daylight-saving changes. It represents configured weekday hours only; exchange holidays, emergency closures, broker-specific hours and overnight schedules are not inferred. It is a schedule visualisation, not a live exchange-status feed.
 
 The Global Sessions page is vertically scrollable so the clock cards, world dial, 24-hour map and footer remain accessible on shorter displays. The World Session Dial plots Sydney, Tokyo, London and New York windows as four concentric UTC tracks and rotates a live UTC pointer around the 24-hour face. The horizontal timeline accepts click-and-drag probing: select any minute in the current UTC day to inspect which configured sessions are open at that instant. The probe is temporary and resets when the UTC day changes. The dial and timeline use the same session definitions and optional exchange-calendar overlay.
+
+## Session Performance Intelligence (v10.9)
+
+Session Performance is a separate historical study workspace that reuses datasets already imported in Regime Lab. Import an OHLC CSV once in Regime Lab; the same local dataset then appears in the Session Performance selector. The analysis uses the active session profile and each session's own IANA timezone. Changing the selected dataset or session profile invalidates old output so results cannot quietly be mistaken for the new selection.
+
+A bar belongs to a session when its **bar-open timestamp** falls inside the configured local [open, close) window on one of that session's configured weekdays. Session-day return is the first observed bar open to the last observed close. Session range is the observed high-to-low range divided by the first observed open. Realised volatility is the root-sum-square of the observed bar log returns, expressed as a percentage and **not annualised**. Session rows report mean/median return, positive-day rate, mean range, realised volatility, sample count and bar-coverage estimate.
+
+Pairwise overlap rows include only bars whose bar-open timestamps fall inside both configured session windows. Overlap return compounds each selected bar's open-to-close return; it does not stitch unobserved gaps. Overlap realised volatility is also calculated from those individual OHLC bar returns. The overlap table reports sample days and bars as well as mean return, positive-day rate, range and realised volatility.
+
+The default quality filters require at least 3 bars per session day and estimated coverage of at least 50%. Coverage is observed bars divided by expected bars estimated from the dataset's median interval, capped at 100%. It is a count-based estimate, not proof that every scheduled minute is present. Days rejected by the filters remain in the daily export with an exclusion reason, but do not enter summary averages. The filter controls can be adjusted before each study.
+
+The export contains one row per observed session day plus separate pairwise overlap rows. Times are stored/exported in UTC. The importer's configured IANA timezone is used only for source timestamps that had no explicit timezone/UTC offset; explicit timestamps are normalised to UTC during import.
+
+This is descriptive historical analysis, not a trading signal or forecast. It uses the current configured weekday session schedules and does not independently remove exchange holidays, early closes, broker-specific hours or maintenance breaks. Results depend on symbol, source, bar interval, timestamp convention, missing observations and data quality. Returns are gross of spreads, commissions, slippage, financing and execution effects. No historical observations are generated automatically when the dataset is empty.
 
 ## Market Watch & Alerts (v10.8)
 
@@ -129,7 +144,7 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
-The v10.7 baseline passed 180 tests and compileall on Python 3.10, 3.11 and 3.12, with Windows packaging successful. The v10.8 workflow validates the Market Watch UI wiring, FX reference-week/DST calculations and the Windows standalone package. See the latest GitHub Actions run and RELEASE_VALIDATION_10.8.txt; manual native Windows GUI review remains required.
+The v10.8 baseline passed 193 tests and compileall on Python 3.10, 3.11 and 3.12, with Windows packaging successful. The v10.9 workflow adds session-performance metrics, overlap sampling, coverage filtering, export checks and desktop workspace wiring. See the latest GitHub Actions run and RELEASE_VALIDATION_10.9.txt; manual native Windows GUI review remains required.
 
 The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
 
@@ -139,6 +154,7 @@ A passing unit suite does not prove live provider uptime, native Windows renderi
 
 - main.py — integrated Tkinter interface and orchestration.
 - alerts_dashboard.py / market_watch.py — Market Watch UI, FX reference-week schedule and economic-news panel.
+- session_performance.py / session_performance_ui.py — historical session and pairwise-overlap OHLC analysis.
 - session_engine.py / session_clock.py / session_timeline.py / session_intelligence.py / session_profiles.py / exchange_calendar.py / risk_engine.py / alert_engine.py — timezone-aware session states, analog-hand geometry, UTC session windows, historical overlap analytics, selectable profiles, exchange exceptions, session-risk flags and alert scheduling.
 - calendar_engine.py — public calendar client, cache and reminders.
 - market_data.py / volatility_engine.py — indicative market monitoring, ATR and expected-move calculations.
