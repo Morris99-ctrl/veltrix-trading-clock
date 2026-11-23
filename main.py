@@ -867,7 +867,7 @@ class VeltrixTradingClock:
     def _toggle_exchange_calendar(self) -> None:
         """Enable or disable official cash-exchange holiday overlays."""
         enabled = bool(self.exchange_calendar_enabled_var.get())
-        if enabled and self.active_session_profile not in {"Equities Cash", "Custom", "Current Configuration"}:
+        if enabled and self.active_session_profile not in {"Equities Cash", "Custom"}:
             proceed = messagebox.askyesno(
                 "Cash-exchange calendar overlay",
                 "You are using a non-equities session profile. Exchange holidays and early closes "
