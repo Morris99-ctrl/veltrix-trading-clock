@@ -50,7 +50,7 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
             "def _apply_selected_session_profile",
             "def edit_custom_session_profile",
             "def _refresh_session_intelligence",
-            "WEEKLY HOURS · LOCAL MON–SUN",
+            "WEEKLY SCHEDULED HOURS · LOCAL MON–SUN",
             "PAST {period}D SCHEDULED OVERLAP",
             "EDIT CUSTOM",
         ):
