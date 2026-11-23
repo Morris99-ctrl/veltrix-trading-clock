@@ -725,7 +725,7 @@ def apply_session_performance_theme(app) -> None:
     style.configure(
         "Veltrix.Performance.Treeview",
         background=palette["bg"], foreground=palette["text"], fieldbackground=palette["bg"],
-        rowheight=25, bordercolor=palette["border"], font=("Segoe UI", 9),
+        rowheight=29, bordercolor=palette["bg"], font=("Segoe UI", 9),
     )
     style.configure(
         "Veltrix.Performance.Treeview.Heading",
@@ -740,7 +740,7 @@ def apply_session_performance_theme(app) -> None:
     style.configure(
         "Veltrix.Performance.Vertical.TScrollbar",
         background=palette["button_bg"], troughcolor=palette["bg"],
-        arrowcolor=palette["bright"], bordercolor=palette["border"],
+        arrowcolor=palette["bright"], bordercolor=palette["bg"],
     )
     style.configure(
         "Veltrix.Performance.TCombobox",
