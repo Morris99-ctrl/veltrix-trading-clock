@@ -50,6 +50,10 @@ from session_intelligence import historical_overlap_report, weekly_session_hours
 from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
 from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events
 from risk_engine import assess_session_risk, due_session_risk_alerts
+from alerts_dashboard import (
+    build_alerts_dashboard, refresh_alerts_dashboard,
+    apply_alerts_tree_theme, update_recent_alerts, toggle_alert_settings,
+)
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -68,7 +72,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.7"
+APP_VERSION = "10.8"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 50
 
@@ -1935,10 +1939,57 @@ class VeltrixTradingClock:
         self._refresh_focus_goals()
 
     def _build_alerts_page(self) -> None:
-        """Build configurable session alerts and manual economic-event reminders."""
+        """Build the Market Watch command centre and retain the rule editor."""
         palette = THEMES[self.theme_name]
+        self.alerts_scroll_shell = self._frame(self.alerts_view)
+        self.alerts_scroll_shell.pack(fill="both", expand=True)
+        self.alerts_canvas = tk.Canvas(
+            self.alerts_scroll_shell, bg=palette["bg"], highlightthickness=0, bd=0,
+        )
+        self.alerts_scrollbar = ttk.Scrollbar(
+            self.alerts_scroll_shell, orient="vertical", command=self.alerts_canvas.yview,
+            style="Veltrix.Alerts.Vertical.TScrollbar",
+        )
+        self.alerts_canvas.configure(yscrollcommand=self.alerts_scrollbar.set)
+        self.alerts_canvas.pack(side="left", fill="both", expand=True)
+        self.alerts_scrollbar.pack(side="right", fill="y")
+        self.alerts_content = self._frame(self.alerts_canvas)
+        self.alerts_content_window = self.alerts_canvas.create_window(
+            (0, 0), window=self.alerts_content, anchor="nw",
+        )
+        self.alerts_content.bind(
+            "<Configure>", lambda _event: self.alerts_canvas.configure(
+                scrollregion=self.alerts_canvas.bbox("all")
+            )
+        )
+        self.alerts_canvas.bind(
+            "<Configure>", lambda event: self.alerts_canvas.itemconfigure(
+                self.alerts_content_window, width=event.width
+            )
+        )
+        self.alerts_canvas.bind(
+            "<MouseWheel>",
+            lambda event: self.alerts_canvas.yview_scroll(int(-event.delta / 120), "units"),
+        )
+        self.alerts_canvas.bind(
+            "<Button-4>", lambda _event: self.alerts_canvas.yview_scroll(-1, "units"),
+        )
+        self.alerts_canvas.bind(
+            "<Button-5>", lambda _event: self.alerts_canvas.yview_scroll(1, "units"),
+        )
+        self.alert_settings_container = self._frame(self.alerts_content, bg="panel", padx=4, pady=3)
+        self.alert_settings_container.pack_forget()
+        build_alerts_dashboard(self, self.alerts_content)
+        settings_toggle_row = self._frame(self.alerts_content, bg="panel", padx=7, pady=5)
+        settings_toggle_row.pack(fill="x", pady=(0, 6))
+        self.alert_config_toggle = tk.Button(
+            settings_toggle_row, text="ALERT RULES / PREFERENCES  ▸",
+            command=lambda: toggle_alert_settings(self),
+            font=("Consolas", 7, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+        )
+        self.alert_config_toggle.pack(side="left")
 
-        settings_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=11)
+        settings_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
         settings_panel.pack(fill="x", pady=(0, 10))
         self._label(settings_panel, "SESSION ALERT ENGINE", bg="panel", fg="bright",
                     font=("Consolas", 10, "bold")).pack(anchor="w")
@@ -2046,7 +2097,7 @@ class VeltrixTradingClock:
             self.session_lead_vars[session.key] = {"pre_open": open_var, "pre_close": close_var}
             self.session_lead_spins.extend((open_spin, close_spin))
 
-        risk_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=11)
+        risk_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
         risk_panel.pack(fill="x", pady=(0, 10))
         self._label(
             risk_panel, "SESSION RISK AWARENESS", bg="panel", fg="bright",
@@ -2114,7 +2165,7 @@ class VeltrixTradingClock:
         )
         self.risk_pre_open_window_spin.pack(side="left", padx=(6, 0))
 
-        event_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=11)
+        event_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
         event_panel.pack(fill="x", pady=(0, 10))
         self._label(event_panel, "ECONOMIC EVENT REMINDERS", bg="panel", fg="bright",
                     font=("Consolas", 10, "bold")).pack(anchor="w")
@@ -2167,7 +2218,7 @@ class VeltrixTradingClock:
         )
         self.remove_event_button.pack(side="left", padx=(8, 0), anchor="n")
 
-        feed_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=10)
+        feed_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=10)
         feed_panel.pack(fill="both", expand=True)
         self._label(feed_panel, "ALERT ACTIVITY", bg="panel", fg="bright",
                     font=("Consolas", 9, "bold")).pack(anchor="w")
