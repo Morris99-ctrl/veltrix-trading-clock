@@ -32,6 +32,16 @@ The map honours each session's IANA timezone and weekday schedule, including day
 
 The Global Sessions page is vertically scrollable so the clock cards, 24-hour map and footer remain accessible on shorter displays.
 
+## Global Session Intelligence
+
+The 24-hour UTC map sits beneath the four market clocks. It is generated from the same `SessionDefinition` objects used by the live clock cards and alert engine, rather than maintaining a second set of market hours.
+
+Each market has its own lane showing its scheduled local trading window converted to UTC. The map starts at 00:00 UTC and ends at 24:00 UTC, with a live current-time marker. The separate overlap lane highlights periods when at least two configured sessions are scheduled open. The summary underneath lists the overlap participants and UTC times, total overlap duration, and the next three market transitions.
+
+The map honours each session's IANA timezone and weekday schedule, including daylight-saving changes. It represents configured weekday hours only; exchange holidays, emergency closures, broker-specific hours and overnight schedules are not inferred. It is a schedule visualisation, not a live exchange-status feed.
+
+The Global Sessions page is vertically scrollable so the clock cards, 24-hour map and footer remain accessible on shorter displays.
+
 ## Regime Lab data
 
 Regime Lab now has its own **IMPORT OHLC CSV** workflow. It accepts timestamp plus Open, High, Low and Close columns, including common MT5-style separate Date/Time fields. Timestamps are normalised to UTC. Naive timestamps are interpreted using the configured home timezone (Africa/Nairobi by default).
