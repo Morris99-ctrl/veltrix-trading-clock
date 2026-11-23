@@ -6,6 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MAIN_SOURCE = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+ALERT_DASHBOARD_SOURCE = (PROJECT_ROOT / "alerts_dashboard.py").read_text(encoding="utf-8")
 
 
 class CoreWorkspaceScopeTests(unittest.TestCase):
@@ -104,17 +105,22 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         for symbol in (
             "from alerts_dashboard import",
             "def _build_alerts_page",
+            "build_alerts_dashboard(self, self.alerts_content)",
+            "refresh_alerts_dashboard(self, now_utc, states)",
+            "toggle_alert_settings(self)",
+            "apply_alerts_tree_theme(self)",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        for symbol in (
             "MARKET WATCH · TRADING HOURS",
             "GLOBAL SESSION MAP · UTC 00:00–24:00",
             "CURRENT SESSION",
             "SYMBOL WATCHLIST · 28 MAJOR / CROSS FX PAIRS",
             "NEWS CALENDAR · HIGH / MEDIUM IMPACT",
             "REFERENCE SCHEDULE ONLY",
-            "def _toggle_alert_settings",
-            "refresh_alerts_dashboard(self, now_utc, states)",
-            "apply_alerts_tree_theme(self)",
+            "ALERT RULES / PREFERENCES",
         ):
-            self.assertIn(symbol, MAIN_SOURCE)
+            self.assertIn(symbol, ALERT_DASHBOARD_SOURCE)
 
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
