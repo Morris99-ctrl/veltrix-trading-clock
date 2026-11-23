@@ -52,11 +52,13 @@ class SessionIntelligenceTests(unittest.TestCase):
         )
         pair_hours = {(left, right): hours for left, right, hours in report.pair_overlap_hours}
 
-        self.assertAlmostEqual(report.total_overlap_hours, 45.0)
-        self.assertAlmostEqual(report.average_daily_overlap_hours, 45.0 / 7)
+        self.assertAlmostEqual(report.total_overlap_hours, 58.0)
+        self.assertAlmostEqual(report.average_daily_overlap_hours, 58.0 / 7)
         self.assertAlmostEqual(pair_hours[("SYDNEY", "TOKYO")], 25.0)
+        self.assertAlmostEqual(pair_hours[("LONDON", "TOKYO")], 5.0)
         self.assertAlmostEqual(pair_hours[("LONDON", "NEW YORK")], 20.0)
-        self.assertEqual(report.busiest_day_hours, 9.0)
+        self.assertAlmostEqual(pair_hours[("NEW YORK", "SYDNEY")], 8.0)
+        self.assertEqual(report.busiest_day_hours, 12.0)
 
     def test_historical_overlap_supports_30_and_90_day_periods(self):
         end = datetime(2026, 11, 30, tzinfo=timezone.utc)
