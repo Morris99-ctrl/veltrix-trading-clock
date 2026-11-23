@@ -6,10 +6,12 @@ on:
       - main
       - release/v10-core-clock
       - release/v10.11-chronological-validation
+      - release/v10.12-visual-redesign
   pull_request:
     branches:
       - main
       - release/v10-core-clock
+      - release/v10.11-chronological-validation
   workflow_dispatch:
 
 permissions:
@@ -73,6 +75,6 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: Veltrix-Trading-Clock-v10.11-Windows
+          name: Veltrix-Trading-Clock-v10.12-Windows
           path: dist/Veltrix Trading Clock/
           if-no-files-found: error
