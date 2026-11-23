@@ -44,6 +44,7 @@ from session_clock import session_clock_hand_endpoints
 from session_timeline import build_session_timeline
 from session_intelligence import historical_overlap_report, weekly_session_hours
 from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
+from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -62,7 +63,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.3"
+APP_VERSION = "10.4"
 UI_QUEUE_POLL_MS = 500
 
 DIGIT_SEGMENTS = {
@@ -184,6 +185,12 @@ class VeltrixTradingClock:
         self.theme_var = tk.StringVar(value=self.theme_name)
         self.session_profile_var = tk.StringVar(value=self.active_session_profile)
         self.session_history_period_var = tk.StringVar(value="30")
+        exchange_settings = self.config.get("exchange_calendar", {})
+        if not isinstance(exchange_settings, dict):
+            exchange_settings = {}
+        self.exchange_calendar_enabled_var = tk.BooleanVar(
+            value=bool(exchange_settings.get("enabled", False))
+        )
         self.session_intelligence_cache_key: tuple | None = None
         self.cards: dict[str, dict[str, tk.Widget]] = {}
         self.theme_items: list[tuple[tk.Widget, str, str | None]] = []
@@ -633,6 +640,21 @@ class VeltrixTradingClock:
         )
         self.edit_custom_session_profile_button.pack(side="left")
 
+        self.exchange_calendar_toggle = tk.Checkbutton(
+            profile_controls,
+            text="CASH EXCHANGE HOLIDAYS / EARLY CLOSES",
+            variable=self.exchange_calendar_enabled_var,
+            command=self._toggle_exchange_calendar,
+            font=("Consolas", 7, "bold"),
+            relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            bg=THEMES[self.theme_name]["panel"],
+            fg=THEMES[self.theme_name]["text"],
+            activebackground=THEMES[self.theme_name]["panel"],
+            activeforeground=THEMES[self.theme_name]["bright"],
+            selectcolor=THEMES[self.theme_name]["dim"],
+        )
+        self.exchange_calendar_toggle.pack(side="right")
+        self._register_theme(self.exchange_calendar_toggle, "panel", "text")
 
         self.session_timeline_canvas = tk.Canvas(
             panel, height=166, bg=THEMES[self.theme_name]["panel"],
@@ -651,6 +673,19 @@ class VeltrixTradingClock:
             font=("Consolas", 8), anchor="w", justify="left", wraplength=1050,
         )
         self.timeline_upcoming_label.pack(fill="x")
+
+        self.exchange_calendar_status_label = self._label(
+            panel, "EXCHANGE CALENDAR OFF · GENERIC WEEKDAY SCHEDULES ONLY",
+            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.exchange_calendar_status_label.pack(fill="x", pady=(5, 1))
+        self.exchange_calendar_events_label = self._label(
+            panel, "UPCOMING EXCHANGE EXCEPTIONS · CALENDAR OVERLAY DISABLED",
+            bg="panel", fg="warning", font=("Consolas", 7),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.exchange_calendar_events_label.pack(fill="x", pady=(1, 2))
 
         analytics = self._frame(panel, bg="panel")
         analytics.pack(fill="x", pady=(8, 0))
@@ -701,7 +736,10 @@ class VeltrixTradingClock:
         palette = THEMES[self.theme_name]
         start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         end_utc = start_utc + timedelta(hours=24)
-        snapshot = build_session_timeline(self.sessions, start_utc, hours=24)
+        snapshot = build_session_timeline(
+            self.sessions, start_utc, hours=24,
+            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        )
 
         width = max(620, canvas.winfo_width())
         height = 166
@@ -824,6 +862,74 @@ class VeltrixTradingClock:
         self.timeline_upcoming_label.configure(
             text="NEXT TRANSITIONS · " + ("  |  ".join(items) if items else "NONE"),
             fg=palette["muted"],
+        )
+
+    def _toggle_exchange_calendar(self) -> None:
+        """Enable or disable official cash-exchange holiday overlays."""
+        enabled = bool(self.exchange_calendar_enabled_var.get())
+        if enabled and self.active_session_profile not in {"Equities Cash", "Custom", "Current Configuration"}:
+            proceed = messagebox.askyesno(
+                "Cash-exchange calendar overlay",
+                "You are using a non-equities session profile. Exchange holidays and early closes "
+                "will be applied to the currently configured session windows, but this will not "
+                "convert those windows into official exchange trading hours. Continue?",
+                parent=self.root,
+            )
+            if not proceed:
+                self.exchange_calendar_enabled_var.set(False)
+                return
+        self.config["exchange_calendar"] = {"enabled": enabled}
+        self.session_timeline_signature = None
+        self._save_config()
+        self._set_alert_banner(
+            "OFFICIAL CASH-EXCHANGE HOLIDAY OVERLAY ENABLED"
+            if enabled else "EXCHANGE CALENDAR OVERLAY DISABLED",
+            "success" if enabled else "muted",
+        )
+        if self.clock_job is not None:
+            try:
+                self.root.after_cancel(self.clock_job)
+            except tk.TclError:
+                pass
+            self.clock_job = None
+        self.update_clock()
+
+    def _update_exchange_calendar_summary(self, now_utc: datetime, states: list) -> None:
+        """Show venue coverage and the next published closure/early-close exceptions."""
+        palette = THEMES[self.theme_name]
+        if not self.exchange_calendar_enabled_var.get():
+            self.exchange_calendar_status_label.configure(
+                text="EXCHANGE CALENDAR OFF · GENERIC WEEKDAY SCHEDULES ONLY",
+                fg=palette["muted"],
+            )
+            self.exchange_calendar_events_label.configure(
+                text="ENABLE CASH-EXCHANGE OVERLAY TO SHOW PUBLISHED HOLIDAYS AND EARLY CLOSES",
+                fg=palette["muted"],
+            )
+            return
+
+        out_of_range = [
+            state.definition.name for state in states
+            if state.calendar_status in {"OUT_OF_RANGE", "NO_VENUE_MAPPING"}
+        ]
+        status = "EXCHANGE CALENDAR ON · ASX / TOKYO STOCK EXCHANGE / LSE / NYSE · BUNDLED DATA THROUGH 2027"
+        if out_of_range:
+            status += " · OUT OF PUBLISHED RANGE: " + ", ".join(out_of_range)
+        self.exchange_calendar_status_label.configure(text=status, fg=palette["success"])
+
+        events = upcoming_exchange_events(now_utc, days_ahead=45)
+        parts = []
+        for event in events[:5]:
+            info = EXCHANGE_CALENDARS[event.exchange_key]
+            label = "EARLY CLOSE" if event.status == "EARLY_CLOSE" else "CLOSED"
+            local_date = event.event_date.strftime("%d %b")
+            close_note = f" {event.close_time.strftime('%H:%M')} {info.timezone_name}" if event.close_time else ""
+            parts.append(f"{info.name} {local_date} {event.title} [{label}{close_note}]")
+        self.exchange_calendar_events_label.configure(
+            text="UPCOMING EXCHANGE EXCEPTIONS · " + (
+                "  |  ".join(parts) if parts else "NONE IN NEXT 45 DAYS"
+            ),
+            fg=palette["warning"],
         )
 
     def _apply_selected_session_profile(self) -> None:
@@ -3396,7 +3502,10 @@ class VeltrixTradingClock:
                 )
 
     def _poll_market_alerts(self, now_utc: datetime, open_states: list) -> None:
-        alerts = due_session_alerts(self.sessions, now_utc, self.alert_settings, self.alerted_session_keys)
+        alerts = due_session_alerts(
+            self.sessions, now_utc, self.alert_settings, self.alerted_session_keys,
+            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        )
         for alert in alerts:
             self._emit_alert(alert.title, alert.message, alert.category)
 
@@ -3821,7 +3930,13 @@ class VeltrixTradingClock:
         self.home_date_label.configure(text=home_now.strftime("%A  ·  %d %B %Y  ·  %Z"))
         self._draw_digital_clock(home_now)
 
-        states = [get_session_state(session, now_utc) for session in self.sessions]
+        exchange_calendar_enabled = self.exchange_calendar_enabled_var.get()
+        states = [
+            get_exchange_aware_session_state(
+                session, now_utc, enabled=exchange_calendar_enabled
+            )
+            for session in self.sessions
+        ]
         open_states = [state for state in states if state.is_open]
         self._poll_market_alerts(now_utc, open_states)
         self._poll_economic_events(home_now)
@@ -3837,6 +3952,7 @@ class VeltrixTradingClock:
         self.summary_overlap["value"].configure(text=overlaps if overlaps else "NONE")
         self._draw_session_timeline(now_utc, states)
         self._refresh_session_intelligence(now_utc)
+        self._update_exchange_calendar_summary(now_utc, states)
         palette = THEMES[self.theme_name]
         for state in states:
             widgets = self.cards[state.definition.key]
@@ -3846,7 +3962,20 @@ class VeltrixTradingClock:
             widgets["card"].configure(
                 highlightbackground=palette["success"] if state.is_open else palette["border"]
             )
-            if state.is_open:
+            if state.calendar_status == "EXCHANGE_HOLIDAY":
+                widgets["status"].configure(text="● HOLIDAY", fg=palette["error"])
+                transition_text = f"EXCHANGE CLOSED · OPENS IN {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status in {"EARLY_CLOSE", "EARLY_CLOSE_PASSED"}:
+                if state.is_open:
+                    widgets["status"].configure(text="● EARLY CLOSE", fg=palette["warning"])
+                    transition_text = f"EARLY CLOSE IN  {format_countdown(state.seconds_to_transition)}"
+                elif state.calendar_status == "EARLY_CLOSE":
+                    widgets["status"].configure(text="● EARLY CLOSE DAY", fg=palette["warning"])
+                    transition_text = f"OPENS IN  {format_countdown(state.seconds_to_transition)}"
+                else:
+                    widgets["status"].configure(text="● CLOSED", fg=palette["error"])
+                    transition_text = f"EARLY CLOSE PASSED · OPENS IN {format_countdown(state.seconds_to_transition)}"
+            elif state.is_open:
                 widgets["status"].configure(text="● OPEN", fg=palette["success"])
                 transition_text = f"CLOSES IN  {format_countdown(state.seconds_to_transition)}"
             else:
@@ -4124,6 +4253,9 @@ class VeltrixTradingClock:
             "selected": self.active_session_profile,
             "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
             "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
+        self.config["exchange_calendar"] = {
+            "enabled": bool(self.exchange_calendar_enabled_var.get())
         }
         try:
             self.regime_settings.update(asdict(self._collect_regime_config()))
