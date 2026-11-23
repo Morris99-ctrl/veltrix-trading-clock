@@ -41,6 +41,10 @@ from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
 from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
 from session_clock import session_clock_hand_endpoints
+from session_visuals import (
+    session_window_progress, session_window_arc_angles, utc_offset_label,
+    local_day_phase, timeline_probe_from_x,
+)
 from session_timeline import build_session_timeline
 from session_intelligence import historical_overlap_report, weekly_session_hours
 from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
@@ -64,7 +68,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.6"
+APP_VERSION = "10.7"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 50
 
@@ -196,6 +200,10 @@ class VeltrixTradingClock:
         )
         self.session_intelligence_cache_key: tuple | None = None
         self.cards: dict[str, dict[str, tk.Widget]] = {}
+        self.latest_session_states: list = []
+        self.session_probe_utc: datetime | None = None
+        self.session_timeline_plot: tuple[float, float, datetime] | None = None
+        self.world_dial_signature: tuple | None = None
         self.theme_items: list[tuple[tk.Widget, str, str | None]] = []
         self.clock_canvas_signature: tuple[int, int, str] | None = None
 
@@ -676,12 +684,44 @@ class VeltrixTradingClock:
         self.exchange_calendar_toggle.pack(side="right")
         self._register_theme(self.exchange_calendar_toggle, "panel", "text")
 
-        self.session_timeline_canvas = tk.Canvas(
-            panel, height=166, bg=THEMES[self.theme_name]["panel"],
-            highlightthickness=0, bd=0,
+        visual_row = self._frame(panel, bg="panel")
+        visual_row.pack(fill="x", pady=(5, 2))
+        world_dial_panel = self._frame(visual_row, bg="panel")
+        world_dial_panel.pack(side="left", fill="y", padx=(0, 15))
+        self.world_dial_title = self._label(
+            world_dial_panel, "WORLD SESSION DIAL", bg="panel", fg="muted",
+            font=("Consolas", 7, "bold"),
         )
-        self.session_timeline_canvas.pack(fill="x", expand=True, pady=(5, 2))
+        self.world_dial_title.pack(anchor="center", pady=(0, 3))
+        self.world_dial_canvas = tk.Canvas(
+            world_dial_panel, width=260, height=250,
+            bg=THEMES[self.theme_name]["panel"], highlightthickness=0, bd=0,
+        )
+        self.world_dial_canvas.pack()
+        timeline_side = self._frame(visual_row, bg="panel")
+        timeline_side.pack(side="left", fill="both", expand=True)
+        self.timeline_interaction_hint = self._label(
+            timeline_side, "CLICK OR DRAG A LANE TO PROBE ANY UTC TIME",
+            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+        )
+        self.timeline_interaction_hint.pack(anchor="w", pady=(0, 4))
+        self.session_timeline_canvas = tk.Canvas(
+            timeline_side, height=166, bg=THEMES[self.theme_name]["panel"],
+            highlightthickness=0, bd=0, cursor="crosshair",
+        )
+        self.session_timeline_canvas.pack(fill="x", expand=True, pady=(10, 2))
+        self.session_timeline_canvas.bind("<Button-1>", self._probe_session_timeline)
+        self.session_timeline_canvas.bind("<B1-Motion>", self._probe_session_timeline)
         self.session_timeline_signature: tuple[int, int, str, str] | None = None
+        self.world_dial_signature = None
+        self.session_timeline_plot = None
+
+        self.timeline_probe_label = self._label(
+            panel, "TIME PROBE · CLICK OR DRAG THE TIMELINE TO INSPECT SESSION ALIGNMENT",
+            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.timeline_probe_label.pack(fill="x", pady=(1, 3))
 
         self.timeline_overlap_label = self._label(
             panel, "OVERLAPS · CALCULATING", bg="panel", fg="success",
@@ -750,8 +790,102 @@ class VeltrixTradingClock:
         )
         self.historical_pair_label.pack(fill="x")
 
+    def _draw_world_session_dial(self, now_utc: datetime, snapshot) -> None:
+        """Render the four UTC session windows as concentric 24-hour tracks."""
+        canvas = self.world_dial_canvas
+        palette = THEMES[self.theme_name]
+        now_utc = now_utc.astimezone(timezone.utc)
+        start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        signature = (
+            self.theme_name, start_utc.date().isoformat(),
+            bool(self.exchange_calendar_enabled_var.get()),
+            tuple((s.key, s.opens, s.closes, s.weekdays, s.timezone_name) for s in self.sessions),
+        )
+        if self.world_dial_signature != signature:
+            canvas.delete("all")
+            canvas.configure(bg=palette["panel"])
+            cx, cy, outer = 130.0, 125.0, 113.0
+            canvas.create_oval(
+                cx-outer, cy-outer, cx+outer, cy+outer,
+                fill=palette["bg"], outline=palette["border"], width=3,
+                tags="world-dial-static",
+            )
+            for hour in range(24):
+                angle = math.radians(hour * 15 - 90)
+                major = hour % 6 == 0
+                inner_tick = 100.0 if major else 103.0
+                outer_tick = 107.0
+                canvas.create_line(
+                    cx+math.cos(angle)*inner_tick, cy+math.sin(angle)*inner_tick,
+                    cx+math.cos(angle)*outer_tick, cy+math.sin(angle)*outer_tick,
+                    fill=palette["bright"] if major else palette["muted"],
+                    width=1.5 if major else 0.7, tags="world-dial-static",
+                )
+                if major:
+                    label_radius = 121.0
+                    canvas.create_text(
+                        cx+math.cos(angle)*label_radius, cy+math.sin(angle)*label_radius,
+                        text=f"{hour:02d}", fill=palette["muted"],
+                        font=("Consolas", 7, "bold"), tags="world-dial-static",
+                    )
+            colours = (palette["success"], palette["bright"], palette["warning"], palette["error"])
+            radii = (91.0, 79.0, 67.0, 55.0)
+            for index, session in enumerate(self.sessions):
+                radius = radii[index % len(radii)]
+                colour = colours[index % len(colours)]
+                box = (cx-radius, cy-radius, cx+radius, cy+radius)
+                canvas.create_oval(*box, outline=palette["dim"], width=4, tags="world-dial-static")
+                for window in snapshot.windows:
+                    if window.session_key != session.key:
+                        continue
+                    offset = (window.starts_at - start_utc).total_seconds() / 86400
+                    duration = (window.ends_at - window.starts_at).total_seconds() / 86400
+                    canvas.create_arc(
+                        *box, start=90-offset*360, extent=-duration*360,
+                        style=tk.ARC, outline=colour, width=4, tags="world-dial-static",
+                    )
+            canvas.create_oval(
+                cx-39, cy-39, cx+39, cy+39,
+                fill=palette["panel"], outline=palette["border"], width=1,
+                tags="world-dial-static",
+            )
+            canvas.create_text(
+                cx, cy-15, text="VELTRIX", fill=palette["muted"],
+                font=("Consolas", 7, "bold"), tags="world-dial-static",
+            )
+            canvas.create_text(
+                cx, cy+28, text="UTC · 24H", fill=palette["muted"],
+                font=("Consolas", 6, "bold"), tags="world-dial-static",
+            )
+            self.world_dial_signature = signature
+        else:
+            canvas.delete("world-dial-dynamic")
+
+        cx, cy = 130.0, 125.0
+        seconds = now_utc.hour*3600 + now_utc.minute*60 + now_utc.second + now_utc.microsecond/1_000_000
+        angle = math.radians(seconds / 86400 * 360 - 90)
+        tip_x, tip_y = cx+math.cos(angle)*46, cy+math.sin(angle)*46
+        canvas.create_line(
+            cx, cy, tip_x, tip_y, fill=palette["bright"], width=2,
+            capstyle=tk.ROUND, tags="world-dial-dynamic",
+        )
+        canvas.create_oval(
+            tip_x-3, tip_y-3, tip_x+3, tip_y+3,
+            fill=palette["bright"], outline=palette["bright"], tags="world-dial-dynamic",
+        )
+        canvas.create_text(
+            cx, cy+1, text=now_utc.strftime("%H:%M"),
+            fill=palette["text"], font=("Consolas", 12, "bold"),
+            tags="world-dial-dynamic",
+        )
+        canvas.create_text(
+            cx, cy+16, text=now_utc.strftime("%a %d %b").upper(),
+            fill=palette["muted"], font=("Consolas", 5, "bold"),
+            tags="world-dial-dynamic",
+        )
+
     def _draw_session_timeline(self, now_utc: datetime, states: list) -> None:
-        """Render today's UTC session windows, shared overlap bands and current-time marker."""
+        """Render the UTC session map, world dial and interactive time probe."""
         canvas = self.session_timeline_canvas
         palette = THEMES[self.theme_name]
         start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -760,11 +894,15 @@ class VeltrixTradingClock:
             self.sessions, start_utc, hours=24,
             apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
         )
+        self._draw_world_session_dial(now_utc, snapshot)
+        if self.session_probe_utc is not None and self.session_probe_utc.date() != start_utc.date():
+            self.session_probe_utc = None
 
         width = max(620, canvas.winfo_width())
         height = 166
         signature = (width, height, self.theme_name, start_utc.date().isoformat())
         left, right = 92.0, float(width - 15)
+        self.session_timeline_plot = (left, right, start_utc)
         span = right - left
         top, lane_step, lane_height = 31.0, 23.0, 12.0
 
@@ -853,6 +991,17 @@ class VeltrixTradingClock:
                 fill=palette["bright"], outline=palette["bright"], tags="timeline-dynamic",
             )
 
+        if self.session_probe_utc is not None and start_utc <= self.session_probe_utc < end_utc:
+            probe_x = x_at(self.session_probe_utc)
+            canvas.create_line(
+                probe_x, top-14, probe_x, overlap_y+lane_height+5,
+                fill=palette["warning"], width=2, dash=(2, 2), tags="timeline-dynamic",
+            )
+            canvas.create_polygon(
+                probe_x-4, top-12, probe_x+4, top-12, probe_x, top-6,
+                fill=palette["warning"], outline=palette["warning"], tags="timeline-dynamic",
+            )
+
         if snapshot.overlaps:
             overlap_text = "  |  ".join(
                 f"{' + '.join(item.session_names)} {item.starts_at.strftime('%H:%M')}–{item.ends_at.strftime('%H:%M')} UTC"
@@ -883,6 +1032,36 @@ class VeltrixTradingClock:
             text="NEXT TRANSITIONS · " + ("  |  ".join(items) if items else "NONE"),
             fg=palette["muted"],
         )
+
+    def _probe_session_timeline(self, event) -> None:
+        """Inspect configured session state at a clicked UTC minute."""
+        if self.session_timeline_plot is None:
+            return
+        left, right, start_utc = self.session_timeline_plot
+        probe = timeline_probe_from_x(event.x, left, right, start_utc)
+        self.session_probe_utc = probe
+        enabled = bool(self.exchange_calendar_enabled_var.get())
+        probe_states = [
+            get_exchange_aware_session_state(session, probe, enabled=enabled)
+            for session in self.sessions
+        ]
+        active = [state.definition.name for state in probe_states if state.is_open]
+        closed = [state.definition.name for state in probe_states if not state.is_open]
+        if len(active) >= 2:
+            alignment, colour = "OVERLAP · " + " + ".join(active), THEMES[self.theme_name]["success"]
+        elif active:
+            alignment, colour = "ACTIVE · " + ", ".join(active), THEMES[self.theme_name]["bright"]
+        else:
+            alignment, colour = "NO TRACKED SESSION OPEN", THEMES[self.theme_name]["muted"]
+        self.timeline_probe_label.configure(
+            text=(
+                f"TIME PROBE · {probe.strftime('%a %d %b %H:%M')} UTC"
+                f"  |  {alignment}  |  CLOSED: {', '.join(closed) if closed else 'NONE'}"
+            ),
+            fg=colour,
+        )
+        if self.latest_session_states:
+            self._draw_session_timeline(datetime.now(timezone.utc), self.latest_session_states)
 
     def _toggle_exchange_calendar(self) -> None:
         """Enable or disable official cash-exchange holiday overlays."""
@@ -3771,31 +3950,42 @@ class VeltrixTradingClock:
         local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 15, "bold"))
         local_time.grid(row=3, column=0, sticky="n", pady=(0, 2))
         zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Consolas", 8))
-        zone.grid(row=4, column=0, sticky="n", pady=(0, 7))
+        zone.grid(row=4, column=0, sticky="n", pady=(0, 2))
+        session_progress_label = self._label(
+            card, "DAY CYCLE · SESSION WINDOW", bg="card", fg="muted",
+            font=("Consolas", 7, "bold"),
+        )
+        session_progress_label.grid(row=5, column=0, sticky="n", pady=(0, 6))
         divider = self._frame(card, bg="border", height=1)
-        divider.grid(row=5, column=0, sticky="ew", pady=(0, 6))
+        divider.grid(row=6, column=0, sticky="ew", pady=(0, 6))
         transition = self._label(card, "Calculating next transition...", bg="card", fg="text", font=("Consolas", 9, "bold"))
-        transition.grid(row=6, column=0, sticky="w")
+        transition.grid(row=7, column=0, sticky="w")
         transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 8))
-        transition_at.grid(row=7, column=0, sticky="w", pady=(2, 0))
+        transition_at.grid(row=8, column=0, sticky="w", pady=(2, 0))
         risk = self._label(
             card, "SESSION RISK · NORMAL", bg="card", fg="muted",
             font=("Consolas", 7, "bold"), anchor="w", justify="left", wraplength=500,
         )
-        risk.grid(row=8, column=0, sticky="ew", pady=(5, 0))
+        risk.grid(row=9, column=0, sticky="ew", pady=(5, 0))
         self.cards[session.key] = {
             "card": card, "top": top, "name": name, "country": country, "status": status,
-            "city": city, "time": local_time, "analog": analog_canvas, "analog_clock": analog_clock, "zone": zone, "divider": divider,
+            "city": city, "time": local_time, "analog": analog_canvas, "analog_clock": analog_clock,
+            "zone": zone, "session_progress": session_progress_label, "divider": divider,
             "transition": transition, "transition_at": transition_at, "risk": risk,
         }
 
-    def _draw_session_analog_clock(self, clock_state: dict, local_now: datetime) -> None:
-        """Render a detailed instrument-style dial and update its retained hands."""
+    def _draw_session_analog_clock(
+        self, clock_state: dict, local_now: datetime, session=None, state=None
+    ):
+        """Render a detailed instrument dial with a live 24-hour session-window ring."""
         canvas: tk.Canvas = clock_state["canvas"]
         palette = THEMES[self.theme_name]
         width = max(150, canvas.winfo_width())
         height = max(150, canvas.winfo_height())
-        signature = (width, height, self.theme_name)
+        schedule_signature = (
+            session.key, session.opens, session.closes, session.weekdays
+        ) if session is not None else None
+        signature = (width, height, self.theme_name, schedule_signature)
 
         if clock_state.get("signature") != signature:
             canvas.delete("all")
@@ -3827,6 +4017,25 @@ class VeltrixTradingClock:
                 cx-radius*0.55, cy-radius*0.55, cx+radius*0.55, cy+radius*0.55,
                 outline=palette["dim"], width=1, tags="clock-face",
             )
+
+            # The 24-hour ring maps the configured local session window onto the dial.
+            ring_radius = radius * 0.79
+            ring_box = (cx-ring_radius, cy-ring_radius, cx+ring_radius, cy+ring_radius)
+            session_ring = {}
+            if session is not None:
+                session_ring["schedule"] = canvas.create_arc(
+                    *ring_box, start=0, extent=0, style=tk.ARC,
+                    outline=palette["dim"], width=3, tags="clock-face",
+                )
+                session_ring["progress"] = canvas.create_arc(
+                    *ring_box, start=0, extent=0, style=tk.ARC,
+                    outline=palette["success"], width=4, tags="clock-hands",
+                )
+                for marker_name, colour in (("open", palette["success"]), ("close", palette["warning"])):
+                    session_ring[marker_name] = canvas.create_oval(
+                        cx-2.7, cy-2.7, cx+2.7, cy+2.7,
+                        fill=colour, outline=palette["bg"], width=1, tags="clock-face",
+                    )
 
             # Sixty graduation marks: five-minute marks are longer and brighter.
             for tick in range(60):
@@ -3928,7 +4137,7 @@ class VeltrixTradingClock:
                 tags="clock-hands",
             )
             clock_state.update({
-                "signature": signature, "hands": hands,
+                "signature": signature, "hands": hands, "session_ring": session_ring,
                 "center_x": cx, "center_y": cy, "radius": radius,
             })
 
@@ -3956,17 +4165,82 @@ class VeltrixTradingClock:
             tail_x+counterweight_radius, tail_y+counterweight_radius,
         )
 
+        progress = None
+        if session is not None:
+            effective_close = None
+            if state is not None and state.calendar_close_time is not None:
+                if state.is_open and state.transition_kind in {"CLOSE", "CLOSE_PROCESS"}:
+                    effective_close = state.transition_at
+                else:
+                    effective_close = datetime.combine(
+                        local_now.date(), state.calendar_close_time, tzinfo=session.tz
+                    )
+            progress = session_window_progress(session, local_now, close_at=effective_close)
+            arc_close = progress.closes_at or datetime.combine(
+                local_now.date(), session.closes, tzinfo=session.tz
+            )
+            arc_start, arc_extent = session_window_arc_angles(session, close_at=arc_close)
+            ring = clock_state.get("session_ring", {})
+            if ring:
+                canvas.itemconfigure(
+                    ring["schedule"], start=arc_start, extent=arc_extent, outline=palette["dim"],
+                )
+                fraction = progress.fraction
+                if state is not None and state.calendar_status == "EXCHANGE_HOLIDAY":
+                    fraction = 0.0
+                canvas.itemconfigure(
+                    ring["progress"], start=arc_start, extent=arc_extent*fraction,
+                    outline=palette["success"] if progress.status == "ACTIVE" else palette["bright"],
+                )
+                open_minutes = session.opens.hour * 60 + session.opens.minute
+                close_time = arc_close.astimezone(session.tz).time()
+                close_minutes = close_time.hour * 60 + close_time.minute
+                open_angle = math.radians(open_minutes * 0.25 - 90)
+                close_angle = math.radians(close_minutes * 0.25 - 90)
+                marker_radius = clock_state["radius"] * 0.79
+                marker_size = max(2.0, clock_state["radius"] * 0.022)
+                open_x = cx + math.cos(open_angle) * marker_radius
+                open_y = cy + math.sin(open_angle) * marker_radius
+                close_x = cx + math.cos(close_angle) * marker_radius
+                close_y = cy + math.sin(close_angle) * marker_radius
+                canvas.coords(
+                    ring["open"], open_x-marker_size, open_y-marker_size,
+                    open_x+marker_size, open_y+marker_size,
+                )
+                canvas.coords(
+                    ring["close"], close_x-marker_size, close_y-marker_size,
+                    close_x+marker_size, close_y+marker_size,
+                )
+        return progress
+
+    def _session_progress_text(self, state, progress) -> str:
+        phase = local_day_phase(state.local_now)
+        if state.calendar_status == "EXCHANGE_HOLIDAY":
+            return f"{phase} CYCLE · EXCHANGE HOLIDAY"
+        if state.calendar_status == "EARLY_CLOSE_PASSED":
+            return f"{phase} CYCLE · EARLY CLOSE PASSED"
+        if progress.status == "ACTIVE":
+            return f"{phase} CYCLE · {progress.fraction:.0%} SESSION ELAPSED"
+        if progress.status == "UPCOMING":
+            return f"{phase} CYCLE · OPENS IN {format_countdown(progress.until_open_seconds)}"
+        if progress.status == "OFF DAY":
+            return f"{phase} CYCLE · NO SESSION TODAY"
+        return f"{phase} CYCLE · SESSION COMPLETE"
+
     def _animate_session_clocks(self) -> None:
         """Sweep all four session dials independently of the slower status poll."""
         if self.is_closing:
             return
         now_utc = datetime.now(timezone.utc)
+        states_by_key = {state.definition.key: state for state in self.latest_session_states}
         for session in self.sessions:
             widgets = self.cards.get(session.key)
             if widgets is None:
                 continue
             local_now = now_utc.astimezone(ZoneInfo(session.timezone_name))
-            self._draw_session_analog_clock(widgets["analog_clock"], local_now)
+            self._draw_session_analog_clock(
+                widgets["analog_clock"], local_now, session, states_by_key.get(session.key)
+            )
         self.session_animation_job = self.root.after(
             SESSION_CLOCK_FRAME_MS, self._animate_session_clocks
         )
@@ -4008,6 +4282,9 @@ class VeltrixTradingClock:
         if hasattr(self, "session_timeline_canvas"):
             self.session_timeline_canvas.configure(bg=palette["panel"])
             self.session_timeline_signature = None
+        if hasattr(self, "world_dial_canvas"):
+            self.world_dial_canvas.configure(bg=palette["panel"])
+            self.world_dial_signature = None
         for tile in (self.summary_open, self.summary_overlap, self.summary_next):
             tile["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
             tile["title"].configure(bg=palette["panel"], fg=palette["muted"])
@@ -4016,7 +4293,7 @@ class VeltrixTradingClock:
             widgets["card"].configure(bg=palette["panel"], highlightbackground=palette["border"])
             widgets["top"].configure(bg=palette["panel"])
             widgets["analog"].configure(bg=palette["panel"])
-            for key in ("name", "city", "time", "zone", "transition", "transition_at", "risk"):
+            for key in ("name", "city", "time", "zone", "session_progress", "transition", "transition_at", "risk"):
                 widgets[key].configure(bg=palette["panel"])
             widgets["name"].configure(fg=palette["text"])
             widgets["risk"].configure(fg=palette["muted"])
@@ -4238,6 +4515,7 @@ class VeltrixTradingClock:
             )
             for session in self.sessions
         ]
+        self.latest_session_states = states
         open_states = [state for state in states if state.is_open]
         self._poll_market_alerts(now_utc, open_states)
         self._poll_session_risk_alerts(now_utc, states)
@@ -4259,8 +4537,18 @@ class VeltrixTradingClock:
         for state in states:
             widgets = self.cards[state.definition.key]
             widgets["time"].configure(text=state.local_now.strftime("%H:%M:%S"))
-            self._draw_session_analog_clock(widgets["analog_clock"], state.local_now)
-            widgets["zone"].configure(text=f"{state.definition.timezone_name}  ·  {state.timezone_label}")
+            progress = self._draw_session_analog_clock(
+                widgets["analog_clock"], state.local_now, state.definition, state
+            )
+            widgets["zone"].configure(
+                text=(
+                    f"{state.definition.timezone_name}  ·  {state.timezone_label}"
+                    f"  ·  {utc_offset_label(state.local_now)}"
+                )
+            )
+            widgets["session_progress"].configure(
+                text=self._session_progress_text(state, progress)
+            )
             widgets["card"].configure(
                 highlightbackground=palette["success"] if state.is_open else palette["border"]
             )

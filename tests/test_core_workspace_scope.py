@@ -29,7 +29,10 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
     def test_global_session_cards_use_live_analog_and_digital_clocks(self):
         self.assertIn("def _draw_session_analog_clock", MAIN_SOURCE)
         self.assertIn('"analog": analog_canvas', MAIN_SOURCE)
-        self.assertIn('self._draw_session_analog_clock(widgets["analog_clock"], state.local_now)', MAIN_SOURCE)
+        self.assertIn("self._draw_session_analog_clock(", MAIN_SOURCE)
+        self.assertIn('widgets["session_progress"].configure(', MAIN_SOURCE)
+        self.assertIn("utc_offset_label(state.local_now)", MAIN_SOURCE)
+        self.assertIn("session_window_arc_angles(session, close_at=arc_close)", MAIN_SOURCE)
         self.assertIn('font=("Consolas", 15, "bold")', MAIN_SOURCE)
         self.assertIn('widgets["analog"].configure(bg=palette["panel"])', MAIN_SOURCE)
         self.assertIn('canvas.coords(clock_state["hands"][hand_name]', MAIN_SOURCE)
@@ -53,6 +56,11 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("apply_exchange_calendar=self.exchange_calendar_enabled_var.get()", MAIN_SOURCE)
         self.assertIn("self._draw_session_timeline(now_utc, states)", MAIN_SOURCE)
         self.assertIn("self.sessions_canvas", MAIN_SOURCE)
+        self.assertIn("def _draw_world_session_dial", MAIN_SOURCE)
+        self.assertIn('self.session_timeline_canvas.bind("<Button-1>"', MAIN_SOURCE)
+        self.assertIn('self.session_timeline_canvas.bind("<B1-Motion>"', MAIN_SOURCE)
+        self.assertIn("def _probe_session_timeline", MAIN_SOURCE)
+        self.assertIn("timeline_probe_from_x(event.x", MAIN_SOURCE)
 
     def test_market_session_intelligence_and_profiles_are_wired_into_global_sessions(self):
         for symbol in (
