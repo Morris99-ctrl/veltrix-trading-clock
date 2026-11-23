@@ -1,0 +1,19 @@
+VELTRIX TRADING CLOCK — v10.1 / SESSION CLOCK 2.0
+
+GLOBAL SESSIONS INTERFACE
+- Added four independent timezone-aware neon analog dials for Sydney, Tokyo, London and New York.
+- Added a compact digital local-time readout directly beneath every analog clock.
+- Retained OPEN/CLOSED state, next-transition countdown, timezone label and overlap summary.
+- Added an active-session card border highlight using the current theme's success colour.
+- Static dial geometry is rendered once per clock/theme/size. Hour, minute and second hand canvas items are updated in place on subsequent clock refreshes.
+- Kept all six application themes and existing alert/session calculations.
+
+ENGINEERING
+- Added session_clock.py with pure analog-hand geometry calculations.
+- Added unit tests for hand positions at known clock times, smooth fractional-second movement and invalid radius handling.
+- Extended Core Edition workspace regression tests to cover the analog/digital Global Sessions interface.
+- Updated README, desktop installation guide, quick-start guide and Windows executable metadata to v10.1.
+
+VALIDATION LIMITATIONS
+- Source updates and tests were added to the release branch.
+- The complete Python test suite, compileall, native Windows packaging and interactive GUI smoke tests still need to be run before production release.
