@@ -95,6 +95,9 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
+The v10.3 validation run passed all 138 tests and compileall on Python 3.10, 3.11 and 3.12. The Windows PyInstaller build, executable verification and artifact upload also succeeded. Download the `Veltrix-Trading-Clock-v10.3-Windows` artifact from [successful workflow run 92](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45244055046). This is a packaged build artifact; a manual interactive Windows GUI smoke test is still recommended.
+
+
 The v10.2 validation baseline passed all 127 tests on Python 3.10, 3.11 and 3.12. Its Windows PyInstaller build and executable verification also succeeded. The v10.3 pipeline will validate the new intelligence engine and desktop package.
 
 The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations and profile validation, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, focus persistence, alarm persistence, app paths and theme behaviour.
