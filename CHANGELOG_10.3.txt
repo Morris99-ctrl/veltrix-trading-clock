@@ -22,5 +22,5 @@ ENGINEERING AND DOCUMENTATION
 - Updated README, install guide, quick start, Windows version metadata and CI artifact name to v10.3.
 
 VALIDATION REQUIREMENTS
-- v10.3 must pass compileall, unit tests on Python 3.10/3.11/3.12 and Windows PyInstaller packaging.
+- v10.3 GitHub Actions passed compileall and all 138 tests on Python 3.10, 3.11 and 3.12; Windows PyInstaller packaging, executable verification and artifact upload also succeeded.
 - Manual Windows review must verify profile switching, custom hours persistence across restart, timezone/DST behavior, six themes and layout at normal/minimum window sizes.
