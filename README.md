@@ -1,4 +1,4 @@
-# Veltrix Trading Clock — v10.10 Core Edition
+# Veltrix Trading Clock — v10.11 Core Edition
 
 Veltrix v10.10 is a deliberately smaller Windows desktop trading clock. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
@@ -11,7 +11,7 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Economic Calendar** — third-party public calendar feed, impact filters, cached results and high-impact reminders.
 - **Volatility Lab** — indicative Yahoo Finance market monitoring, ATR, one-day historical expected move and session volatility observations.
 - **Regime Lab** — import completed OHLC history from a CSV, classify bars as range, trend-up, trend-down, volatility shock or transition, inspect historical conditional outcomes and export classifications.
-- **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime.
+- **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime; v10.11 adds chronological training/holdout validation.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
 
@@ -35,7 +35,7 @@ The map honours each session's IANA timezone and weekday schedule, including day
 
 The Global Sessions page is vertically scrollable so the clock cards, world dial, 24-hour map and footer remain accessible on shorter displays. The World Session Dial plots Sydney, Tokyo, London and New York windows as four concentric UTC tracks and rotates a live UTC pointer around the 24-hour face. The horizontal timeline accepts click-and-drag probing: select any minute in the current UTC day to inspect which configured sessions are open at that instant. The probe is temporary and resets when the UTC day changes. The dial and timeline use the same session definitions and optional exchange-calendar overlay.
 
-## Session Performance Intelligence (v10.10)
+## Session Performance Intelligence (v10.11)
 
 Session Performance reuses datasets already imported in Regime Lab. Import an OHLC CSV once; the same local dataset appears in the Session Performance selector. The analysis uses the active session profile and each session's own IANA timezone. Changing the selected dataset or session profile invalidates old output.
 
@@ -54,6 +54,8 @@ It is bounded from 0 to 100. A score above 50 indicates positive mean return; 50
 The base quality filters still require at least 3 bars per session day and estimated coverage of at least 50%. Coverage is observed bars divided by expected bars estimated from the dataset's median interval, capped at 100%. It is a count-based estimate, not proof that every scheduled minute is present. Excluded days remain in the export with an exclusion reason but do not enter summary averages. The minimum rolling sample and minimum regime coverage can be adjusted before each study.
 
 The export contains session and pairwise-overlap rows, including rolling metrics and regime attribution on session rows. Timestamps are stored/exported in UTC. The importer's configured IANA timezone is used only for source timestamps that had no explicit timezone/UTC offset; explicit timestamps are normalised to UTC during import.
+
+**v10.11 chronological holdout validation:** accepted session-day observations are sorted by date and split once into an earliest training segment (default 70%) and a later holdout segment (default 30%). The training segment must meet the configured minimum ranking sample; the holdout must meet its separate minimum sample (default 5 observations). Session rank is calculated from the training segment's signed consistency score, then training mean return. The later holdout is never used to determine that rank. The table reports holdout mean return, positive-day rate, compounded gross return and maximum drawdown alongside training sample, score and holdout sample. The CSV labels each accepted day as TRAIN or HOLDOUT and includes the summary metrics. When either segment is too small, the validation status is INSUFFICIENT_SAMPLE and the rank and segment metrics are withheld. This is a single chronological holdout check of session returns, not a strategy backtest, rolling walk-forward process, forecast or proof of predictive edge.
 
 This is descriptive historical analysis, not a trading signal or forecast. It uses the current configured weekday session schedules and does not independently remove exchange holidays, early closes, broker-specific hours or maintenance breaks. Results depend on symbol, source, bar interval, timestamp convention, missing observations and data quality. Returns are gross of spreads, commissions, slippage, financing and execution effects. No historical observations are generated automatically when the dataset is empty.
 

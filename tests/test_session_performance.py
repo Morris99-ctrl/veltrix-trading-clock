@@ -340,5 +340,154 @@ class SessionPerformanceTests(unittest.TestCase):
             )
 
 
+    def test_chronological_holdout_uses_early_training_and_later_unseen_days(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        weekdays = (2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20)
+        closes = [101.0] * 10 + [98.0] * 5
+        bars = [
+            bar(
+                datetime(2026, 11, day, 8, 0, tzinfo=timezone.utc).isoformat(),
+                100.0, max(100.0, close), min(100.0, close), close,
+            )
+            for day, close in zip(weekdays, closes)
+        ]
+        result = analyse_session_performance(
+            bars, [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+            rolling_window_sessions=20, ranking_min_samples=10,
+            validation_train_pct=70, validation_min_holdout_samples=5,
+        )
+        summary = result["chronological_validation"][0]
+        self.assertEqual(summary["validation_status"], "READY")
+        self.assertEqual(summary["validation_training_sessions"], 10)
+        self.assertEqual(summary["validation_holdout_sessions"], 5)
+        self.assertEqual(summary["validation_training_end_date"], "2026-11-13")
+        self.assertEqual(summary["validation_holdout_start_date"], "2026-11-16")
+        self.assertEqual(summary["validation_training_consistency_score"], 100.0)
+        self.assertAlmostEqual(summary["validation_training_mean_return_pct"], 1.0)
+        self.assertAlmostEqual(summary["validation_holdout_mean_return_pct"], -2.0)
+        self.assertEqual(summary["validation_holdout_positive_rate_pct"], 0.0)
+        self.assertAlmostEqual(
+            summary["validation_holdout_compounded_return_pct"],
+            ((0.98 ** 5) - 1.0) * 100.0,
+        )
+        self.assertEqual(summary["validation_rank"], 1)
+        self.assertEqual(result["validated_sessions"][0]["session"], "New York")
+        self.assertEqual(
+            [row["validation_partition"] for row in result["session_daily"]],
+            ["TRAIN"] * 10 + ["HOLDOUT"] * 5,
+        )
+        self.assertTrue(all(row["validation_rank"] == 1 for row in result["session_daily"]))
+
+    def test_holdout_outcomes_do_not_change_training_rank_or_metrics(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        weekdays = (2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20)
+
+        def run(holdout_close):
+            closes = [101.0] * 10 + [holdout_close] * 5
+            bars = [
+                bar(
+                    datetime(2026, 11, day, 8, 0, tzinfo=timezone.utc).isoformat(),
+                    100.0, max(100.0, close), min(100.0, close), close,
+                )
+                for day, close in zip(weekdays, closes)
+            ]
+            return analyse_session_performance(
+                bars, [ny], bar_interval_minutes=60,
+                minimum_bars_per_session=1, minimum_coverage_pct=0,
+                rolling_window_sessions=20, ranking_min_samples=10,
+                validation_train_pct=70, validation_min_holdout_samples=5,
+            )["chronological_validation"][0]
+
+        negative_holdout = run(98.0)
+        positive_holdout = run(105.0)
+        self.assertEqual(
+            negative_holdout["validation_training_consistency_score"],
+            positive_holdout["validation_training_consistency_score"],
+        )
+        self.assertEqual(
+            negative_holdout["validation_training_mean_return_pct"],
+            positive_holdout["validation_training_mean_return_pct"],
+        )
+        self.assertNotEqual(
+            negative_holdout["validation_holdout_mean_return_pct"],
+            positive_holdout["validation_holdout_mean_return_pct"],
+        )
+        self.assertEqual(negative_holdout["validation_rank"], positive_holdout["validation_rank"])
+
+    def test_chronological_holdout_rank_is_withheld_when_either_sample_is_too_small(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        weekdays = (2, 3, 4, 5, 6, 9, 10, 11, 12, 13)
+        bars = [
+            bar(
+                datetime(2026, 11, day, 8, 0, tzinfo=timezone.utc).isoformat(),
+                100.0, 102.0, 99.0, 101.0,
+            )
+            for day in weekdays
+        ]
+        result = analyse_session_performance(
+            bars, [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+            rolling_window_sessions=10, ranking_min_samples=7,
+            validation_train_pct=70, validation_min_holdout_samples=4,
+        )
+        summary = result["chronological_validation"][0]
+        self.assertEqual(summary["validation_training_sessions"], 7)
+        self.assertEqual(summary["validation_holdout_sessions"], 3)
+        self.assertEqual(summary["validation_status"], "INSUFFICIENT_SAMPLE")
+        self.assertFalse(summary["validation_eligible"])
+        self.assertIsNone(summary["validation_training_consistency_score"])
+        self.assertIsNone(summary["validation_holdout_mean_return_pct"])
+        self.assertIsNone(summary["validation_rank"])
+        self.assertEqual(result["validated_sessions"], [])
+        self.assertTrue(all(
+            row["validation_partition"] == "INSUFFICIENT_SAMPLE"
+            for row in result["session_daily"]
+        ))
+
+    def test_chronological_validation_parameters_are_validated(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        bars = [bar("2026-11-23T08:00:00+00:00", 100, 102, 99, 101)]
+        with self.assertRaisesRegex(ValueError, "training share"):
+            analyse_session_performance(
+                bars, [ny], bar_interval_minutes=60, validation_train_pct=45,
+            )
+        with self.assertRaisesRegex(ValueError, "holdout sample"):
+            analyse_session_performance(
+                bars, [ny], bar_interval_minutes=60, validation_min_holdout_samples=0,
+            )
+
+    def test_export_includes_chronological_holdout_fields(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
+        weekdays = (2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20)
+        bars = [
+            bar(
+                datetime(2026, 11, day, 8, 0, tzinfo=timezone.utc).isoformat(),
+                100.0, 102.0, 99.0, 101.0,
+            )
+            for day in weekdays
+        ]
+        result = analyse_session_performance(
+            bars, [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+            rolling_window_sessions=20, ranking_min_samples=10,
+            validation_train_pct=70, validation_min_holdout_samples=5,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "validated-session-performance.csv"
+            export_session_performance_csv(path, result)
+            with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+        self.assertTrue(rows)
+        self.assertIn("validation_partition", rows[0])
+        self.assertIn("validation_holdout_mean_return_pct", rows[0])
+        self.assertEqual(
+            sum(row["validation_partition"] == "TRAIN" for row in rows), 10
+        )
+        self.assertEqual(
+            sum(row["validation_partition"] == "HOLDOUT" for row in rows), 5
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

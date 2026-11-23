@@ -77,7 +77,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.10"
+APP_VERSION = "10.11"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 50
 
@@ -2575,6 +2575,8 @@ class VeltrixTradingClock:
             rolling_window = int(self.session_performance_rolling_window_var.get())
             ranking_minimum = int(self.session_performance_ranking_min_samples_var.get())
             minimum_regime_coverage = float(self.session_performance_min_regime_coverage_var.get())
+            validation_train_pct = float(self.session_performance_validation_train_pct_var.get())
+            validation_min_holdout = int(self.session_performance_validation_min_holdout_var.get())
             if minimum_bars < 1 or minimum_bars > 500:
                 raise ValueError("Minimum bars must be from 1 to 500.")
             if not 0 <= minimum_coverage <= 100:
@@ -2585,6 +2587,10 @@ class VeltrixTradingClock:
                 raise ValueError("Minimum ranking sample must be at least 1 and no greater than the rolling window.")
             if not 0 <= minimum_regime_coverage <= 100:
                 raise ValueError("Minimum regime coverage must be from 0 to 100.")
+            if not 50 <= validation_train_pct <= 90:
+                raise ValueError("Validation training share must be from 50 to 90 percent.")
+            if not 1 <= validation_min_holdout <= 250:
+                raise ValueError("Minimum holdout sample must be from 1 to 250.")
             if interval <= 0:
                 raise ValueError("Dataset does not contain a valid median bar interval.")
             regime_config = self._collect_regime_config()
@@ -2607,6 +2613,8 @@ class VeltrixTradingClock:
             "rolling_window_sessions": rolling_window,
             "ranking_min_samples": ranking_minimum,
             "minimum_regime_coverage_pct": minimum_regime_coverage,
+            "validation_train_pct": validation_train_pct,
+            "validation_min_holdout_samples": validation_min_holdout,
             "regime_config": asdict(regime_config),
         }
         self.session_performance_result = None
@@ -2637,6 +2645,8 @@ class VeltrixTradingClock:
                     ranking_min_samples=ranking_minimum,
                     regime_labels=causal_labels,
                     minimum_regime_coverage_pct=minimum_regime_coverage,
+                    validation_train_pct=validation_train_pct,
+                    validation_min_holdout_samples=validation_min_holdout,
                 )
                 result["metadata"]["regime_warmup_bars"] = int(
                     regime_analysis.get("metadata", {}).get("warmup_bars", 0)
@@ -2692,7 +2702,7 @@ class VeltrixTradingClock:
             parent=self.root,
             title="Export daily session-performance and overlap rows",
             defaultextension=".csv",
-            initialfile="veltrix_session_performance_v10_10.csv",
+            initialfile="veltrix_session_performance_v10_11.csv",
             filetypes=(("CSV files", "*.csv"),),
         )
         if not path:
