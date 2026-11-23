@@ -30,6 +30,14 @@ class SessionRiskAssessment:
     summary: str
 
 
+@dataclass(frozen=True)
+class SessionRiskAlert:
+    key: str
+    title: str
+    message: str
+    severity: str
+
+
 def _holiday_neighbours(
     session: SessionDefinition,
     local_date,
@@ -164,3 +172,46 @@ def assess_session_risk(
             summary += f" · +{len(flags) - 2} MORE"
 
     return SessionRiskAssessment(session.key, level, tuple(flags), summary)
+
+
+
+def due_session_risk_alerts(
+    sessions: list[SessionDefinition],
+    states: list[SessionState],
+    now: datetime,
+    settings: dict[str, Any] | None,
+    fired_keys: set[str],
+    *,
+    apply_exchange_calendar: bool = False,
+) -> list[SessionRiskAlert]:
+    """Emit one alert per session/date for material calendar/liquidity caution flags."""
+    config = settings or {}
+    if not bool(config.get("notifications_enabled", True)):
+        return []
+    alerts: list[SessionRiskAlert] = []
+    sessions_by_key = {session.key: session for session in sessions}
+    for state in states:
+        session = sessions_by_key.get(state.definition.key)
+        if session is None:
+            continue
+        assessment = assess_session_risk(
+            session, state, now, config, apply_exchange_calendar=apply_exchange_calendar
+        )
+        local_date = state.local_now.date().isoformat()
+        for flag in assessment.flags:
+            if flag.code not in {
+                "EXCHANGE_HOLIDAY", "EARLY_CLOSE", "CLOSING_PROCESS",
+                "PRE_HOLIDAY_LIQUIDITY", "POST_HOLIDAY_LIQUIDITY",
+            }:
+                continue
+            key = f"risk:{session.key}:{local_date}:{flag.code}"
+            if key in fired_keys:
+                continue
+            fired_keys.add(key)
+            alerts.append(SessionRiskAlert(
+                key=key,
+                title=f"{session.name} · {flag.label}",
+                message=flag.detail,
+                severity=flag.severity,
+            ))
+    return alerts
