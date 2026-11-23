@@ -555,7 +555,7 @@ class VeltrixTradingClock:
         ttk.Label(controls, text="MODE").grid(row=0, column=0, sticky="w", padx=(0, 5))
         self.focus_mode_combo = ttk.Combobox(
             controls, textvariable=self.focus_mode_var, values=("Stopwatch", "Countdown"),
-            state="readonly", width=13, style="Veltrix.Data.TCombobox",
+            state="readonly", width=13, style="TCombobox",
         )
         self.focus_mode_combo.grid(row=0, column=1, sticky="w", padx=(0, 12))
         self.focus_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._focus_mode_changed())
@@ -636,7 +636,7 @@ class VeltrixTradingClock:
         ttk.Button(history_header, text="REFRESH", command=self._refresh_focus_history).pack(side="right")
         self.focus_history_tree = ttk.Treeview(
             history_card, columns=("started", "mode", "label", "duration", "status"),
-            show="headings", height=4, style="Veltrix.Research.Treeview",
+            show="headings", height=4, style="Veltrix.Treeview",
         )
         for col, heading, width in (
             ("started", "STARTED", 145), ("mode", "MODE", 95), ("label", "SESSION", 260),
@@ -665,7 +665,7 @@ class VeltrixTradingClock:
         goals_card.pack(fill="x", pady=(0, 10))
         self.focus_goal_tree = ttk.Treeview(
             goals_card, columns=("title", "category", "deadline", "remaining", "progress", "status"),
-            show="headings", height=5, style="Veltrix.Research.Treeview",
+            show="headings", height=5, style="Veltrix.Treeview",
         )
         for col, heading, width in (
             ("title", "GOAL", 260), ("category", "CATEGORY", 105), ("deadline", "DEADLINE", 105),
@@ -691,7 +691,7 @@ class VeltrixTradingClock:
         self.focus_goal_category_combo = ttk.Combobox(
             form, textvariable=self.focus_goal_category_var,
             values=("Personal", "Education", "Career", "Finance", "Business", "Health", "Other"),
-            state="readonly", width=15, style="Veltrix.Data.TCombobox",
+            state="readonly", width=15, style="TCombobox",
         )
         self.focus_goal_category_combo.grid(row=0, column=3, sticky="w", pady=3)
         ttk.Label(form, text="START DATE (YYYY-MM-DD)").grid(row=1, column=0, sticky="w", padx=(0, 5), pady=3)
@@ -702,7 +702,7 @@ class VeltrixTradingClock:
         self.focus_goal_status_combo = ttk.Combobox(
             form, textvariable=self.focus_goal_status_var,
             values=("Not started", "In progress", "Completed", "Archived"),
-            state="readonly", width=16, style="Veltrix.Data.TCombobox",
+            state="readonly", width=16, style="TCombobox",
         )
         self.focus_goal_status_combo.grid(row=2, column=1, sticky="w", pady=3)
         ttk.Label(form, text="MANUAL PROGRESS (%)").grid(row=2, column=2, sticky="w", padx=(0, 5), pady=3)
@@ -734,7 +734,7 @@ class VeltrixTradingClock:
                     font=("Consolas", 9, "bold")).pack(side="left")
         self.focus_milestone_tree = ttk.Treeview(
             milestone_card, columns=("milestone", "status"), show="headings", height=4,
-            style="Veltrix.Research.Treeview",
+            style="Veltrix.Treeview",
         )
         self.focus_milestone_tree.heading("milestone", text="MILESTONE")
         self.focus_milestone_tree.heading("status", text="STATUS")
