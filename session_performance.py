@@ -282,6 +282,11 @@ def analyse_session_performance(
                 if item.open > 0 and item.close > 0
             ]
             overlap_return = (math.exp(sum(per_bar_returns)) - 1.0) * 100.0
+            # Overlap volatility also uses individual OHLC bar returns only; no
+            # close-to-next-close stitching across unobserved gaps is performed.
+            metrics["realised_volatility_pct"] = math.sqrt(
+                sum(value * value for value in per_bar_returns)
+            ) * 100.0
             row = {
                 "row_type": "OVERLAP",
                 "date": utc_date.isoformat(),
