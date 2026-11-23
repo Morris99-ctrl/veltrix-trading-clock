@@ -62,7 +62,7 @@ def due_session_alerts(
 
             close_time = (
                 exchange_event.close_time
-                if exchange_event and exchange_event.status == "EARLY_CLOSE"
+                if exchange_event and exchange_event.status in {"EARLY_CLOSE", "CLOSE_PROCESS"}
                 else session.closes
             )
             close_name = (
