@@ -18,7 +18,7 @@ DOCUMENTATION AND RELEASE
 - Updated README, desktop installation guide, quick start and Windows executable metadata to v10.2.
 - Updated Windows CI artifact name to v10.2.
 - Previous v10.1 CI completed successfully on Python 3.10, 3.11 and 3.12; its Windows PyInstaller package job also succeeded.
-- v10.2 must pass a fresh unit-test matrix, compileall and Windows packaging run before release approval.
+- v10.2 GitHub Actions passed compileall and all 127 tests on Python 3.10, 3.11 and 3.12; Windows PyInstaller packaging, executable verification and artifact upload also succeeded.
 
 SCHEDULE LIMITATIONS
 - The map visualises the configured weekday schedules, not official exchange calendars or a live market-status feed.
