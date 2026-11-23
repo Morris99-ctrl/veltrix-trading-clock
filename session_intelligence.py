@@ -41,26 +41,33 @@ def weekly_session_hours(
     sessions: Iterable[SessionDefinition],
     reference_utc: datetime,
 ) -> tuple[WeeklySessionHours, ...]:
-    """Calculate configured session hours for the Monday-Sunday UTC week containing reference."""
+    """Calculate Monday-Sunday scheduled hours in each session's own local timezone."""
     session_list = list(sessions)
     reference = _aware_utc(reference_utc)
-    monday = (reference - timedelta(days=reference.weekday())).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    timeline = build_session_timeline(session_list, monday, hours=168)
     output: list[WeeklySessionHours] = []
+
     for session in session_list:
-        windows = [item for item in timeline.windows if item.session_key == session.key]
-        duration = sum((item.ends_at - item.starts_at).total_seconds() for item in windows)
-        local_days = {
-            item.starts_at.astimezone(session.tz).date()
-            for item in windows
-        }
+        local_reference = reference.astimezone(session.tz)
+        local_monday = local_reference.date() - timedelta(days=local_reference.weekday())
+        total_seconds = 0.0
+        active_days = 0
+        for offset in range(7):
+            local_date = local_monday + timedelta(days=offset)
+            if local_date.weekday() not in session.weekdays:
+                continue
+            local_open = datetime.combine(local_date, session.opens, tzinfo=session.tz)
+            local_close = datetime.combine(local_date, session.closes, tzinfo=session.tz)
+            open_utc = local_open.astimezone(timezone.utc)
+            close_utc = local_close.astimezone(timezone.utc)
+            if close_utc > open_utc:
+                total_seconds += (close_utc - open_utc).total_seconds()
+                active_days += 1
+
         output.append(WeeklySessionHours(
             session_key=session.key,
             session_name=session.name,
-            scheduled_hours=duration / 3600.0,
-            active_days=len(local_days),
+            scheduled_hours=total_seconds / 3600.0,
+            active_days=active_days,
         ))
     return tuple(output)
 
