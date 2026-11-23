@@ -43,7 +43,7 @@ class SessionPerformanceTests(unittest.TestCase):
         self.assertEqual(summary["sample_sessions"], 2)
         self.assertEqual(summary["bars_used"], 6)
         self.assertAlmostEqual(summary["mean_return_pct"], 0.0)
-        self.assertAlmostEqual(summary["mean_range_pct"], 4.5)
+        self.assertAlmostEqual(summary["mean_range_pct"], 3.0)
         self.assertEqual(summary["positive_rate_pct"], 50.0)
         self.assertEqual(len(result["session_daily"]), 2)
 
@@ -108,6 +108,39 @@ class SessionPerformanceTests(unittest.TestCase):
         self.assertEqual(overlap["bars_used"], 2)
         expected = ((102 / 100) * (103 / 100) - 1) * 100
         self.assertAlmostEqual(overlap["mean_return_pct"], expected)
+
+    def test_overlap_days_are_excluded_when_below_minimum_bars(self):
+        london = self.session("london", "London", "UTC", "08:00", "12:00")
+        ny = self.session("ny", "New York", "UTC", "10:00", "14:00")
+        bars = [
+            bar(datetime(2026, 11, 23, hour, 0, tzinfo=timezone.utc).isoformat(),
+                100, 101, 99, 100.5)
+            for hour in (10, 11)
+        ]
+        result = analyse_session_performance(
+            bars, [london, ny], bar_interval_minutes=60,
+            minimum_bars_per_session=3, minimum_coverage_pct=0,
+        )
+        self.assertEqual(result["overlaps"][0]["sample_days"], 0)
+        self.assertEqual(result["overlaps"][0]["excluded_low_bars"], 1)
+        self.assertFalse(result["overlap_daily"][0]["included"])
+
+    def test_overlap_days_are_excluded_when_below_minimum_coverage(self):
+        london = self.session("london", "London", "UTC", "08:00", "12:00")
+        ny = self.session("ny", "New York", "UTC", "10:00", "14:00")
+        bars = [
+            bar(datetime(2026, 11, 23, hour, 0, tzinfo=timezone.utc).isoformat(),
+                100, 101, 99, 100.5)
+            for hour in (10, 11)
+        ]
+        result = analyse_session_performance(
+            bars, [london, ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=75,
+        )
+        self.assertEqual(result["overlaps"][0]["sample_days"], 0)
+        self.assertEqual(result["overlaps"][0]["excluded_low_coverage"], 1)
+        self.assertEqual(result["overlap_daily"][0]["coverage_pct"], 50.0)
+        self.assertFalse(result["overlap_daily"][0]["included"])
 
     def test_dst_transition_uses_local_calendar_dates_and_utc_timestamps(self):
         ny = self.session("ny", "New York", "America/New_York", "08:00", "17:00")

@@ -7,6 +7,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MAIN_SOURCE = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
 ALERT_DASHBOARD_SOURCE = (PROJECT_ROOT / "alerts_dashboard.py").read_text(encoding="utf-8")
+SESSION_PERFORMANCE_SOURCE = (PROJECT_ROOT / "session_performance.py").read_text(encoding="utf-8")
+SESSION_PERFORMANCE_UI_SOURCE = (PROJECT_ROOT / "session_performance_ui.py").read_text(encoding="utf-8")
 
 
 class CoreWorkspaceScopeTests(unittest.TestCase):
@@ -121,6 +123,34 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         ):
             self.assertIn(symbol, ALERT_DASHBOARD_SOURCE)
         self.assertIn("ALERT RULES / PREFERENCES", MAIN_SOURCE)
+
+    def test_session_performance_workspace_reuses_local_ohlc_datasets(self):
+        for symbol in (
+            "from session_performance import analyse_session_performance",
+            "from session_performance_ui import",
+            "session_performance_view",
+            "def run_session_performance",
+            "def _drain_session_performance_results",
+            "def export_session_performance",
+            "refresh_session_performance_dataset_choices(self)",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        for symbol in (
+            "SESSION PERFORMANCE INTELLIGENCE",
+            "LOCAL OHLC DATASET (SHARED WITH REGIME LAB)",
+            "RUN SESSION STUDY",
+            "EXPORT DAILY CSV",
+        ):
+            self.assertIn(symbol, SESSION_PERFORMANCE_UI_SOURCE)
+        for symbol in (
+            "bar_interval_minutes",
+            "minimum_coverage_pct",
+            "positive_rate_pct",
+            "overlap_groups",
+            "classification_uses_future_data",
+            "bar-open timestamp",
+        ):
+            self.assertIn(symbol, SESSION_PERFORMANCE_SOURCE)
 
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
