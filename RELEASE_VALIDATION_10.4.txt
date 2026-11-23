@@ -18,11 +18,14 @@ Bundled data source coverage
 - London Stock Exchange: 2026-08-31 through 2027-12-31.
 - Checked 23 November 2026. See EXCHANGE_CALENDAR_SOURCES_10.4.md for exact URLs and limitations.
 
-Required automated checks
-1. Run: python -m compileall -q .
-2. Run: python -m unittest discover -s tests -v
-3. Run the Python 3.10, 3.11 and 3.12 GitHub Actions matrix.
-4. Build the Windows desktop package and verify the executable / artifact upload.
+Completed automated checks (GitHub Actions run 149)
+1. Python 3.10, 3.11 and 3.12 compileall passed.
+2. All 152 unit tests passed on each Python version.
+3. Windows hash-pinned build dependencies installed successfully.
+4. PyInstaller built the one-folder Windows desktop application.
+5. Executable existence verification passed.
+6. The Veltrix-Trading-Clock-v10.4-Windows artifact uploaded successfully.
+7. Dates outside published exchange-calendar coverage are visibly marked SCHEDULE ONLY rather than confirmed OPEN/CLOSED.
 
 Required manual Windows checks
 1. Confirm the exchange overlay is OFF on first launch and survives restart after being enabled.
