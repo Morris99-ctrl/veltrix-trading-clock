@@ -1,4 +1,4 @@
-VELTRIX TRADING CLOCK v10.0 — CORE EDITION
+VELTRIX TRADING CLOCK v10.1 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
@@ -15,6 +15,8 @@ one-time local build. The installed app includes its Python runtime.
 
 The Core Edition retains Global Sessions, Alerts & Events, Economic Calendar,
 Volatility Lab, Regime Lab, Focus & Goals and the original alarm clock.
+Global Sessions now has four timezone-aware analog clocks with small digital
+time displays beneath each face.
 Research Lab, Strategy Lab, Tick Research and Data Center are removed.
 
 Regime Lab has its own IMPORT OHLC CSV workflow. Existing regular OHLC
