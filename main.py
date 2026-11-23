@@ -62,6 +62,9 @@ from session_performance_ui import (
 )
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
+from command_center_ui import (
+    build_command_center_page, refresh_command_center, apply_command_center_theme,
+)
 
 try:
     import pygame
@@ -78,7 +81,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.13"
+APP_VERSION = "10.14"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 16
 SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
@@ -495,6 +498,11 @@ class VeltrixTradingClock:
         # Main workspace navigation. The alarm strip remains visible on both pages.
         nav = self._frame(self.outer)
         nav.pack(fill="x", pady=(0, 9))
+        self.command_center_nav_button = tk.Button(
+            nav, text="COMMAND CENTER", command=lambda: self.show_page("command_center"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+        )
+        self.command_center_nav_button.pack(side="left", padx=(0, 5))
         self.sessions_nav_button = tk.Button(
             nav, text="GLOBAL SESSIONS", command=lambda: self.show_page("sessions"),
             font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
@@ -533,6 +541,7 @@ class VeltrixTradingClock:
 
         self.page_host = self._frame(self.outer)
         self.page_host.pack(fill="both", expand=True)
+        self.command_center_view = self._frame(self.page_host)
         self.sessions_view = self._frame(self.page_host)
         self.session_performance_view = self._frame(self.page_host)
         self.alerts_view = self._frame(self.page_host)
@@ -610,13 +619,14 @@ class VeltrixTradingClock:
 
         self._build_session_timeline(self.sessions_content)
 
+        build_command_center_page(self)
         self._build_alerts_page()
         self._build_calendar_page()
         self._build_market_page()
         self._build_regime_page()
         build_session_performance_page(self)
         self._build_focus_page()
-        self.show_page("sessions")
+        self.show_page("command_center")
 
         # Alarm control strip from the original clock. This stays visible on both pages.
         alarm_panel = self._frame(self.outer, bg="panel", padx=14, pady=10)
@@ -3683,6 +3693,7 @@ class VeltrixTradingClock:
 
     def show_page(self, page: str) -> None:
         page_map = {
+            "command_center": (self.command_center_view, self.command_center_nav_button),
             "sessions": (self.sessions_view, self.sessions_nav_button),
             "session_performance": (self.session_performance_view, self.session_performance_nav_button),
             "alerts": (self.alerts_view, self.alerts_nav_button),
@@ -3692,9 +3703,9 @@ class VeltrixTradingClock:
             "focus": (self.focus_view, self.focus_nav_button),
         }
         if page not in page_map:
-            page = "sessions"
+            page = "command_center"
         for view in (
-            self.sessions_view, self.session_performance_view, self.alerts_view,
+            self.command_center_view, self.sessions_view, self.session_performance_view, self.alerts_view,
             self.calendar_view, self.volatility_view, self.regime_view, self.focus_view,
         ):
             view.pack_forget()
@@ -4559,6 +4570,8 @@ class VeltrixTradingClock:
         )
 
         self.digital_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "command_center_canvas"):
+            self.command_center_canvas.configure(bg=palette["bg"])
         if hasattr(self, "sessions_canvas"):
             self.sessions_canvas.configure(bg=palette["bg"])
         if hasattr(self, "alerts_canvas"):
@@ -4611,7 +4624,7 @@ class VeltrixTradingClock:
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
         for button in (
-            self.sessions_nav_button, self.session_performance_nav_button,
+            self.command_center_nav_button, self.sessions_nav_button, self.session_performance_nav_button,
             self.alerts_nav_button, self.calendar_nav_button,
             self.volatility_nav_button, self.regime_nav_button, self.focus_nav_button,
             self.session_performance_import_button, self.session_performance_run_button,
@@ -4663,6 +4676,7 @@ class VeltrixTradingClock:
         apply_alerts_tree_theme(self)
         self._apply_regime_tree_theme()
         apply_session_performance_theme(self)
+        apply_command_center_theme(self)
         # Apply shared ttk styles globally: standard controls, all Treeviews,
         # tabs, headers, scrollbars, progress bars and every named selector.
         apply_veltrix_ttk_palette(self.ttk_style, palette, self.root)
@@ -4938,6 +4952,7 @@ class VeltrixTradingClock:
             text="AUDIO // MP3 READY" if self.audio_available and ALARM_SOUND_FILE.is_file() else "AUDIO: SYSTEM BELL"
         )
         self._update_next_alarm_display()
+        refresh_command_center(self, now_utc)
         self.clock_job = self.root.after(self.refresh_ms, self.update_clock)
 
     @staticmethod
