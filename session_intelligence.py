@@ -42,13 +42,14 @@ def weekly_session_hours(
     reference_utc: datetime,
 ) -> tuple[WeeklySessionHours, ...]:
     """Calculate configured session hours for the Monday-Sunday UTC week containing reference."""
+    session_list = list(sessions)
     reference = _aware_utc(reference_utc)
     monday = (reference - timedelta(days=reference.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    timeline = build_session_timeline(list(sessions), monday, hours=168)
+    timeline = build_session_timeline(session_list, monday, hours=168)
     output: list[WeeklySessionHours] = []
-    for session in sessions:
+    for session in session_list:
         windows = [item for item in timeline.windows if item.session_key == session.key]
         duration = sum((item.ends_at - item.starts_at).total_seconds() for item in windows)
         local_days = {
