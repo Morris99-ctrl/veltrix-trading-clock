@@ -72,12 +72,17 @@ EXCHANGE_CALENDARS: dict[str, ExchangeCalendarInfo] = {
 }
 
 
-def _day(exchange: str, value: str, title: str, *, close: str | None = None, note: str = "") -> ExchangeDayEvent:
+def _day(
+    exchange: str, value: str, title: str, *, close: str | None = None,
+    note: str = "", status: str | None = None,
+) -> ExchangeDayEvent:
+    if status is None:
+        status = "EARLY_CLOSE" if close else "CLOSED"
     return ExchangeDayEvent(
         exchange_key=exchange,
         event_date=date.fromisoformat(value),
         title=title,
-        status="EARLY_CLOSE" if close else "CLOSED",
+        status=status,
         close_time=parse_hhmm(close) if close else None,
         note=note,
     )
@@ -135,11 +140,11 @@ _EVENTS: tuple[ExchangeDayEvent, ...] = (
 
     # London Stock Exchange dates currently listed in its published business-day table.
     _day("lse", "2026-08-31", "Summer Bank Holiday"),
-    _day("lse", "2026-12-24", "Christmas Eve early closing process", close="12:30",
+    _day("lse", "2026-12-24", "Christmas Eve early closing process", close="12:30", status="CLOSE_PROCESS",
          note="LSE says the markets closing process commences from 12:30 London time; this is a process-start marker, not a separately published continuous-trading cutoff."),
     _day("lse", "2026-12-25", "Christmas Day"),
     _day("lse", "2026-12-28", "Boxing Day substitute"),
-    _day("lse", "2026-12-31", "New Year's Eve early closing process", close="12:30",
+    _day("lse", "2026-12-31", "New Year's Eve early closing process", close="12:30", status="CLOSE_PROCESS",
          note="LSE says the markets closing process commences from 12:30 London time; this is a process-start marker, not a separately published continuous-trading cutoff."),
     _day("lse", "2027-01-01", "New Year's Day"),
     _day("lse", "2027-03-26", "Good Friday"),
@@ -147,11 +152,11 @@ _EVENTS: tuple[ExchangeDayEvent, ...] = (
     _day("lse", "2027-05-03", "Early May Bank Holiday"),
     _day("lse", "2027-05-31", "Spring Bank Holiday"),
     _day("lse", "2027-08-30", "Summer Bank Holiday"),
-    _day("lse", "2027-12-24", "Christmas Eve early closing process", close="12:30",
+    _day("lse", "2027-12-24", "Christmas Eve early closing process", close="12:30", status="CLOSE_PROCESS",
          note="LSE says the markets closing process commences from 12:30 London time; this is a process-start marker, not a separately published continuous-trading cutoff."),
     _day("lse", "2027-12-27", "Christmas Day substitute"),
     _day("lse", "2027-12-28", "Boxing Day substitute"),
-    _day("lse", "2027-12-31", "New Year's Eve early closing process", close="12:30",
+    _day("lse", "2027-12-31", "New Year's Eve early closing process", close="12:30", status="CLOSE_PROCESS",
          note="LSE says the markets closing process commences from 12:30 London time; this is a process-start marker, not a separately published continuous-trading cutoff."),
 
     # NYSE core cash-market holidays / early closes.
@@ -267,6 +272,36 @@ def get_exchange_aware_session_state(
             calendar_status="EXCHANGE_HOLIDAY",
             calendar_event=event.title,
             calendar_close_time=None,
+        )
+
+    if event and event.status == "CLOSE_PROCESS" and event.close_time is not None:
+        process_at = datetime.combine(local_date, event.close_time, tzinfo=session.tz)
+        if now.astimezone(timezone.utc) < process_at.astimezone(timezone.utc):
+            if state.is_open:
+                return SessionState(
+                    definition=session,
+                    local_now=state.local_now,
+                    is_open=True,
+                    transition_at=process_at,
+                    transition_kind="CLOSE_PROCESS",
+                    seconds_to_transition=max(
+                        0, int((process_at.astimezone(timezone.utc) - now.astimezone(timezone.utc)).total_seconds())
+                    ),
+                    calendar_status="CLOSING_PROCESS",
+                    calendar_event=event.title,
+                    calendar_close_time=event.close_time,
+                )
+            return replace(
+                state,
+                calendar_status="CLOSING_PROCESS",
+                calendar_event=event.title,
+                calendar_close_time=event.close_time,
+            )
+        return replace(
+            state,
+            calendar_status="CLOSING_PROCESS_PASSED",
+            calendar_event=event.title,
+            calendar_close_time=event.close_time,
         )
 
     if event and event.status == "EARLY_CLOSE" and event.close_time is not None:
