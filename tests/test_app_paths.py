@@ -37,8 +37,8 @@ class AppPathTests(unittest.TestCase):
 
             self.assertEqual(initialized, target)
             self.assertEqual(existing_config.read_text(encoding="utf-8"), '{"theme": "VIOLET"}')
-            self.assertTrue((target / ".env.example").is_file())
-            self.assertTrue((target / "tick_data").is_dir())
+            self.assertFalse((target / ".env.example").exists())
+            self.assertFalse((target / "tick_data").exists())
             self.assertFalse((target / ".env").exists())
 
     def test_bundled_resources_resolve_from_project_in_source_mode(self):
