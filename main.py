@@ -2572,12 +2572,22 @@ class VeltrixTradingClock:
             interval = float(dataset.get("bar_interval_minutes") or 0)
             minimum_bars = int(self.session_performance_min_bars_var.get())
             minimum_coverage = float(self.session_performance_min_coverage_var.get())
+            rolling_window = int(self.session_performance_rolling_window_var.get())
+            ranking_minimum = int(self.session_performance_ranking_min_samples_var.get())
+            minimum_regime_coverage = float(self.session_performance_min_regime_coverage_var.get())
             if minimum_bars < 1 or minimum_bars > 500:
                 raise ValueError("Minimum bars must be from 1 to 500.")
             if not 0 <= minimum_coverage <= 100:
                 raise ValueError("Minimum coverage must be from 0 to 100.")
+            if not 2 <= rolling_window <= 250:
+                raise ValueError("Rolling window must be from 2 to 250 session days.")
+            if not 1 <= ranking_minimum <= rolling_window:
+                raise ValueError("Minimum ranking sample must be at least 1 and no greater than the rolling window.")
+            if not 0 <= minimum_regime_coverage <= 100:
+                raise ValueError("Minimum regime coverage must be from 0 to 100.")
             if interval <= 0:
                 raise ValueError("Dataset does not contain a valid median bar interval.")
+            regime_config = self._collect_regime_config()
         except (ValueError, tk.TclError) as exc:
             self.session_performance_status_label.configure(
                 text=f"INVALID STUDY PARAMETERS · {exc}",
@@ -2594,6 +2604,10 @@ class VeltrixTradingClock:
             "symbol": str(dataset.get("symbol") or ""),
             "bar_interval_minutes": interval,
             "session_profile": str(self.active_session_profile),
+            "rolling_window_sessions": rolling_window,
+            "ranking_min_samples": ranking_minimum,
+            "minimum_regime_coverage_pct": minimum_regime_coverage,
+            "regime_config": asdict(regime_config),
         }
         self.session_performance_result = None
         self.session_performance_result_metadata = {}
@@ -2607,11 +2621,28 @@ class VeltrixTradingClock:
 
         def worker() -> None:
             try:
+                regime_analysis = analyse_market_regimes(bars, regime_config)
+                # Only causal regime labels are passed to session analysis.
+                # Forward-return outcomes produced for the Regime Lab display are ignored.
+                causal_labels = {
+                    str(row["timestamp_utc"]): str(row["regime"])
+                    for row in regime_analysis.get("records", [])
+                }
                 result = analyse_session_performance(
                     bars, sessions,
                     bar_interval_minutes=interval,
                     minimum_bars_per_session=minimum_bars,
                     minimum_coverage_pct=minimum_coverage,
+                    rolling_window_sessions=rolling_window,
+                    ranking_min_samples=ranking_minimum,
+                    regime_labels=causal_labels,
+                    minimum_regime_coverage_pct=minimum_regime_coverage,
+                )
+                result["metadata"]["regime_warmup_bars"] = int(
+                    regime_analysis.get("metadata", {}).get("warmup_bars", 0)
+                )
+                result["metadata"]["regime_classified_bars"] = int(
+                    regime_analysis.get("metadata", {}).get("classified_bars", 0)
                 )
                 self.session_performance_result_queue.put((key, study_metadata, result, None))
             except Exception as exc:
@@ -2632,7 +2663,7 @@ class VeltrixTradingClock:
                 selected_key = self.session_performance_dataset_label_to_key.get(
                     self.session_performance_dataset_var.get(), ""
                 )
-                if key != selected_key:
+                if key != selected_key or metadata.get("session_profile") != self.active_session_profile:
                     self.session_performance_status_label.configure(
                         text="STUDY FINISHED FOR A PREVIOUS DATASET SELECTION · SELECT IT AGAIN TO VIEW",
                         fg=THEMES[self.theme_name]["warning"],
@@ -2661,7 +2692,7 @@ class VeltrixTradingClock:
             parent=self.root,
             title="Export daily session-performance and overlap rows",
             defaultextension=".csv",
-            initialfile="veltrix_session_performance.csv",
+            initialfile="veltrix_session_performance_v10_10.csv",
             filetypes=(("CSV files", "*.csv"),),
         )
         if not path:
@@ -4571,6 +4602,9 @@ class VeltrixTradingClock:
             self.risk_opening_window_spin, self.risk_closing_window_spin,
             self.risk_pre_open_window_spin, *self.session_lead_spins,
             self.session_performance_min_bars_spin, self.session_performance_min_coverage_spin,
+            self.session_performance_rolling_window_spin,
+            self.session_performance_ranking_min_samples_spin,
+            self.session_performance_min_regime_coverage_spin,
         ):
             spin.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
                            buttonbackground=palette["button_bg"], highlightbackground=palette["border"])

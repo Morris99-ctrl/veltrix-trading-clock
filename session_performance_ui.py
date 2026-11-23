@@ -496,7 +496,11 @@ def draw_session_performance_chart(app) -> None:
             anchor="nw", fill=palette["muted"], font=("Consolas", 8, "bold"),
         )
         return
-    values = [item["mean_return_pct"] for item in result.get("sessions", []) if item.get("sample_sessions", 0)]
+    values = [
+        item["rolling_mean_return_pct"]
+        for item in result.get("sessions", [])
+        if item.get("rolling_sample_sessions", 0)
+    ]
     max_abs = max((abs(value) for value in values if value is not None), default=0.1)
     scale = max(max_abs, 0.1)
     rows = result.get("sessions", [])
@@ -504,7 +508,7 @@ def draw_session_performance_chart(app) -> None:
     for index, row in enumerate(rows):
         y = 18 + index * row_height
         label = str(row.get("session", ""))
-        value = row.get("mean_return_pct") if row.get("sample_sessions", 0) else None
+        value = row.get("rolling_mean_return_pct") if row.get("rolling_sample_sessions", 0) else None
         _draw_value(canvas, 8, y, value, label, palette, width, scale)
     canvas.create_text(
         width - 10, height - 5, text="MEAN RETURN · % · NOT AN EXPECTED RETURN FORECAST",
