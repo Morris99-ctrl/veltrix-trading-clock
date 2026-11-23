@@ -94,7 +94,7 @@ class SessionPerformanceTests(unittest.TestCase):
         ny = self.session("ny", "New York", "UTC", "10:00", "14:00")
         bars = [
             bar(datetime(2026, 11, 23, hour, 0, tzinfo=timezone.utc).isoformat(),
-                100, 102, 99, close)
+                100, 110, 99, close)
             for hour, close in ((8, 101), (9, 101), (10, 102), (11, 103), (12, 104), (13, 105))
         ]
         result = analyse_session_performance(
@@ -131,7 +131,7 @@ class SessionPerformanceTests(unittest.TestCase):
         bars = [
             bar(datetime(2026, 11, 23, hour, 0, tzinfo=timezone.utc).isoformat(),
                 100, 101, 99, 100.5)
-            for hour in (10, 11)
+            for hour in (10,)
         ]
         result = analyse_session_performance(
             bars, [london, ny], bar_interval_minutes=60,
@@ -199,7 +199,7 @@ class SessionPerformanceTests(unittest.TestCase):
         ny = self.session("ny", "New York", "UTC", "10:00", "14:00")
         bars = [
             bar(datetime(2026, 11, 23, hour, 0, tzinfo=timezone.utc).isoformat(),
-                100, 102, 99, 101 + index)
+                100, 110, 99, 101 + index)
             for index, hour in enumerate((8, 9, 10, 11, 12, 13))
         ]
         analysis = analyse_session_performance(
@@ -213,6 +213,20 @@ class SessionPerformanceTests(unittest.TestCase):
                 rows = list(csv.DictReader(handle))
         self.assertTrue(any(row["row_type"] == "SESSION" for row in rows))
         self.assertTrue(any(row["row_type"] == "OVERLAP" for row in rows))
+
+    def test_invalid_ohlc_bar_is_excluded(self):
+        ny = self.session("ny", "New York", "UTC", "08:00", "17:00")
+        bars = [
+            bar("2026-11-23T08:00:00+00:00", 100, 101, 99, 102),
+            bar("2026-11-23T09:00:00+00:00", 100, 103, 99, 102),
+        ]
+        result = analyse_session_performance(
+            bars, [ny], bar_interval_minutes=60,
+            minimum_bars_per_session=1, minimum_coverage_pct=0,
+        )
+        self.assertEqual(result["metadata"]["input_bars"], 2)
+        self.assertEqual(result["metadata"]["valid_bars"], 1)
+        self.assertEqual(result["sessions"][0]["bars_used"], 1)
 
     def test_empty_or_invalid_data_is_rejected(self):
         ny = self.session("ny", "New York", "America/New_York", "08:00", "17:00")
