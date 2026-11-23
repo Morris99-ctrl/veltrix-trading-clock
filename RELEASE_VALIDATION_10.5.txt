@@ -16,11 +16,13 @@ Important interpretation
 - Opening/closing window flags are based on scheduled local session times. They do not predict market direction or actual realised volatility.
 - Holiday-specific warnings require the optional v10.4 cash-exchange overlay. With the overlay disabled, risk assessment uses the configured local session schedule only.
 
-Required automated checks
-1. Run: python -m compileall -q .
-2. Run: python -m unittest discover -s tests -v.
-3. Run the Python 3.10, 3.11 and 3.12 GitHub Actions matrix.
-4. Build the Windows desktop package and verify executable/artifact upload.
+Completed automated checks (GitHub Actions run 190)
+1. Python 3.10, 3.11 and 3.12 compileall passed.
+2. All 165 unit tests passed on each Python version.
+3. Windows hash-pinned build dependencies installed successfully.
+4. PyInstaller built the one-folder Windows desktop application.
+5. Executable existence verification passed.
+6. The Veltrix-Trading-Clock-v10.5-Windows artifact uploaded successfully.
 
 Required manual Windows checks
 1. Inspect risk labels on all four session cards in all six themes.
