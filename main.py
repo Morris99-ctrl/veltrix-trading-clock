@@ -4213,7 +4213,7 @@ class VeltrixTradingClock:
         )
         analog_canvas.grid(row=2, column=0, sticky="n", pady=(4, 0))
         analog_clock = {"canvas": analog_canvas, "signature": None, "hands": {}}
-        local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Segoe UI", 15, "bold"))
+        local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 15, "bold"))
         local_time.grid(row=3, column=0, sticky="n", pady=(0, 2))
         zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Segoe UI", 9))
         zone.grid(row=4, column=0, sticky="n", pady=(0, 2))
