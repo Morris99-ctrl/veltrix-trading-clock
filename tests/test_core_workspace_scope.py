@@ -51,6 +51,19 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("self._draw_session_timeline(now_utc, states)", MAIN_SOURCE)
         self.assertIn("self.sessions_canvas", MAIN_SOURCE)
 
+    def test_market_session_intelligence_and_profiles_are_wired_into_global_sessions(self):
+        for symbol in (
+            "from session_intelligence import historical_overlap_report, weekly_session_hours",
+            "from session_profiles import PROFILE_NAMES",
+            "def _apply_selected_session_profile",
+            "def edit_custom_session_profile",
+            "def _refresh_session_intelligence",
+            "WEEKLY HOURS · MON–SUN UTC",
+            "PAST {period}D SCHEDULED OVERLAP",
+            "EDIT CUSTOM",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
