@@ -256,14 +256,14 @@ class SessionPerformanceTests(unittest.TestCase):
         ny = self.session("ny", "New York", "UTC", "08:00", "12:00")
         bars = [
             bar(f"2026-11-{day:02d}T08:00:00+00:00", 100, 102, 99, 101)
-            for day in (23, 24, 25)
+            for day in (23, 24)
         ]
         result = analyse_session_performance(
             bars, [ny], bar_interval_minutes=60,
             minimum_bars_per_session=1, minimum_coverage_pct=0,
-            rolling_window_sessions=3, ranking_min_samples=4,
+            rolling_window_sessions=3, ranking_min_samples=3,
         )
-        self.assertEqual(result["sessions"][0]["rolling_sample_sessions"], 3)
+        self.assertEqual(result["sessions"][0]["rolling_sample_sessions"], 2)
         self.assertFalse(result["sessions"][0]["ranking_eligible"])
         self.assertIsNone(result["sessions"][0]["rank"])
         self.assertEqual(result["ranked_sessions"], [])
