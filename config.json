@@ -144,5 +144,8 @@
     "shock_atr_ratio": 1.8,
     "shock_true_range_multiple": 2.5,
     "forward_horizon": 10
+  },
+  "exchange_calendar": {
+    "enabled": false
   }
 }
