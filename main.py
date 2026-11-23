@@ -40,6 +40,7 @@ from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
 from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
+from session_clock import session_clock_hand_endpoints
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -58,7 +59,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.0"
+APP_VERSION = "10.1"
 UI_QUEUE_POLL_MS = 500
 
 DIGIT_SEGMENTS = {
@@ -2975,6 +2976,7 @@ class VeltrixTradingClock:
             highlightthickness=0, bd=0,
         )
         analog_canvas.grid(row=2, column=0, sticky="n", pady=(4, 0))
+        analog_clock = {"canvas": analog_canvas, "signature": None, "hands": {}}
         local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 15, "bold"))
         local_time.grid(row=3, column=0, sticky="n", pady=(0, 2))
         zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Consolas", 8))
@@ -2987,49 +2989,81 @@ class VeltrixTradingClock:
         transition_at.grid(row=7, column=0, sticky="w", pady=(2, 0))
         self.cards[session.key] = {
             "card": card, "top": top, "name": name, "country": country, "status": status,
-            "city": city, "time": local_time, "analog": analog_canvas, "zone": zone, "divider": divider,
+            "city": city, "time": local_time, "analog": analog_canvas, "analog_clock": analog_clock, "zone": zone, "divider": divider,
             "transition": transition, "transition_at": transition_at,
         }
 
-    def _draw_session_analog_clock(self, canvas: tk.Canvas, local_now: datetime) -> None:
-        """Draw a compact neon analog clock for one market's local timezone."""
+    def _draw_session_analog_clock(self, clock_state: dict, local_now: datetime) -> None:
+        """Create the neon dial once, then move only its three hands each update."""
+        canvas: tk.Canvas = clock_state["canvas"]
         palette = THEMES[self.theme_name]
-        canvas.delete("all")
-        canvas.configure(bg=palette["panel"])
-        canvas.update_idletasks()
         width = max(150, canvas.winfo_width())
         height = max(150, canvas.winfo_height())
-        size = min(width, height) - 14
-        cx, cy = width / 2, height / 2
-        radius = size / 2
-        face = palette["bg"]
-        accent = palette["error"]
-        canvas.create_oval(cx-radius, cy-radius, cx+radius, cy+radius,
-                           fill=face, outline=palette["border"], width=2)
-        canvas.create_oval(cx-radius+7, cy-radius+7, cx+radius-7, cy+radius-7,
-                           outline=palette["dim"], width=1)
-        for tick in range(60):
-            angle = math.radians(tick * 6 - 90)
-            major = tick % 5 == 0
-            outer = radius - 10
-            inner = outer - (11 if major else 4)
-            x1, y1 = cx + math.cos(angle)*inner, cy + math.sin(angle)*inner
-            x2, y2 = cx + math.cos(angle)*outer, cy + math.sin(angle)*outer
-            canvas.create_line(x1, y1, x2, y2, fill=accent if major else palette["muted"],
-                               width=2 if major else 1)
-        def hand(angle_degrees: float, length: float, colour: str, thickness: int) -> None:
-            angle = math.radians(angle_degrees - 90)
-            canvas.create_line(cx, cy, cx + math.cos(angle)*length,
-                               cy + math.sin(angle)*length, fill=colour,
-                               width=thickness, capstyle=tk.ROUND)
-        seconds = local_now.second + local_now.microsecond / 1_000_000
-        minutes = local_now.minute + seconds / 60
-        hours = (local_now.hour % 12) + minutes / 60
-        hand(hours * 30, radius * 0.48, palette["bright"], 4)
-        hand(minutes * 6, radius * 0.69, palette["bright"], 3)
-        hand(seconds * 6, radius * 0.78, accent, 1)
-        canvas.create_oval(cx-5, cy-5, cx+5, cy+5, fill=accent, outline=accent)
-        canvas.create_oval(cx-1.8, cy-1.8, cx+1.8, cy+1.8, fill=palette["bright"], outline=palette["bright"])
+        signature = (width, height, self.theme_name)
+
+        if clock_state.get("signature") != signature:
+            canvas.delete("all")
+            canvas.configure(bg=palette["panel"])
+            size = min(width, height) - 14
+            cx, cy = width / 2, height / 2
+            radius = size / 2
+            face = palette["bg"]
+            accent = palette["error"]
+
+            # Static dial: concentric rings and 60 minute marks are created once.
+            canvas.create_oval(
+                cx-radius, cy-radius, cx+radius, cy+radius,
+                fill=face, outline=palette["border"], width=2, tags="clock-face",
+            )
+            canvas.create_oval(
+                cx-radius+7, cy-radius+7, cx+radius-7, cy+radius-7,
+                outline=palette["dim"], width=1, tags="clock-face",
+            )
+            for tick in range(60):
+                angle = math.radians(tick * 6 - 90)
+                cardinal = tick % 15 == 0
+                major = tick % 5 == 0
+                outer = radius - 10
+                inner = outer - (13 if cardinal else 9 if major else 4)
+                x1, y1 = cx + math.cos(angle)*inner, cy + math.sin(angle)*inner
+                x2, y2 = cx + math.cos(angle)*outer, cy + math.sin(angle)*outer
+                colour = accent if cardinal else palette["muted"] if major else palette["dim"]
+                canvas.create_line(
+                    x1, y1, x2, y2, fill=colour,
+                    width=2.5 if cardinal else 1.5 if major else 1,
+                    tags="clock-face",
+                )
+
+            # Hand items are retained and their coordinates are updated in place.
+            hands = {
+                "hour": canvas.create_line(cx, cy, cx, cy, fill=palette["bright"],
+                                           width=4, capstyle=tk.ROUND, tags="clock-hands"),
+                "minute": canvas.create_line(cx, cy, cx, cy, fill=palette["bright"],
+                                             width=3, capstyle=tk.ROUND, tags="clock-hands"),
+                "second": canvas.create_line(cx, cy, cx, cy, fill=accent,
+                                             width=1.5, capstyle=tk.ROUND, tags="clock-hands"),
+            }
+            canvas.create_oval(
+                cx-5, cy-5, cx+5, cy+5, fill=accent, outline=accent, tags="clock-hands",
+            )
+            canvas.create_oval(
+                cx-2, cy-2, cx+2, cy+2, fill=palette["bright"],
+                outline=palette["bright"], tags="clock-hands",
+            )
+            clock_state.update({
+                "signature": signature, "hands": hands,
+                "center_x": cx, "center_y": cy, "radius": radius,
+            })
+
+        endpoints = session_clock_hand_endpoints(
+            local_now,
+            center_x=clock_state["center_x"],
+            center_y=clock_state["center_y"],
+            radius=clock_state["radius"],
+        )
+        cx, cy = clock_state["center_x"], clock_state["center_y"]
+        for hand_name, (x, y) in endpoints.items():
+            canvas.coords(clock_state["hands"][hand_name], cx, cy, x, y)
 
     # ------------------------------------------------------------------
     # Theme and visual clock
@@ -3294,8 +3328,11 @@ class VeltrixTradingClock:
         for state in states:
             widgets = self.cards[state.definition.key]
             widgets["time"].configure(text=state.local_now.strftime("%H:%M:%S"))
-            self._draw_session_analog_clock(widgets["analog"], state.local_now)
+            self._draw_session_analog_clock(widgets["analog_clock"], state.local_now)
             widgets["zone"].configure(text=f"{state.definition.timezone_name}  ·  {state.timezone_label}")
+            widgets["card"].configure(
+                highlightbackground=palette["success"] if state.is_open else palette["border"]
+            )
             if state.is_open:
                 widgets["status"].configure(text="● OPEN", fg=palette["success"])
                 transition_text = f"CLOSES IN  {format_countdown(state.seconds_to_transition)}"
