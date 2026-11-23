@@ -65,8 +65,8 @@ class SessionClockGeometryTests(unittest.TestCase):
         self.assertAlmostEqual(points[6], 60.0)
         self.assertAlmostEqual(points[7], 10.0)
         self.assertLess(points[3], points[11])
-        self.assertAlmostEqual(points[2], points[8], places=6)
-        self.assertAlmostEqual(points[3] + points[9], 20.0, places=6)
+        self.assertAlmostEqual(points[4], points[8], places=6)
+        self.assertAlmostEqual(points[5] + points[9], 20.0, places=6)
 
     def test_tapered_hand_shadow_offset_is_applied_to_every_point(self):
         normal = session_clock_hand_polygon_coordinates(
