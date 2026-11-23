@@ -3932,6 +3932,7 @@ class VeltrixTradingClock:
             self.alert_listbox.delete(0, tk.END)
             for entry in self.alert_log_lines:
                 self.alert_listbox.insert(tk.END, entry)
+        update_recent_alerts(self)
         self._set_alert_banner(title, "warning" if category in ("warning", "transition", "overlap", "event") else "success")
         if self.alert_settings.get("sound_enabled", True):
             try:
@@ -4323,6 +4324,11 @@ class VeltrixTradingClock:
         self.digital_canvas.configure(bg=palette["bg"])
         if hasattr(self, "sessions_canvas"):
             self.sessions_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "alerts_canvas"):
+            self.alerts_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "alerts_session_canvas"):
+            self.alerts_session_canvas.configure(bg=palette["bg"])
+            self.alerts_session_timeline_signature = None
         if hasattr(self, "session_timeline_canvas"):
             self.session_timeline_canvas.configure(bg=palette["panel"])
             self.session_timeline_signature = None
@@ -4366,6 +4372,10 @@ class VeltrixTradingClock:
         for button in (
             self.sessions_nav_button, self.alerts_nav_button, self.calendar_nav_button,
             self.volatility_nav_button, self.regime_nav_button, self.focus_nav_button,
+            self.alerts_search_button, self.alerts_clear_button, self.alerts_sort_up_button,
+            self.alerts_sort_down_button, self.alert_config_toggle,
+            self.alerts_news_previous_button, self.alerts_news_today_button,
+            self.alerts_news_next_button,
             self.save_alert_button, self.test_alert_button, self.add_event_button,
             self.remove_event_button, self.refresh_calendar_button,
             self.save_calendar_preferences_button, self.refresh_market_button,
@@ -4390,7 +4400,10 @@ class VeltrixTradingClock:
         ):
             spin.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
                            buttonbackground=palette["button_bg"], highlightbackground=palette["border"])
-        for entry in (self.event_name_entry, self.event_datetime_entry, self.calendar_search_entry):
+        for entry in (
+            self.event_name_entry, self.event_datetime_entry, self.calendar_search_entry,
+            self.alerts_market_watch_entry,
+        ):
             entry.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"])
         for check in (self.calendar_reminder_check, self.market_regime_check):
             check.configure(
@@ -4399,11 +4412,15 @@ class VeltrixTradingClock:
             )
         self._apply_calendar_tree_theme()
         self._apply_market_tree_theme()
+        apply_alerts_tree_theme(self)
         self._apply_regime_tree_theme()
         # Apply shared ttk styles globally: standard controls, all Treeviews,
         # tabs, headers, scrollbars, progress bars and every named selector.
         apply_veltrix_ttk_palette(self.ttk_style, palette, self.root)
-        for listbox in (self.event_listbox, self.alert_listbox, self.market_alert_listbox):
+        for listbox in (
+            self.event_listbox, self.alert_listbox, self.market_alert_listbox,
+            self.alerts_recent_listbox,
+        ):
             listbox.configure(bg=palette["bg"], fg=palette["text"], selectbackground=palette["button_active"],
                               selectforeground=palette["bright"], highlightthickness=1,
                               highlightbackground=palette["border"])
@@ -4561,6 +4578,7 @@ class VeltrixTradingClock:
         ]
         self.latest_session_states = states
         open_states = [state for state in states if state.is_open]
+        refresh_alerts_dashboard(self, now_utc, states)
         self._poll_market_alerts(now_utc, open_states)
         self._poll_session_risk_alerts(now_utc, states)
         self._poll_economic_events(home_now)
