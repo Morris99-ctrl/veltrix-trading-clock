@@ -43,6 +43,14 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("self._draw_session_timeline(now_utc, states)", MAIN_SOURCE)
         self.assertIn("self.sessions_canvas", MAIN_SOURCE)
 
+    def test_global_session_intelligence_uses_the_session_engine_and_scrollable_map(self):
+        self.assertIn("from session_timeline import build_session_timeline", MAIN_SOURCE)
+        self.assertIn("def _build_session_timeline", MAIN_SOURCE)
+        self.assertIn("def _draw_session_timeline", MAIN_SOURCE)
+        self.assertIn("build_session_timeline(self.sessions, start_utc, hours=24)", MAIN_SOURCE)
+        self.assertIn("self._draw_session_timeline(now_utc, states)", MAIN_SOURCE)
+        self.assertIn("self.sessions_canvas", MAIN_SOURCE)
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
