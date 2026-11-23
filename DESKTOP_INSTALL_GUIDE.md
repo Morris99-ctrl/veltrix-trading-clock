@@ -37,6 +37,20 @@ The installer preserves existing destination files and copies legacy files only 
 
 The migration does not delete the previous research_cache.json, raw tick-data folders or old source project. Tick-derived datasets are not imported into the Core Edition's Regime Lab library. Existing old .env files are not copied or read by the Core Edition; the app no longer needs provider API credentials.
 
+## Market Session Intelligence
+
+In **Global Sessions**, use the Profile selector and **APPLY** to choose one of the built-in schedule templates:
+
+- Current Configuration — the original session schedule saved as the baseline.
+- Forex Standard — a weekday monitoring template for the four centres.
+- Equities Cash — a cash-equity-hours template.
+- Extended Monitoring — a wider monitoring-hours template.
+- Custom — your own local open/close times and selected weekdays.
+
+Use **EDIT CUSTOM** to change each market's open time, close time and active weekdays. All times are entered in that market's own IANA timezone. The selected profile, custom schedules and original baseline are saved in config.json and restored on restart. The presets are editable schedule templates, not official exchange calendars.
+
+The Market Session Intelligence panel shows scheduled hours for each market's local Monday-Sunday week and a reconstructed overlap report for the prior 7, 30 or 90 days. The report is calculated from the currently selected profile and timezone rules. It does not know unconfigured public holidays, emergency closures or broker-specific hours, so it must not be interpreted as observed exchange history.
+
 ## Regime Lab
 
 Open **REGIME LAB** and choose **IMPORT OHLC CSV**. Name the dataset when prompted. Naive timestamps are interpreted in the configured home timezone, Africa/Nairobi by default, then stored as UTC.
