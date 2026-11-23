@@ -65,7 +65,11 @@ def due_session_alerts(
                 if exchange_event and exchange_event.status == "EARLY_CLOSE"
                 else session.closes
             )
-            close_name = "EARLY_CLOSE" if exchange_event and exchange_event.status == "EARLY_CLOSE" else "CLOSE"
+            close_name = (
+                exchange_event.status
+                if exchange_event and exchange_event.status in {"EARLY_CLOSE", "CLOSE_PROCESS"}
+                else "CLOSE"
+            )
             events = (
                 ("OPEN", session.opens, "session_open", "notify_open", pre_open_minutes, "notify_pre_open"),
                 (close_name, close_time, "session_close", "notify_close", pre_close_minutes, "notify_pre_close"),
@@ -85,14 +89,14 @@ def due_session_alerts(
                             MarketAlert(
                                 key=lead_key,
                                 title=(
-                                    f"{session.name} EARLY CLOSE PROCESS IN {lead_minutes} MIN"
-                                    if event_name == "EARLY_CLOSE"
+                                    f"{session.name} {'EARLY CLOSE' if event_name == 'EARLY_CLOSE' else 'CLOSING PROCESS'} IN {lead_minutes} MIN"
+                                    if event_name in {"EARLY_CLOSE", "CLOSE_PROCESS"}
                                     else f"{session.name} {event_name} IN {lead_minutes} MIN"
                                 ),
                                 message=(
-                                    f"{session.city} has an exchange early-close event at "
+                                    f"{session.city} has an exchange { 'early-close' if event_name == 'EARLY_CLOSE' else 'closing-process' } event at "
                                     f"{event_local.strftime('%H:%M %Z')}."
-                                    if event_name == "EARLY_CLOSE"
+                                    if event_name in {"EARLY_CLOSE", "CLOSE_PROCESS"}
                                     else f"{session.city} is scheduled to {event_name.lower()} at "
                                          f"{event_local.strftime('%H:%M %Z')}."
                                 ),
@@ -109,13 +113,13 @@ def due_session_alerts(
                         MarketAlert(
                             key=exact_key,
                             title=(
-                                f"{session.name} EXCHANGE EARLY-CLOSE PROCESS STARTED"
-                                if event_name == "EARLY_CLOSE"
+                                f"{session.name} {'EXCHANGE EARLY CLOSE' if event_name == 'EARLY_CLOSE' else 'EXCHANGE CLOSING PROCESS'} STARTED"
+                                if event_name in {"EARLY_CLOSE", "CLOSE_PROCESS"}
                                 else f"{session.name} SESSION {event_name}ED"
                             ),
                             message=(
-                                f"{session.city} has reached the published early-close process time."
-                                if event_name == "EARLY_CLOSE"
+                                f"{session.city} has reached the published { 'early-close' if event_name == 'EARLY_CLOSE' else 'closing-process' } time."
+                                if event_name in {"EARLY_CLOSE", "CLOSE_PROCESS"}
                                 else f"{session.city} scheduled hours have reached {event_name.lower()}."
                             ),
                             category="transition",
