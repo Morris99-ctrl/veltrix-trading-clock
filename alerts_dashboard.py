@@ -462,6 +462,8 @@ def refresh_alerts_dashboard(
             continue
         if state.calendar_status == "EXCHANGE_HOLIDAY":
             text_value, colour = "HOLIDAY", palette["error"]
+        elif state.calendar_status in {"OUT_OF_RANGE", "NO_VENUE_MAPPING"}:
+            text_value, colour = "SCHED", palette["warning"]
         elif state.calendar_status in {"EARLY_CLOSE", "CLOSING_PROCESS"}:
             text_value, colour = (
                 "EARLY" if state.calendar_status == "EARLY_CLOSE" else "PROCESS",
