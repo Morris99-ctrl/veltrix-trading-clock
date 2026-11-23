@@ -1,0 +1,26 @@
+VELTRIX TRADING CLOCK v10.13 — SMOOTH SESSION CLOCKS
+Release date: 24 November 2026
+
+CLOCK MOTION
+- Increased the Global Sessions animation target from 20 FPS to approximately
+  60 FPS (16 ms Tk scheduling interval).
+- Retained fractional-second geometry for second, minute and hour hands so all
+  three hands glide continuously rather than stepping at whole-second marks.
+- Reworked hour and minute hands as tapered polygon pointers with broader
+  shoulders, fine tips, layered shadows and bevel-style outlines.
+- Kept the slim sweep second hand and its rear counterweight for a mechanical
+  instrument-clock appearance.
+- Throttled the session-window ring's Canvas drawing updates to four times per
+  second while the hands continue animating at the higher frame rate.
+
+PRESERVED BEHAVIOUR
+- Session timezones, schedules, session state, analog clock positions and
+  digital time labels are unchanged.
+- Alerts, market data, analytics, themes and the v10.12 typography redesign are
+  retained. No trading calculations or session definitions were changed.
+
+VALIDATION
+- Added geometry tests for tapered hands, endpoint direction, shadow offsets
+  and invalid geometry.
+- Full Python test matrix and Windows package build run in GitHub Actions.
+- Manual review of the updated sweep motion on Windows is still required.

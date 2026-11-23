@@ -1,4 +1,4 @@
-# Veltrix Trading Clock — v10.12 Visual Refresh
+# Veltrix Trading Clock — v10.13 Smooth Session Clocks
 
 Veltrix v10.12 builds on the Core Edition with a refreshed, high-readability desktop interface. It focuses on market-session awareness, alarms, economic-event reminders, volatility monitoring, a compact causal Regime Lab and personal focus tracking.
 
@@ -14,6 +14,12 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime; v10.11 adds chronological training/holdout validation.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
+
+## v10.13 clock-motion refinement
+
+- Session clocks animate at approximately 60 frames per second instead of 20, giving the seconds hand a continuous sweep and keeping the minute and hour hands moving proportionally.
+- Hour and minute hands use tapered, layered pointer geometry with subtle shadows, a precise tip and a mechanical-style seconds counterweight.
+- The session-window ring refreshes independently at a lower rate to avoid spending the frame budget on non-moving status decoration.
 
 ## v10.12 interface refresh
 
