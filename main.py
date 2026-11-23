@@ -41,7 +41,7 @@ from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
 from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
-from session_clock import session_clock_hand_endpoints
+from session_clock import session_clock_hand_endpoints, session_clock_hand_polygon_coordinates
 from session_visuals import (
     session_window_progress, session_window_arc_angles, utc_offset_label,
     local_day_phase, timeline_probe_from_x, session_calendar_close_override,
@@ -78,9 +78,10 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.12"
+APP_VERSION = "10.13"
 UI_QUEUE_POLL_MS = 500
-SESSION_CLOCK_FRAME_MS = 50
+SESSION_CLOCK_FRAME_MS = 16
+SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
 
 DIGIT_SEGMENTS = {
     "0": "abcdef",
@@ -4362,30 +4363,35 @@ class VeltrixTradingClock:
                     fill=palette["dim"], width=1, tags="clock-face",
                 )
 
-            # Shadowed, layered hands: retained Canvas objects avoid redraw flicker.
+            # Tapered, bevel-edged hands create a more realistic instrument dial.
+            # Their Canvas items are retained and only their coordinates are changed.
             hands = {
-                "hour_shadow": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["dim"], width=7,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "hour_shadow": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["dim"], outline=palette["dim"], width=1,
+                    tags="clock-hands",
                 ),
-                "minute_shadow": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["border"], width=5.2,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "minute_shadow": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["border"], outline=palette["border"], width=1,
+                    tags="clock-hands",
                 ),
-                "hour": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["bright"], width=4.0,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "hour": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["bright"], outline=palette["bright_edge"], width=0.8,
+                    tags="clock-hands",
                 ),
-                "minute": canvas.create_line(
-                    cx, cy, cx, cy, fill=palette["bright_edge"], width=2.6,
-                    capstyle=tk.ROUND, tags="clock-hands",
+                "minute": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["bright_edge"], outline=palette["muted"], width=0.65,
+                    tags="clock-hands",
                 ),
                 "second": canvas.create_line(
-                    cx, cy, cx, cy, fill=accent, width=1.35,
+                    cx, cy, cx, cy, fill=accent, width=1.25,
                     capstyle=tk.ROUND, tags="clock-hands",
                 ),
                 "second_tail": canvas.create_line(
-                    cx, cy, cx, cy, fill=accent, width=2.6,
+                    cx, cy, cx, cy, fill=accent, width=2.4,
                     capstyle=tk.ROUND, tags="clock-hands",
                 ),
                 "second_counterweight": canvas.create_oval(
@@ -4405,6 +4411,7 @@ class VeltrixTradingClock:
             clock_state.update({
                 "signature": signature, "hands": hands, "session_ring": session_ring,
                 "center_x": cx, "center_y": cy, "radius": radius,
+                "last_ring_refresh": 0.0,
             })
 
         endpoints = session_clock_hand_endpoints(
@@ -4414,10 +4421,21 @@ class VeltrixTradingClock:
             radius=clock_state["radius"],
         )
         cx, cy = clock_state["center_x"], clock_state["center_y"]
+        radius = clock_state["radius"]
         for hand_name, (x, y) in endpoints.items():
-            canvas.coords(clock_state["hands"][hand_name], cx, cy, x, y)
             if hand_name in ("hour", "minute"):
-                canvas.coords(clock_state["hands"][f"{hand_name}_shadow"], cx, cy, x, y)
+                half_width = radius * (0.026 if hand_name == "hour" else 0.017)
+                points = session_clock_hand_polygon_coordinates(
+                    cx, cy, x, y, half_width=half_width,
+                )
+                shadow_points = session_clock_hand_polygon_coordinates(
+                    cx, cy, x, y, half_width=half_width,
+                    offset_x=1.1, offset_y=1.35,
+                )
+                canvas.coords(clock_state["hands"][hand_name], *points)
+                canvas.coords(clock_state["hands"][f"{hand_name}_shadow"], *shadow_points)
+            else:
+                canvas.coords(clock_state["hands"][hand_name], cx, cy, x, y)
 
         # The seconds hand has a short rear counterweight, like a mechanical dial.
         second_x, second_y = endpoints["second"]
@@ -4440,7 +4458,11 @@ class VeltrixTradingClock:
             )
             arc_start, arc_extent = session_window_arc_angles(session, close_at=arc_close)
             ring = clock_state.get("session_ring", {})
-            if ring:
+            ring_refresh_due = (
+                time.perf_counter() - clock_state.get("last_ring_refresh", 0.0)
+                >= SESSION_CLOCK_RING_REFRESH_SECONDS
+            )
+            if ring and ring_refresh_due:
                 canvas.itemconfigure(
                     ring["schedule"], start=arc_start, extent=arc_extent, outline=palette["dim"],
                 )
@@ -4470,6 +4492,7 @@ class VeltrixTradingClock:
                     ring["close"], close_x-marker_size, close_y-marker_size,
                     close_x+marker_size, close_y+marker_size,
                 )
+                clock_state["last_ring_refresh"] = time.perf_counter()
         return progress
 
     def _session_progress_text(self, state, progress) -> str:
