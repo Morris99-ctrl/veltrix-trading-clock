@@ -10,6 +10,7 @@ calendar_cache.json
 
 market_cache.json
 research_cache.json
+regime_data.json
 alarm_state.json
 
 tick_data/
