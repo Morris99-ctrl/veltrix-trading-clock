@@ -45,6 +45,7 @@ from session_timeline import build_session_timeline
 from session_intelligence import historical_overlap_report, weekly_session_hours
 from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
 from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events
+from risk_engine import assess_session_risk, due_session_risk_alerts
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
 
@@ -63,7 +64,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.4"
+APP_VERSION = "10.5"
 UI_QUEUE_POLL_MS = 500
 
 DIGIT_SEGMENTS = {
@@ -210,6 +211,22 @@ class VeltrixTradingClock:
             **self.config.get("alerts", {}),
         }
         self.alert_vars: dict[str, tk.BooleanVar] = {}
+        self.session_lead_vars: dict[str, dict[str, tk.StringVar]] = {}
+        self.session_lead_spins: list[tk.Spinbox] = []
+        self.risk_checkbuttons: list[tk.Checkbutton] = []
+        raw_risk_settings = self.config.get("session_risk", {})
+        if not isinstance(raw_risk_settings, dict):
+            raw_risk_settings = {}
+        self.session_risk_settings = {
+            "enabled": True,
+            "notifications_enabled": True,
+            "holiday_liquidity_flags": True,
+            "opening_window_minutes": 15,
+            "closing_window_minutes": 15,
+            "pre_open_window_minutes": 15,
+            **raw_risk_settings,
+        }
+        self.risk_alerted_keys: set[str] = set()
         self.alerted_session_keys: set[str] = set()
         self.alerted_event_ids: set[str] = set()
         self.previous_overlap_active: bool | None = None
@@ -1800,6 +1817,120 @@ class VeltrixTradingClock:
             font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
         )
         self.test_alert_button.pack(side="left", padx=(7, 0))
+
+        overrides_title = self._label(
+            settings_panel, "SESSION-SPECIFIC REMINDER OVERRIDES",
+            bg="panel", fg="bright", font=("Consolas", 8, "bold"),
+        )
+        overrides_title.pack(anchor="w", pady=(12, 2))
+        self._label(
+            settings_panel,
+            "Each market can use its own lead time. Values inherit the global defaults until changed.",
+            bg="panel", fg="muted", font=("Segoe UI", 8),
+        ).pack(anchor="w", pady=(0, 5))
+        self.session_lead_vars = {}
+        self.session_lead_spins = []
+        saved_overrides = self.alert_settings.get("session_lead_overrides", {})
+        if not isinstance(saved_overrides, dict):
+            saved_overrides = {}
+        for session in self.sessions:
+            override = saved_overrides.get(session.key, {})
+            if not isinstance(override, dict):
+                override = {}
+            row = self._frame(settings_panel, bg="panel")
+            row.pack(fill="x", pady=2)
+            self._label(
+                row, session.name, bg="panel", fg="text",
+                font=("Consolas", 8, "bold"), width=12,
+            ).pack(side="left")
+            open_var = tk.StringVar(
+                value=str(override.get("pre_open_minutes", self.alert_settings.get("pre_open_minutes", 15)))
+            )
+            close_var = tk.StringVar(
+                value=str(override.get("pre_close_minutes", self.alert_settings.get("pre_close_minutes", 10)))
+            )
+            self._label(row, "PRE-OPEN", bg="panel", fg="muted", font=("Consolas", 7)).pack(side="left", padx=(5, 3))
+            open_spin = tk.Spinbox(
+                row, from_=1, to=180, textvariable=open_var, width=4,
+                font=("Consolas", 8), justify="center", relief="flat", bd=0,
+            )
+            open_spin.pack(side="left", padx=(0, 12))
+            self._label(row, "PRE-CLOSE", bg="panel", fg="muted", font=("Consolas", 7)).pack(side="left", padx=(0, 3))
+            close_spin = tk.Spinbox(
+                row, from_=1, to=180, textvariable=close_var, width=4,
+                font=("Consolas", 8), justify="center", relief="flat", bd=0,
+            )
+            close_spin.pack(side="left")
+            self.session_lead_vars[session.key] = {"pre_open": open_var, "pre_close": close_var}
+            self.session_lead_spins.extend((open_spin, close_spin))
+
+        risk_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=11)
+        risk_panel.pack(fill="x", pady=(0, 10))
+        self._label(
+            risk_panel, "SESSION RISK AWARENESS", bg="panel", fg="bright",
+            font=("Consolas", 10, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            risk_panel,
+            "Schedule-based cautions for opening/closing windows and exchange holiday-adjacent conditions. These are not live liquidity measurements.",
+            bg="panel", fg="muted", font=("Segoe UI", 8), wraplength=1050,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 8))
+        risk_toggles = self._frame(risk_panel, bg="panel")
+        risk_toggles.pack(fill="x")
+        self.risk_enabled_var = tk.BooleanVar(value=bool(self.session_risk_settings.get("enabled", True)))
+        self.risk_notifications_var = tk.BooleanVar(
+            value=bool(self.session_risk_settings.get("notifications_enabled", True))
+        )
+        self.holiday_liquidity_var = tk.BooleanVar(
+            value=bool(self.session_risk_settings.get("holiday_liquidity_flags", True))
+        )
+        for variable, label in (
+            (self.risk_enabled_var, "SHOW SESSION RISK FLAGS"),
+            (self.risk_notifications_var, "RISK NOTIFICATIONS"),
+            (self.holiday_liquidity_var, "HOLIDAY LIQUIDITY CAUTIONS"),
+        ):
+            check = tk.Checkbutton(
+                risk_toggles, text=label, variable=variable, command=self.save_alert_settings,
+                font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=5, pady=3,
+                cursor="hand2", bg=palette["panel"], fg=palette["text"],
+                selectcolor=palette["dim"], activebackground=palette["panel"],
+                activeforeground=palette["bright"],
+            )
+            check.pack(side="left", padx=(0, 8))
+            self.risk_checkbuttons.append(check)
+        risk_windows = self._frame(risk_panel, bg="panel")
+        risk_windows.pack(fill="x", pady=(7, 0))
+        self._label(risk_windows, "OPENING CAUTION MIN", bg="panel", fg="muted",
+                    font=("Consolas", 8, "bold")).pack(side="left")
+        self.risk_opening_window_var = tk.StringVar(
+            value=str(self.session_risk_settings.get("opening_window_minutes", 15))
+        )
+        self.risk_opening_window_spin = tk.Spinbox(
+            risk_windows, from_=0, to=180, textvariable=self.risk_opening_window_var,
+            width=4, font=("Consolas", 8), justify="center", relief="flat", bd=0,
+        )
+        self.risk_opening_window_spin.pack(side="left", padx=(6, 16))
+        self._label(risk_windows, "CLOSING CAUTION MIN", bg="panel", fg="muted",
+                    font=("Consolas", 8, "bold")).pack(side="left")
+        self.risk_closing_window_var = tk.StringVar(
+            value=str(self.session_risk_settings.get("closing_window_minutes", 15))
+        )
+        self.risk_closing_window_spin = tk.Spinbox(
+            risk_windows, from_=0, to=180, textvariable=self.risk_closing_window_var,
+            width=4, font=("Consolas", 8), justify="center", relief="flat", bd=0,
+        )
+        self.risk_closing_window_spin.pack(side="left", padx=(6, 16))
+        self.risk_pre_open_window_var = tk.StringVar(
+            value=str(self.session_risk_settings.get("pre_open_window_minutes", 15))
+        )
+        self._label(risk_windows, "PRE-OPEN FLAG MIN", bg="panel", fg="muted",
+                    font=("Consolas", 8, "bold")).pack(side="left")
+        self.risk_pre_open_window_spin = tk.Spinbox(
+            risk_windows, from_=0, to=180, textvariable=self.risk_pre_open_window_var,
+            width=4, font=("Consolas", 8), justify="center", relief="flat", bd=0,
+        )
+        self.risk_pre_open_window_spin.pack(side="left", padx=(6, 0))
 
         event_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=11)
         event_panel.pack(fill="x", pady=(0, 10))
@@ -3405,9 +3536,33 @@ class VeltrixTradingClock:
         except (ValueError, tk.TclError):
             messagebox.showerror("Invalid alert lead time", "Enter whole minutes between 1 and 180.", parent=self.root)
             return
+        session_overrides = {}
+        try:
+            for key, variables in self.session_lead_vars.items():
+                session_overrides[key] = {
+                    "pre_open_minutes": max(1, min(180, int(variables["pre_open"].get()))),
+                    "pre_close_minutes": max(1, min(180, int(variables["pre_close"].get()))),
+                }
+            self.alert_settings["session_lead_overrides"] = session_overrides
+            self.session_risk_settings.update({
+                "enabled": bool(self.risk_enabled_var.get()),
+                "notifications_enabled": bool(self.risk_notifications_var.get()),
+                "holiday_liquidity_flags": bool(self.holiday_liquidity_var.get()),
+                "opening_window_minutes": max(0, min(180, int(self.risk_opening_window_var.get()))),
+                "closing_window_minutes": max(0, min(180, int(self.risk_closing_window_var.get()))),
+                "pre_open_window_minutes": max(0, min(180, int(self.risk_pre_open_window_var.get()))),
+            })
+        except (ValueError, tk.TclError):
+            messagebox.showerror(
+                "Invalid session risk settings",
+                "Session reminders must be whole minutes from 1–180. Risk windows must be 0–180.",
+                parent=self.root,
+            )
+            return
         self.config["alerts"] = dict(self.alert_settings)
+        self.config["session_risk"] = dict(self.session_risk_settings)
         self._save_config()
-        self._set_alert_banner("ALERT SETTINGS SAVED", "success")
+        self._set_alert_banner("ALERT AND SESSION RISK SETTINGS SAVED", "success")
 
     def add_economic_event(self) -> None:
         name = self.event_name_var.get().strip()
@@ -3526,6 +3681,15 @@ class VeltrixTradingClock:
             self._emit_alert("TRADING SESSION OVERLAP STARTED", f"Currently scheduled open: {names}.", "overlap")
         self.previous_overlap_active = overlap_active
 
+    def _poll_session_risk_alerts(self, now_utc: datetime, states: list) -> None:
+        alerts = due_session_risk_alerts(
+            self.sessions, states, now_utc, self.session_risk_settings,
+            self.risk_alerted_keys,
+            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        )
+        for alert in alerts:
+            self._emit_alert(alert.title, alert.message, "warning" if alert.severity != "INFO" else "info")
+
     def _emit_alert(self, title: str, message: str, category: str = "info") -> None:
         timestamp = datetime.now(self.home_zone).strftime("%H:%M:%S")
         line = f"{timestamp}  |  {title}  |  {message}"
@@ -3611,10 +3775,15 @@ class VeltrixTradingClock:
         transition.grid(row=6, column=0, sticky="w")
         transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 8))
         transition_at.grid(row=7, column=0, sticky="w", pady=(2, 0))
+        risk = self._label(
+            card, "SESSION RISK · NORMAL", bg="card", fg="muted",
+            font=("Consolas", 7, "bold"), anchor="w", justify="left", wraplength=500,
+        )
+        risk.grid(row=8, column=0, sticky="ew", pady=(5, 0))
         self.cards[session.key] = {
             "card": card, "top": top, "name": name, "country": country, "status": status,
             "city": city, "time": local_time, "analog": analog_canvas, "analog_clock": analog_clock, "zone": zone, "divider": divider,
-            "transition": transition, "transition_at": transition_at,
+            "transition": transition, "transition_at": transition_at, "risk": risk,
         }
 
     def _draw_session_analog_clock(self, clock_state: dict, local_now: datetime) -> None:
@@ -3734,7 +3903,7 @@ class VeltrixTradingClock:
             widgets["card"].configure(bg=palette["panel"], highlightbackground=palette["border"])
             widgets["top"].configure(bg=palette["panel"])
             widgets["analog"].configure(bg=palette["panel"])
-            for key in ("name", "city", "time", "zone", "transition", "transition_at"):
+            for key in ("name", "city", "time", "zone", "transition", "transition_at", "risk"):
                 widgets[key].configure(bg=palette["panel"])
             widgets["name"].configure(fg=palette["text"])
             widgets["city"].configure(fg=palette["muted"])
@@ -3778,8 +3947,12 @@ class VeltrixTradingClock:
         for check in self.alert_checkbuttons:
             check.configure(bg=palette["panel"], fg=palette["text"], selectcolor=palette["dim"],
                             activebackground=palette["panel"], activeforeground=palette["bright"])
-        for spin in (self.pre_open_spin, self.pre_close_spin, self.event_lead_spin,
-                     self.calendar_reminder_spin, self.market_expansion_spin, self.market_contraction_spin):
+        for spin in (
+            self.pre_open_spin, self.pre_close_spin, self.event_lead_spin,
+            self.calendar_reminder_spin, self.market_expansion_spin, self.market_contraction_spin,
+            self.risk_opening_window_spin, self.risk_closing_window_spin,
+            self.risk_pre_open_window_spin, *self.session_lead_spins,
+        ):
             spin.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
                            buttonbackground=palette["button_bg"], highlightbackground=palette["border"])
         for entry in (self.event_name_entry, self.event_datetime_entry, self.calendar_search_entry):
@@ -3953,6 +4126,7 @@ class VeltrixTradingClock:
         ]
         open_states = [state for state in states if state.is_open]
         self._poll_market_alerts(now_utc, open_states)
+        self._poll_session_risk_alerts(now_utc, states)
         self._poll_economic_events(home_now)
         self._poll_live_calendar_events(home_now)
         self.summary_open["value"].configure(text=f"{len(open_states)} / {len(states)}")
@@ -4020,6 +4194,20 @@ class VeltrixTradingClock:
                     + (f"  ·  {state.calendar_event}" if state.calendar_event else "")
                 )
             )
+            assessment = assess_session_risk(
+                state.definition, state, now_utc, self.session_risk_settings,
+                apply_exchange_calendar=exchange_calendar_enabled,
+            )
+            if assessment.level == "HIGH":
+                risk_colour = palette["error"]
+            elif assessment.level == "CAUTION":
+                risk_colour = palette["warning"]
+            else:
+                risk_colour = palette["muted"]
+            risk_text = f"SESSION RISK · {assessment.level}"
+            if assessment.flags and self.session_risk_settings.get("enabled", True):
+                risk_text += "  |  " + assessment.summary
+            widgets["risk"].configure(text=risk_text, fg=risk_colour)
 
         if len(open_states) >= 2:
             names = " + ".join(state.definition.name for state in open_states)
@@ -4291,6 +4479,7 @@ class VeltrixTradingClock:
         self.config["exchange_calendar"] = {
             "enabled": bool(self.exchange_calendar_enabled_var.get())
         }
+        self.config["session_risk"] = dict(self.session_risk_settings)
         try:
             self.regime_settings.update(asdict(self._collect_regime_config()))
             self.regime_settings["selected_asset"] = self._selected_regime_asset_key()
