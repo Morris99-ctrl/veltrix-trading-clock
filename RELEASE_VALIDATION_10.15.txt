@@ -1,0 +1,51 @@
+VELTRIX TRADING CLOCK v10.15 — RELEASE VALIDATION
+
+Release branch
+release/v10.15-alert-intelligence-center
+
+Base
+release/v10.14-trading-command-center
+
+Automated validation required
+- Python 3.10: compileall and full unittest discovery.
+- Python 3.11: compileall and full unittest discovery.
+- Python 3.12: compileall and full unittest discovery.
+- Windows runner: PyInstaller one-folder build.
+- Windows runner: verify dist/Veltrix Trading Clock/VeltrixTradingClock.exe exists.
+- Upload artifact named Veltrix-Trading-Clock-v10.15-Windows.
+
+Alert lifecycle regression coverage
+- Stable IDs suppress duplicate triggered records.
+- Dedupe survives AlertCenterStore export/reload.
+- Triggered history and acknowledgement status survive export/reload.
+- Acknowledgement is idempotent.
+- Upcoming items can be acknowledged and remain in history.
+- Status, market, impact and text filters are applied together.
+- Naive timestamps are rejected.
+- Session transitions appear only inside the configured horizon.
+- Active session/overlap context is generated without sending notifications.
+- Invalid, cancelled, malformed, past and out-of-horizon provider events are excluded.
+- Manual event timestamps without offsets use the configured home timezone.
+
+Manual Windows GUI checklist
+1. Launch the standalone application and open ALERTS & EVENTS.
+2. Confirm the Alert Intelligence Center appears above the existing Market Watch.
+3. Confirm ACTIVE rows and current upcoming session transitions are labelled correctly.
+4. Confirm scheduled/moved calendar events inside the next 24 hours appear as UPCOMING context.
+5. Confirm changing status, market, impact and search filters updates the rows and counters.
+6. Select an alert and confirm source/category/detail text is readable.
+7. Acknowledge one triggered alert. Confirm it moves to ACKNOWLEDGED.
+8. Restart the application and confirm acknowledged history remains.
+9. Trigger or test an existing alert and confirm the same stable ID does not produce duplicate history, sound or Windows toast after a restart.
+10. Confirm upcoming rows do not send an early notification; existing lead-time settings still control notification timing.
+11. Confirm individual session lead times, risk controls, sound, Windows notifications and TEST NOTIFICATION continue to work.
+12. Switch through CYAN, AMBER, MATRIX, VIOLET, ICE and LIGHT and inspect contrast, Treeview tags, selectors and row selection.
+13. Confirm the existing 28-pair Market Watch, economic calendar and expandable ALERT RULES / PREFERENCES remain available.
+
+Data and safety checks
+- No broker feed, order execution or automated trading is introduced.
+- Cached provider events remain clearly contextual and cannot bypass the live-reminder freshness guard.
+- Session hours are configured schedules; they are not guaranteed broker hours or executable availability.
+- A passing unit suite does not prove Windows rendering, provider uptime or trading profitability.
+
+CI run, test count, artifact ID, ZIP integrity and SHA-256 should be filled from the successful latest-head GitHub Actions run after validation.
