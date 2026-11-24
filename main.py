@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from alert_engine import due_session_alerts
+from alert_intelligence import AlertCenterStore
 from market_data import fetch_market_snapshot, load_market_cache, save_market_cache
 from volatility_engine import instrument_summary, session_volatility_report, evaluate_volatility_regimes
 from calendar_engine import (
@@ -54,6 +55,9 @@ from risk_engine import assess_session_risk, due_session_risk_alerts
 from alerts_dashboard import (
     build_alerts_dashboard, refresh_alerts_dashboard,
     apply_alerts_tree_theme, update_recent_alerts, toggle_alert_settings,
+)
+from alert_center_ui import (
+    build_alert_center, refresh_alert_center, apply_alert_center_theme,
 )
 from session_performance import analyse_session_performance, export_session_performance_csv
 from session_performance_ui import (
@@ -257,6 +261,7 @@ class VeltrixTradingClock:
         self.previous_overlap_active: bool | None = None
         self.economic_events: list[dict] = list(self.config.get("economic_events", []))
         self.alert_log_lines: list[str] = []
+        self.alert_center = AlertCenterStore(self.config.get("alert_center", {}))
         self.is_closing = False
 
         # Phase 11: persistent personal focus timers, goals and milestones.
@@ -2020,6 +2025,7 @@ class VeltrixTradingClock:
         )
         self.alert_settings_container = self._frame(self.alerts_content, bg="panel", padx=4, pady=3)
         self.alert_settings_container.pack_forget()
+        build_alert_center(self, self.alerts_content)
         build_alerts_dashboard(self, self.alerts_content)
         settings_toggle_row = self._frame(self.alerts_content, bg="panel", padx=7, pady=5)
         settings_toggle_row.pack(fill="x", pady=(0, 6))
@@ -3983,7 +3989,9 @@ class VeltrixTradingClock:
             self._emit_alert(
                 f"HIGH-IMPACT RELEASE APPROACHING · {str(event.get('title', 'EVENT')).upper()}",
                 f"{event.get('currency', '')} · {event_time.strftime('%d %b %Y %H:%M %Z')}{confidence_note}.",
-                "event",
+                "event", alert_id=f"calendar:{event['reminder_key']}",
+                source="Economic calendar", market=str(event.get("currency", "GLOBAL")),
+                impact=str(event.get("impact", "HIGH")),
             )
 
     def save_alert_settings(self) -> None:
@@ -4122,7 +4130,8 @@ class VeltrixTradingClock:
                 self._emit_alert(
                     f"ECONOMIC EVENT APPROACHING  ·  {str(event.get('name', 'EVENT')).upper()}",
                     f"Scheduled for {event_time.strftime('%d %b %Y at %H:%M %Z')}.",
-                    "event",
+                    "event", alert_id=f"manual:{event_id}", source="Manual reminder",
+                    market="CUSTOM", impact="MEDIUM",
                 )
 
     def _poll_market_alerts(self, now_utc: datetime, open_states: list) -> None:
@@ -4131,13 +4140,23 @@ class VeltrixTradingClock:
             apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
         )
         for alert in alerts:
-            self._emit_alert(alert.title, alert.message, alert.category)
+            self._emit_alert(
+                alert.title, alert.message, alert.category,
+                alert_id=f"session:{alert.key}", source="Session scheduler",
+                market=alert.key.split(":", 1)[0].upper(), impact="MEDIUM",
+            )
 
         overlap_active = len(open_states) >= 2
         if (self.alert_settings.get("notify_overlap", True)
                 and self.previous_overlap_active is False and overlap_active):
             names = " + ".join(state.definition.name for state in open_states)
-            self._emit_alert("TRADING SESSION OVERLAP STARTED", f"Currently scheduled open: {names}.", "overlap")
+            overlap_keys = "-".join(sorted(state.definition.key for state in open_states))
+            overlap_id = f"overlap:{overlap_keys}:{now_utc.strftime('%Y%m%dT%H%M')}"
+            self._emit_alert(
+                "TRADING SESSION OVERLAP STARTED", f"Currently scheduled open: {names}.",
+                "overlap", alert_id=overlap_id, source="Session overlap",
+                market="GLOBAL", impact="MEDIUM",
+            )
         self.previous_overlap_active = overlap_active
 
     def _poll_session_risk_alerts(self, now_utc: datetime, states: list) -> None:
@@ -4147,10 +4166,33 @@ class VeltrixTradingClock:
             apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
         )
         for alert in alerts:
-            self._emit_alert(alert.title, alert.message, "warning" if alert.severity != "INFO" else "info")
+            self._emit_alert(
+                alert.title, alert.message, "warning" if alert.severity != "INFO" else "info",
+                alert_id=alert.key, source="Session risk",
+                market=alert.key.split(":")[1].upper() if ":" in alert.key else "GLOBAL",
+                impact=alert.severity,
+            )
 
-    def _emit_alert(self, title: str, message: str, category: str = "info") -> None:
-        timestamp = datetime.now(self.home_zone).strftime("%H:%M:%S")
+    def _emit_alert(
+        self, title: str, message: str, category: str = "info", *,
+        alert_id: str | None = None, source: str = "Veltrix",
+        market: str = "GLOBAL", impact: str | None = None,
+    ) -> None:
+        now_utc = datetime.now(timezone.utc)
+        resolved_impact = impact or {
+            "warning": "HIGH", "event": "HIGH", "transition": "MEDIUM",
+            "overlap": "MEDIUM", "info": "INFO",
+        }.get(str(category).lower(), "INFO")
+        record = self.alert_center.record_triggered(
+            alert_id=alert_id, title=title, message=message, category=category,
+            source=source, market=market, impact=resolved_impact, now=now_utc,
+        )
+        # Stable IDs make notifications idempotent across refreshes and app restarts.
+        if record is None:
+            return
+        self.config["alert_center"] = self.alert_center.export_state()
+        self._save_config()
+        timestamp = now_utc.astimezone(self.home_zone).strftime("%H:%M:%S")
         line = f"{timestamp}  |  {title}  |  {message}"
         self.alert_log_lines.insert(0, line)
         self.alert_log_lines = self.alert_log_lines[:50]
@@ -4674,6 +4716,7 @@ class VeltrixTradingClock:
         self._apply_calendar_tree_theme()
         self._apply_market_tree_theme()
         apply_alerts_tree_theme(self)
+        apply_alert_center_theme(self)
         self._apply_regime_tree_theme()
         apply_session_performance_theme(self)
         apply_command_center_theme(self)
@@ -4846,6 +4889,7 @@ class VeltrixTradingClock:
         self._poll_session_risk_alerts(now_utc, states)
         self._poll_economic_events(home_now)
         self._poll_live_calendar_events(home_now)
+        refresh_alert_center(self, now_utc, states, self.calendar_events, self.economic_events)
         self.summary_open["value"].configure(text=f"{len(open_states)} / {len(states)}")
         transitions = sorted(states, key=lambda item: item.seconds_to_transition)
         if transitions:
@@ -5195,6 +5239,7 @@ class VeltrixTradingClock:
         self._close_alarm_popup()
         self.config["theme"] = self.theme_name
         self.config["alerts"] = dict(self.alert_settings)
+        self.config["alert_center"] = self.alert_center.export_state()
         self.config["economic_events"] = self.economic_events
         self.config["calendar"] = dict(self.calendar_settings)
         self.config["market_data"] = dict(self.market_settings)
