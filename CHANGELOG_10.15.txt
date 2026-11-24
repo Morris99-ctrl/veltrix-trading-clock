@@ -9,7 +9,8 @@ Alert Intelligence Center
 - UPCOMING rows show session transitions, manual reminders and scheduled/moved provider events inside the next 24 hours.
 - TRIGGERED rows record alerts emitted by the existing session, risk, manual reminder and live calendar pipelines.
 - ACKNOWLEDGED rows preserve acknowledgement history across application restarts.
-- Adds filters for lifecycle status, market/currency, impact and free-text search.
+- Adds filters for lifecycle status, market/currency, impact, alert category, relative timeframe and free-text search.
+- Upcoming rows show a local-time ETA. Cached calendar candidates are explicitly labelled as cached context when no successful fetch has occurred this run.
 - Upcoming rows display home-timezone event times and a live remaining-time estimate.
 - Selecting a row shows message detail, source, category, market and impact.
 - Adds selected-item acknowledgement and bulk acknowledgement for visible triggered rows.
