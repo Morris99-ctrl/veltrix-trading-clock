@@ -147,7 +147,7 @@ class AlertCandidateTests(unittest.TestCase):
         self.assertEqual(london[0]["market"], "LONDON")
 
     def test_open_session_and_overlap_are_active(self):
-        now = datetime(2026, 11, 11, 9, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 11, 11, 8, 30, tzinfo=timezone.utc)
         states = [
             get_session_state(self.by_key["london"], now),
             get_session_state(self.by_key["tokyo"], now),
