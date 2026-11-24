@@ -1,3 +1,14 @@
+ALERT INTELLIGENCE CENTER (v10.15)
+Alerts & Events now begins with a dedicated alert terminal. It separates ACTIVE
+session context, UPCOMING session/calendar reminders, TRIGGERED notifications
+and ACKNOWLEDGED history. Filter by status, market/currency, impact or search
+text. Select an item to inspect its source and details, then acknowledge it.
+Triggered and acknowledged history is saved locally. Stable alert IDs prevent
+repeat notifications when the app refreshes or restarts. Upcoming rows are
+informational and do not override existing reminder lead times or alert rules.
+The original Market Watch, 28-pair FX reference watchlist, news calendar,
+individual session lead times, sound and Windows notification settings remain.
+
 TRADING COMMAND CENTER (v10.14)
 The Command Center is the default landing page. It brings together the four
 market-session states, next transitions, upcoming economic releases, indicative
