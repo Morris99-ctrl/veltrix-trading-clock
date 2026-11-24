@@ -119,7 +119,7 @@ class AlertCenterStore:
             "message": str(message).strip()[:1200],
             "category": str(category or "info").strip().lower()[:32],
             "source": str(source or "Veltrix").strip()[:80],
-            "market": str(market or "GLOBAL").strip().upper()[:24],
+            "market": str(market or "GLOBAL").strip().upper().replace("_", " ")[:24],
             "impact": _normalise_impact(impact),
         }
         self.records.insert(0, record)
@@ -155,7 +155,7 @@ class AlertCenterStore:
             saved["acknowledged_at"] = _iso(now_utc)
             saved["category"] = str(saved.get("category", "schedule"))[:32]
             saved["source"] = str(saved.get("source", "Veltrix"))[:80]
-            saved["market"] = str(saved.get("market", "GLOBAL")).upper()[:24]
+            saved["market"] = str(saved.get("market", "GLOBAL")).upper().replace("_", " ")[:24]
             saved["impact"] = _normalise_impact(saved.get("impact"))
             self.records.insert(0, saved)
             if record_id not in self.seen_ids:
@@ -218,7 +218,10 @@ class AlertCenterStore:
         priority = {"ACTIVE": 0, "TRIGGERED": 1, "UPCOMING": 2, "ACKNOWLEDGED": 3}
         def ordering(record: dict[str, Any]) -> tuple[int, float, str]:
             stamp = _parse_iso(record.get("scheduled_at")) or _parse_iso(record.get("created_at"))
-            sort_stamp = stamp.timestamp() if stamp is not None else float("inf")
+            try:
+                sort_stamp = stamp.timestamp() if stamp is not None else float("inf")
+            except (OverflowError, OSError, ValueError):
+                sort_stamp = float("inf")
             return priority.get(str(record.get("status")), 9), sort_stamp, str(record.get("id"))
         rows.sort(key=ordering)
         return rows
@@ -261,7 +264,7 @@ def build_alert_candidates(
             "scheduled_at": _iso(stamp),
             "title": str(title)[:180],
             "message": str(message)[:1200],
-            "market": str(market or "GLOBAL").upper()[:24],
+            "market": str(market or "GLOBAL").upper().replace("_", " ")[:24],
             "impact": _normalise_impact(impact),
             "category": str(category)[:32],
             "source": str(source)[:80],
@@ -272,7 +275,7 @@ def build_alert_candidates(
         definition = getattr(state, "definition", None)
         if definition is None:
             continue
-        market = str(getattr(definition, "name", definition.key)).upper()
+        market = str(getattr(definition, "name", definition.key)).upper().replace("_", " ")
         transition = getattr(state, "transition_at", None)
         seconds = int(getattr(state, "seconds_to_transition", 0) or 0)
         key = str(getattr(definition, "key", market)).lower()
