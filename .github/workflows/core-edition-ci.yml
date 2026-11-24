@@ -16,6 +16,7 @@ on:
       - release/v10-core-clock
       - release/v10.11-chronological-validation
       - release/v10.12-visual-redesign
+      - release/v10.14-trading-command-center
   workflow_dispatch:
 
 permissions:
