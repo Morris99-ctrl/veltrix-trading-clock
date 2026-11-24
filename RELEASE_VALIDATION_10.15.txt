@@ -20,7 +20,7 @@ Alert lifecycle regression coverage
 - Triggered history and acknowledgement status survive export/reload.
 - Acknowledgement is idempotent.
 - Upcoming items can be acknowledged and remain in history.
-- Status, market, impact and text filters are applied together.
+- Status, market, impact, category, timeframe and text filters are applied together.
 - Naive timestamps are rejected.
 - Session transitions appear only inside the configured horizon.
 - Active session/overlap context is generated without sending notifications.
