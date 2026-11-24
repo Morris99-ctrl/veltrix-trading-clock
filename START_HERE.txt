@@ -1,3 +1,12 @@
+MARKET INTELLIGENCE ENGINE (v10.16)
+Open MARKET INTEL for causal per-instrument regime context, annualised 10/20/60-day
+realised volatility, ATR, historical expected move and aligned 20/60-day
+cross-asset correlations. Each instrument includes the evidence behind its
+regime label and the freshness of its underlying observations. Cached values
+are labelled as cached. Market breadth remains unavailable until real
+constituent-level data is configured; Veltrix does not infer it from proxies.
+The workspace reuses the existing market-data feed and does not execute trades.
+
 ALERT INTELLIGENCE CENTER (v10.15)
 Alerts & Events now begins with a dedicated alert terminal. It separates ACTIVE
 session context, UPCOMING session/calendar reminders, TRIGGERED notifications
@@ -16,7 +25,7 @@ market/ATR/expected-move snapshots, schedule/volatility cautions and a daily
 pre-market checklist. Quick links open the original detailed workspaces.
 The checklist is saved locally for each home-timezone date.
 
-VELTRIX TRADING CLOCK v10.14 — CORE EDITION
+VELTRIX TRADING CLOCK v10.16 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.

@@ -69,6 +69,10 @@ from config_store import load_config, save_config
 from command_center_ui import (
     build_command_center_page, refresh_command_center, apply_command_center_theme,
 )
+from market_intelligence_ui import (
+    build_market_intelligence_page, refresh_market_intelligence_page,
+    apply_market_intelligence_theme,
+)
 
 try:
     import pygame
@@ -85,7 +89,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.15"
+APP_VERSION = "10.16"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 16
 SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
@@ -538,6 +542,11 @@ class VeltrixTradingClock:
             font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
         self.regime_nav_button.pack(side="left", padx=(0, 6))
+        self.market_intelligence_nav_button = tk.Button(
+            nav, text="MARKET INTEL", command=lambda: self.show_page("market_intelligence"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+        )
+        self.market_intelligence_nav_button.pack(side="left", padx=(0, 6))
         self.focus_nav_button = tk.Button(
             nav, text="FOCUS & GOALS", command=lambda: self.show_page("focus"),
             font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
@@ -553,6 +562,7 @@ class VeltrixTradingClock:
         self.calendar_view = self._frame(self.page_host)
         self.volatility_view = self._frame(self.page_host)
         self.regime_view = self._frame(self.page_host)
+        self.market_intelligence_view = self._frame(self.page_host)
         self.focus_view = self._frame(self.page_host)
         self.sessions_view.pack(fill="both", expand=True)
 
@@ -629,6 +639,7 @@ class VeltrixTradingClock:
         self._build_calendar_page()
         self._build_market_page()
         self._build_regime_page()
+        build_market_intelligence_page(self)
         build_session_performance_page(self)
         self._build_focus_page()
         self.show_page("command_center")
@@ -3667,6 +3678,7 @@ class VeltrixTradingClock:
         elif not self.market_is_fresh:
             self.market_status_label.configure(text="CACHED MARKET SNAPSHOT · LIVE DATA NOT VERIFIED THIS RUN",
                                                fg=THEMES[self.theme_name]["warning"])
+        refresh_market_intelligence_page(self)
 
     def _emit_market_regime_alerts(self) -> None:
         if not self.market_is_fresh or not bool(self.market_settings.get("regime_alerts_enabled", True)):
@@ -3706,13 +3718,15 @@ class VeltrixTradingClock:
             "calendar": (self.calendar_view, self.calendar_nav_button),
             "volatility": (self.volatility_view, self.volatility_nav_button),
             "regime": (self.regime_view, self.regime_nav_button),
+            "market_intelligence": (self.market_intelligence_view, self.market_intelligence_nav_button),
             "focus": (self.focus_view, self.focus_nav_button),
         }
         if page not in page_map:
             page = "command_center"
         for view in (
             self.command_center_view, self.sessions_view, self.session_performance_view, self.alerts_view,
-            self.calendar_view, self.volatility_view, self.regime_view, self.focus_view,
+            self.calendar_view, self.volatility_view, self.regime_view,
+            self.market_intelligence_view, self.focus_view,
         ):
             view.pack_forget()
         active_view, active_button = page_map[page]
@@ -3729,6 +3743,9 @@ class VeltrixTradingClock:
         if page == "regime" and hasattr(self, "regime_canvas"):
             self.regime_canvas.yview_moveto(0.0)
             self._draw_regime_chart()
+        if page == "market_intelligence" and hasattr(self, "market_intelligence_canvas"):
+            self.market_intelligence_canvas.yview_moveto(0.0)
+            refresh_market_intelligence_page(self)
         if page == "session_performance" and hasattr(self, "session_performance_canvas"):
             self.session_performance_canvas.yview_moveto(0.0)
         if page == "focus" and hasattr(self, "focus_canvas"):
@@ -4636,6 +4653,8 @@ class VeltrixTradingClock:
             self.world_dial_signature = None
         if hasattr(self, "session_performance_canvas"):
             self.session_performance_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "market_intelligence_canvas"):
+            self.market_intelligence_canvas.configure(bg=palette["bg"])
         if hasattr(self, "session_performance_chart_canvas"):
             self.session_performance_chart_canvas.configure(bg=palette["panel"])
         for tile in (self.summary_open, self.summary_overlap, self.summary_next):
@@ -4675,7 +4694,8 @@ class VeltrixTradingClock:
         for button in (
             self.command_center_nav_button, self.sessions_nav_button, self.session_performance_nav_button,
             self.alerts_nav_button, self.calendar_nav_button,
-            self.volatility_nav_button, self.regime_nav_button, self.focus_nav_button,
+            self.volatility_nav_button, self.regime_nav_button, self.market_intelligence_nav_button,
+            self.focus_nav_button,
             self.session_performance_import_button, self.session_performance_run_button,
             self.session_performance_export_button,
             self.alerts_search_button, self.alerts_clear_button, self.alerts_sort_up_button,
@@ -4685,7 +4705,8 @@ class VeltrixTradingClock:
             self.save_alert_button, self.test_alert_button, self.add_event_button,
             self.remove_event_button, self.refresh_calendar_button,
             self.save_calendar_preferences_button, self.refresh_market_button,
-            self.save_market_settings_button, self.regime_import_button,
+            self.save_market_settings_button, self.market_intelligence_refresh_button,
+            self.regime_import_button,
             self.regime_run_button, self.regime_export_button, self.regime_save_button,
             self.apply_session_profile_button, self.edit_custom_session_profile_button,
         ):
@@ -4727,6 +4748,7 @@ class VeltrixTradingClock:
         self._apply_regime_tree_theme()
         apply_session_performance_theme(self)
         apply_command_center_theme(self)
+        apply_market_intelligence_theme(self)
         # Apply shared ttk styles globally: standard controls, all Treeviews,
         # tabs, headers, scrollbars, progress bars and every named selector.
         apply_veltrix_ttk_palette(self.ttk_style, palette, self.root)

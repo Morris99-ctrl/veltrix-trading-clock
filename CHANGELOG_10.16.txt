@@ -1,0 +1,34 @@
+VELTRIX TRADING CLOCK v10.16 — MARKET INTELLIGENCE ENGINE
+
+Overview
+- Adds a dedicated MARKET INTEL workspace using the existing market snapshot and configured instruments.
+- Extends the current Regime Lab and Volatility Lab foundations without replacing their workflows.
+
+Causal regime context
+- Shows the latest per-instrument RANGE, TREND_UP, TREND_DOWN, VOLATILITY_SHOCK, TRANSITION or WARMUP state.
+- Reuses the established efficiency-ratio, ATR-normalised regression-slope and ATR-shock classification.
+- Displays efficiency ratio, normalised slope, fast/slow ATR ratio and true range versus prior ATR as evidence.
+- Current regime labels use completed current/past OHLC bars only. Future returns remain separate historical outcome diagnostics.
+
+Volatility profile
+- Adds annualised 10-, 20- and 60-observation realised volatility from daily log returns using the sqrt(252) convention.
+- Adds a rolling 20-day volatility percentile against up to 60 rolling 20-day observations.
+- Shows ATR(14), ATR as a percentage of price, and the existing one-day 1-sigma expected-move estimate.
+- Sample gates leave unavailable statistics as N/A rather than fabricating values.
+
+Cross-asset relationship monitor
+- Adds 20- and 60-observation Pearson correlations from aligned daily log returns for configured instruments.
+- Shows sample counts for both windows. Insufficient samples and zero-variance pairs remain N/A.
+- The panel is descriptive correlation context, not causal evidence or a forecast.
+
+Market breadth and data quality
+- Market breadth is UNAVAILABLE unless a real constituent-level OHLC universe is explicitly supplied.
+- Index/futures proxies are not treated as market breadth.
+- Feed status distinguishes UPDATED, PARTIAL, CACHED and NO DATA; stale cached observations are never labelled as newly updated.
+- The refresh button reuses the existing non-blocking market-data worker and adds no provider.
+
+Preserved behaviour and boundaries
+- Preserves v10.15 Alert Intelligence Center, v10.14 Trading Command Center, global session clocks, calendar, Volatility Lab, Regime Lab, Session Performance, Focus & Goals and original alarm controls.
+- No new API provider, broker connection, buy/sell signal, order placement or trading automation is introduced.
+- Yahoo Finance public chart observations remain unofficial and indicative, not execution-grade market data.
+- The workspace is research and decision-support context, not a profitability claim.

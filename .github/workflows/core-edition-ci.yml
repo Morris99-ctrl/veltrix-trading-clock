@@ -10,6 +10,7 @@ on:
       - release/v10.13-smooth-session-clocks
       - release/v10.14-trading-command-center
       - release/v10.15-alert-intelligence-center
+      - release/v10.16-market-intelligence
   pull_request:
     branches:
       - main
@@ -17,6 +18,8 @@ on:
       - release/v10.11-chronological-validation
       - release/v10.12-visual-redesign
       - release/v10.14-trading-command-center
+      - release/v10.15-alert-intelligence-center
+      - release/v10.16-market-intelligence
   workflow_dispatch:
 
 permissions:
@@ -80,6 +83,6 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: Veltrix-Trading-Clock-v10.15-Windows
+          name: Veltrix-Trading-Clock-v10.16-Windows
           path: dist/Veltrix Trading Clock/
           if-no-files-found: error

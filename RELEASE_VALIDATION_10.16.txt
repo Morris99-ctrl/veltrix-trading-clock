@@ -1,0 +1,54 @@
+VELTRIX TRADING CLOCK v10.16 — RELEASE VALIDATION
+
+Release branch
+release/v10.16-market-intelligence
+
+Base
+release/v10.15-alert-intelligence-center
+
+Automated validation required
+- Python 3.10: compileall and full unittest discovery.
+- Python 3.11: compileall and full unittest discovery.
+- Python 3.12: compileall and full unittest discovery.
+- Windows runner: PyInstaller one-folder build.
+- Windows runner: verify dist/Veltrix Trading Clock/VeltrixTradingClock.exe exists.
+- Upload artifact named Veltrix-Trading-Clock-v10.16-Windows.
+
+Market Intelligence regression coverage
+- Cached observations remain labelled CACHED and are not represented as freshly updated.
+- Partial assets and missing observations have explicit status; absent values remain None/N/A, never zero.
+- Causal regime label at a timestamp is unchanged by appending later bars.
+- Trend labels expose their supporting efficiency-ratio and ATR-normalised slope evidence.
+- Annualised realised-volatility windows apply their sample gates.
+- ATR and expected-move metrics remain unavailable until their own sample requirements are satisfied.
+- Pearson correlations use aligned daily log-return dates and expose sample counts.
+- Correlation is unavailable for insufficient samples and zero-variance series.
+- Breadth is unavailable without a constituent universe and is calculated only from supplied constituent bars.
+- Naive snapshot-generation timestamps are rejected.
+
+Manual Windows GUI checklist
+1. Launch the standalone application and open MARKET INTEL.
+2. Confirm the current configured instruments appear and missing history is shown as N/A.
+3. Confirm latest regime labels and evidence values update after market refresh.
+4. Confirm annualised 10D / 20D / 60D volatility, volatility percentile, ATR(14) and expected move appear only with sufficient completed history.
+5. Confirm correlation pairs display 20D and 60D values only when sufficient aligned samples exist; sample counts are visible.
+6. Confirm MARKET BREADTH remains UNAVAILABLE without a constituent data source.
+7. Confirm the data feed status distinguishes UPDATED, PARTIAL, CACHED and NO DATA.
+8. Confirm cached observations are not described as live or updated.
+9. Switch through CYAN, AMBER, MATRIX, VIOLET, ICE and LIGHT and inspect card contrast, headings, labels and scrollbars.
+10. Refresh market data and confirm the interface remains responsive.
+11. Confirm v10.15 Alert Intelligence Center, v10.14 Command Center, all session clocks, alerts, calendar, Regime Lab, Volatility Lab, Session Performance, Focus & Goals and alarm functionality remain intact.
+
+Data and methodology checks
+- Regime labels use only completed current/past OHLC observations. Forward outcomes do not feed labels.
+- Realised volatility is annualised using the sqrt(252) trading-day convention.
+- Correlation is Pearson correlation of date-aligned daily log returns, not causal evidence.
+- Breadth requires real constituent-level observations; no proxy-derived breadth is allowed.
+- Existing Yahoo Finance chart data remains unofficial and indicative.
+- No broker integration, trade recommendation, order placement or automated trading is introduced.
+
+Automated validation / artifact details
+- To be filled from the successful latest-head GitHub Actions run.
+- Do not label this release ready until all Python test-matrix jobs and the Windows package verification succeed.
+
+Manual Windows GUI review remains outstanding. Keep PR #7 in draft until the checklist above has been completed on the target Windows desktop.

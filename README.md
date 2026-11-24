@@ -1,6 +1,6 @@
-# Veltrix Trading Clock — v10.15 Alert Intelligence Center
+# Veltrix Trading Clock — v10.16 Market Intelligence Engine
 
-Veltrix v10.15 adds a dedicated Alert Intelligence Center on top of the v10.14 Trading Command Center, v10.13 smooth session clocks and v10.12 high-readability desktop interface. It focuses on market-session awareness, alert lifecycle management, persistent acknowledgement, notification deduplication and clearer upcoming-event context.
+Veltrix v10.16 adds a research-focused Market Intelligence workspace on top of the v10.15 Alert Intelligence Center, v10.14 Trading Command Center, v10.13 smooth session clocks and v10.12 high-readability desktop interface. It combines causal OHLC regime classification, annualised realised volatility, rolling volatility context and cross-asset correlation using the existing market-data feed.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -12,10 +12,25 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Alerts & Events / Alert Intelligence Center** — status counters and a searchable alert terminal for active, upcoming, triggered and acknowledged items. Filter by status, market/currency, impact, alert category and relative timeframe; inspect the source and detail; acknowledge individual or visible triggered alerts. Cached calendar context is explicitly labelled when no successful fetch has occurred during the current run. Persistent alert history and stable-ID deduplication sit above the retained Market Watch, FX reference watchlist, economic calendar and original alert-rule preferences.
 - **Economic Calendar** — third-party public calendar feed, impact filters, cached results and high-impact reminders.
 - **Volatility Lab** — indicative Yahoo Finance market monitoring, ATR, one-day historical expected move and session volatility observations.
+- **Market Intelligence** — per-instrument causal regime and volatility snapshots, 20/60-day Pearson correlation of aligned daily log returns, evidence diagnostics and data-freshness context. Market breadth remains unavailable until a real constituent universe is configured.
 - **Regime Lab** — import completed OHLC history from a CSV, classify bars as range, trend-up, trend-down, volatility shock or transition, inspect historical conditional outcomes and export classifications.
 - **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime; v10.11 adds chronological training/holdout validation.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
+
+## v10.16 Market Intelligence Engine
+
+The new **MARKET INTEL** workspace reuses the existing market snapshot and OHLC calculations. It does not add a new provider or infer a market-wide condition from unrelated proxy instruments.
+
+- **Causal regime context:** displays the latest per-instrument RANGE, TREND_UP, TREND_DOWN, VOLATILITY_SHOCK, TRANSITION or WARMUP classification from completed OHLC bars. The current label uses only that bar and earlier observations; forward returns remain separate historical outcomes.
+- **Volatility profile:** reports 10-, 20- and 60-day annualised realised volatility from daily log returns, the 20-day realised-volatility percentile over up to 60 rolling windows, ATR(14) and ATR as a percentage of price, and the existing one-day 1σ expected-move estimate. Sample requirements are explicit and missing history remains N/A.
+- **Cross-asset correlation:** calculates 20- and 60-observation Pearson correlations from date-aligned daily log returns across the instruments already configured in Market Watch. Sample counts are shown; short samples and zero-variance pairs remain N/A.
+- **Market breadth:** is deliberately labelled UNAVAILABLE unless a constituent-level OHLC universe is explicitly supplied. The application does not pretend an index/futures pair is market breadth.
+- **Evidence:** each instrument card exposes efficiency ratio, ATR-normalised regression slope, fast/slow ATR ratio, current true range relative to prior ATR and the rolling volatility percentile.
+- **Freshness:** differentiates current-run observations, partial feeds, cached observations and no data. Cached values are never described as newly updated.
+- The page refresh button uses the existing background market-data worker. The previous workspaces, preferences, clocks and notification rules remain in place.
+
+All outputs are descriptive research context, not forecasts, buy/sell recommendations, order-book measurements or trade execution. The existing Yahoo Finance public chart adapter remains unofficial and indicative.
 
 ## v10.15 Alert Intelligence Center
 
