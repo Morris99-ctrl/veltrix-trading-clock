@@ -47,8 +47,30 @@ Data and methodology checks
 - Existing Yahoo Finance chart data remains unofficial and indicative.
 - No broker integration, trade recommendation, order placement or automated trading is introduced.
 
-Automated validation / artifact details
-- To be filled from the successful latest-head GitHub Actions run.
-- Do not label this release ready until all Python test-matrix jobs and the Windows package verification succeed.
+Automated validation
+
+Push validation
+- Run: 45298959859
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45298959859
+- Python 3.10: 257 tests passed.
+- Python 3.11: 257 tests passed.
+- Python 3.12: 257 tests passed.
+- Compileall passed on all three Python versions.
+- Windows standalone build, executable verification and artifact upload passed.
+
+Pull-request validation
+- Run: 45298994210
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45298994210
+- All three Python test jobs passed and the Windows desktop package job passed.
+- Both successful runs validated source commit 075ec0b24e9e29c761c15b289488e98590941428.
+
+Verified Windows artifact
+- Name: Veltrix-Trading-Clock-v10.16-Windows
+- Artifact ID: 14877233380
+- Size: 15,612,458 bytes
+- SHA-256: e09b2881d185dd0b55c59f03601f9e48ccedbc39f9e1735b97daa78ca4a6af7d
+- ZIP CRC/integrity test: passed; no archive errors.
+- Executable: VeltrixTradingClock.exe present.
+- Artifact expires: 22 February 2027.
 
 Manual Windows GUI review remains outstanding. Keep PR #7 in draft until the checklist above has been completed on the target Windows desktop.
