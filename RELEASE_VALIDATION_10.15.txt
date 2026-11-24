@@ -48,4 +48,22 @@ Data and safety checks
 - Session hours are configured schedules; they are not guaranteed broker hours or executable availability.
 - A passing unit suite does not prove Windows rendering, provider uptime or trading profitability.
 
-CI run, test count, artifact ID, ZIP integrity and SHA-256 should be filled from the successful latest-head GitHub Actions run after validation.
+Successful GitHub Actions run
+- Run: 45296053956
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45296053956
+- Python 3.10: 245 tests passed.
+- Python 3.11: 245 tests passed.
+- Python 3.12: 245 tests passed.
+- Compileall passed on all three Python versions.
+- Windows standalone build, executable verification and artifact upload passed.
+
+Verified Windows artifact
+- Name: Veltrix-Trading-Clock-v10.15-Windows
+- Artifact ID: 14875938903
+- Size: 15,588,060 bytes
+- SHA-256: 3d4da0a5bf515395fed2db608156efa0db1c96c585dfcc23d9d58dcdc32b340f
+- ZIP CRC/integrity test: passed; no archive errors.
+- Executable: VeltrixTradingClock.exe present.
+- Artifact expires: 22 February 2027.
+
+Manual Windows GUI review remains outstanding. Keep PR #6 in draft until the checklist above is completed on the target Windows desktop.
