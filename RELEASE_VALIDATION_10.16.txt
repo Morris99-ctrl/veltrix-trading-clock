@@ -73,4 +73,7 @@ Verified Windows artifact
 - Executable: VeltrixTradingClock.exe present.
 - Artifact expires: 22 February 2027.
 
-Manual Windows GUI review remains outstanding. Keep PR #7 in draft until the checklist above has been completed on the target Windows desktop.
+Manual Windows GUI review
+- User confirmed successful launch and review of the v10.16 Windows desktop build on 24 November 2026.
+- Automated checks and the user's desktop review are both complete.
+- PR #7 is ready for review but remains unmerged pending the normal release decision.
