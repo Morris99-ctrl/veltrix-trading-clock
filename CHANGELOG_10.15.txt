@@ -1,0 +1,30 @@
+VELTRIX TRADING CLOCK v10.15 — ALERT INTELLIGENCE CENTER
+
+Overview
+- Adds a dedicated alert lifecycle terminal above the existing Market Watch workspace.
+- Preserves current session, risk, manual-event and economic-calendar notification scheduling.
+
+Alert Intelligence Center
+- ACTIVE rows show currently open configured sessions and live configured overlaps.
+- UPCOMING rows show session transitions, manual reminders and scheduled/moved provider events inside the next 24 hours.
+- TRIGGERED rows record alerts emitted by the existing session, risk, manual reminder and live calendar pipelines.
+- ACKNOWLEDGED rows preserve acknowledgement history across application restarts.
+- Adds filters for lifecycle status, market/currency, impact and free-text search.
+- Selecting a row shows message detail, source, category, market and impact.
+- Adds selected-item acknowledgement and bulk acknowledgement for visible triggered rows.
+- Upcoming rows are informational and never bypass existing notification lead-time settings.
+
+Deduplication and persistence
+- Session, risk, manual-event and live-calendar alerts use stable IDs.
+- Duplicate stable IDs are suppressed before appending in-app history, playing the notification sound or starting a Windows toast.
+- Triggered and acknowledged records are stored in the existing local configuration file.
+- History is bounded to 250 records and 30 days; the dedupe-ID tail is bounded to 600 entries.
+- Old configuration files without an alert_center section remain valid.
+
+Preserved behaviour and data boundaries
+- Existing Market Watch, FX reference-week schedule, public calendar panel, alert preferences, per-session lead times, sound setting, Windows notification setting and test notification remain.
+- The existing calendar reminder freshness guard remains in place; cached events may appear as upcoming context but cannot independently trigger a live calendar reminder.
+- Session transitions are configured schedule context, not broker execution availability.
+- No new provider, broker integration, quote trigger, order execution or trading automation is introduced.
+- Alerts are contextual information, not trade signals.
+
