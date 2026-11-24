@@ -2,6 +2,8 @@
 
 Veltrix v10.16 adds a research-focused Market Intelligence workspace on top of the v10.15 Alert Intelligence Center, v10.14 Trading Command Center, v10.13 smooth session clocks and v10.12 high-readability desktop interface. It combines causal OHLC regime classification, annualised realised volatility, rolling volatility context and cross-asset correlation using the existing market-data feed.
 
+**Current release:** v10.16. Automated validation and the Windows standalone build passed, and the desktop build was manually reviewed successfully on 24 November 2026. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
+
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
 ## Included workspaces
@@ -211,7 +213,7 @@ GitHub Actions runs the same compile and unit-test checks on Python 3.10, 3.11 a
 
 Workflow details and build artifacts are available in the [GitHub Actions page](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/workflows/core-edition-ci.yml).
 
-The v10.9 baseline passed 208 tests. The v10.10 release passed **214 tests** on Python 3.10, 3.11 and 3.12; the Windows PyInstaller build, executable verification and artifact upload also succeeded in [workflow run 45271034244](https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45271034244). Manual native Windows GUI review remains required. See RELEASE_VALIDATION_10.10.txt.
+The v10.16 release passed **257 automated tests** on each of Python 3.10, 3.11 and 3.12, and the compile checks passed on all three versions. The Windows standalone build, executable verification and artifact upload also passed. The user confirmed successful launch and desktop review of the v10.16 Windows build on 24 November 2026. See `CHANGELOG_10.16.txt` and `RELEASE_VALIDATION_10.16.txt` for the release-specific feature and validation record. Earlier release counts are retained in their individual validation notes.
 
 The automated suite covers session/DST handling, analog-clock hand geometry, UTC session timeline, weekly session hours, historical overlap calculations, profile validation, exchange holidays, early closes, session risk flags, liquidity cautions and per-session reminder overrides, alerts, calendar parsing and reminders, market-data normalisation, volatility calculations, causal Regime Lab classification and data import, rolling session metrics, compounded return, maximum drawdown, sample-gated rankings, dominant-regime attribution and score behaviour, focus persistence, alarm persistence, app paths and theme behaviour.
 
