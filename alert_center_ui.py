@@ -175,14 +175,17 @@ def _format_local_time(record: dict, home_zone) -> str:
         if parsed.tzinfo is None:
             return "TIME N/A"
         local_text = parsed.astimezone(home_zone).strftime("%d %b · %H:%M")
-    if str(record.get("status", "")).upper() == "UPCOMING":
-        remaining = max(0, int((parsed - datetime.now(timezone.utc)).total_seconds()))
-        days, remainder = divmod(remaining, 86400)
-        hours, remainder = divmod(remainder, 3600)
-        minutes = remainder // 60
-        eta = f"{days}d {hours}h" if days else (f"{hours}h {minutes:02d}m" if hours else f"{minutes}m")
-        local_text += f" · {eta}"
-    return local_text
+        if str(record.get("status", "")).upper() == "UPCOMING":
+            remaining = max(0, int((parsed - datetime.now(timezone.utc)).total_seconds()))
+            days, remainder = divmod(remaining, 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes = remainder // 60
+            eta = (
+                f"{days}d {hours}h" if days
+                else (f"{hours}h {minutes:02d}m" if hours else f"{minutes}m")
+            )
+            local_text += f" · {eta}"
+        return local_text
     except (TypeError, ValueError, OverflowError, OSError):
         return "TIME N/A"
 
