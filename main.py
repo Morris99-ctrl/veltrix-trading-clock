@@ -4183,8 +4183,15 @@ class VeltrixTradingClock:
             "warning": "HIGH", "event": "HIGH", "transition": "MEDIUM",
             "overlap": "MEDIUM", "info": "INFO",
         }.get(str(category).lower(), "INFO")
+        record_category = {
+            "Session risk": "risk",
+            "Session scheduler": "session",
+            "Session overlap": "overlap",
+            "Manual reminder": "economic",
+            "Economic calendar": "economic",
+        }.get(source, category)
         record = self.alert_center.record_triggered(
-            alert_id=alert_id, title=title, message=message, category=category,
+            alert_id=alert_id, title=title, message=message, category=record_category,
             source=source, market=market, impact=resolved_impact, now=now_utc,
         )
         # Stable IDs make notifications idempotent across refreshes and app restarts.
