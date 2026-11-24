@@ -35,7 +35,7 @@ def _parse_iso(value: Any) -> datetime | None:
 
 def _normalise_impact(value: Any, fallback: str = "INFO") -> str:
     impact = str(value or fallback).strip().upper()
-    aliases = {"CRITICAL": "HIGH", "SEVERE": "HIGH", "MODERATE": "MEDIUM", "NONE": "INFO"}
+    aliases = {"CRITICAL": "HIGH", "SEVERE": "HIGH", "WARNING": "HIGH", "CAUTION": "MEDIUM", "MODERATE": "MEDIUM", "NONE": "INFO"}
     impact = aliases.get(impact, impact)
     return impact if impact in IMPACTS else fallback
 
