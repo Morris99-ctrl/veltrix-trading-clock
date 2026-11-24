@@ -1,0 +1,39 @@
+VELTRIX TRADING CLOCK v10.5 — SESSION RISK AWARENESS VALIDATION
+
+Implemented
+- Added per-session risk assessment with NORMAL, CAUTION and HIGH levels.
+- Added risk labels to the four Global Sessions cards.
+- Added exchange holiday, early-close, closing-process, schedule-only, pre-holiday and post-holiday flags.
+- Added opening-window, near-close and pre-open schedule flags.
+- Added one-time risk notifications keyed by session/date/flag.
+- Added independent Sydney, Tokyo, London and New York pre-open/pre-close reminder lead times.
+- Added user controls for risk flags, risk notifications, holiday-liquidity cautions, opening-window minutes, closing-window minutes and pre-open flag minutes.
+- Added persistence and configuration validation for session_risk settings and session lead overrides.
+- Updated README, desktop installation guide, quick start, changelog, Windows metadata and CI artifact name.
+
+Important interpretation
+- Holiday-liquidity flags are calendar heuristics only. They do not measure actual liquidity, volume, spread, order-book depth, slippage or volatility.
+- Opening/closing window flags are based on scheduled local session times. They do not predict market direction or actual realised volatility.
+- Holiday-specific warnings require the optional v10.4 cash-exchange overlay. With the overlay disabled, risk assessment uses the configured local session schedule only.
+
+Completed automated checks (GitHub Actions run 190)
+1. Python 3.10, 3.11 and 3.12 compileall passed.
+2. All 165 unit tests passed on each Python version.
+3. Windows hash-pinned build dependencies installed successfully.
+4. PyInstaller built the one-folder Windows desktop application.
+5. Executable existence verification passed.
+6. The Veltrix-Trading-Clock-v10.5-Windows artifact uploaded successfully.
+
+Required manual Windows checks
+1. Inspect risk labels on all four session cards in all six themes.
+2. Verify NORMAL, CAUTION and HIGH states around normal opens/closes, holidays and early closes.
+3. Verify pre-holiday caution on the configured trading day before a published closure.
+4. Verify post-holiday caution on the first configured session after a published closure.
+5. Change Sydney, Tokyo, London and New York pre-open/pre-close reminder leads independently; save, restart and verify persistence.
+6. Change opening, closing and pre-open risk windows; save, restart and verify persistence.
+7. Disable card flags, risk notifications and holiday-liquidity cautions independently and verify each control's behavior.
+8. Verify risk notifications fire once per session/date/flag during an application run.
+9. Verify the exchange overlay OFF/ON behavior and the existing SCHEDULE ONLY state outside published coverage.
+10. Test the Alerts page layout and Global Sessions card wrapping at normal/minimum window sizes.
+
+No claim of live liquidity measurement, predictive volatility, trade execution suitability or profitability is made.

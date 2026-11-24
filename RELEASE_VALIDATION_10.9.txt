@@ -1,0 +1,46 @@
+VELTRIX TRADING CLOCK v10.9 — RELEASE VALIDATION
+
+AUTOMATED VALIDATION
+- Compileall and all **208 automated tests passed** on Python 3.10, 3.11 and 3.12.
+- Latest successful workflow: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45269026544
+- Session performance tests cover return/range/realised-volatility metrics,
+  local IANA timezone allocation, daylight-saving boundaries, overlap return,
+  overlap coverage estimates, minimum sample/coverage filters and CSV export.
+- Workspace wiring tests confirm the page uses the existing local Regime Lab
+  dataset library and runs analysis in a background queue.
+- Windows job built the PyInstaller app, verified VeltrixTradingClock.exe and
+  uploaded Veltrix-Trading-Clock-v10.9-Windows successfully (artifact ID 14863289358).
+
+MANUAL WINDOWS GUI CHECKLIST
+[ ] Launch v10.9 and inspect the new SESSION PERFORMANCE navigation tab.
+[ ] Import an intraday OHLC CSV in Regime Lab and select that same dataset here.
+[ ] Confirm dataset name, source and median bar interval are displayed.
+[ ] Run a study using default minimum bars=3 and coverage=50%.
+[ ] Try a lower-coverage sample and confirm excluded session days are counted.
+[ ] Check session means, positive-day rates, ranges and realised-volatility rows.
+[ ] Check pairwise overlap rows and their sample-day counts.
+[ ] Change the selected dataset; confirm old results are cleared.
+[ ] Change the active session profile; confirm old results are cleared.
+[ ] Export daily rows and inspect SESSION / OVERLAP types and exclusion reasons.
+[ ] Switch all six themes; inspect trees, controls, chart and scrollbars.
+[ ] Verify Regime Lab still imports, classifies and exports the same dataset.
+[ ] Resize the window and scroll the page; ensure controls and tables remain usable.
+
+DATA / METHODOLOGY LIMITATIONS
+- CSV bar timestamps are treated as bar-open times.
+- Naive timestamps were interpreted in the selected IANA home timezone during
+  the original import; offset-aware timestamps are converted to UTC.
+- Session classification uses the active profile's local weekday/open/close
+  conventions. Exchange holidays, early closes, broker-specific hours and
+  maintenance breaks are not separately applied.
+- Session coverage is estimated by observed bars / expected bars from the
+  median imported interval. It is not proof of complete minute-level coverage.
+- Realised volatility is not annualised. Returns do not include transaction costs.
+- This is historical description, not a forecast or trade recommendation.
+
+RELEASE STATUS
+- Automated tests: 208 passed across Python 3.10/3.11/3.12. Windows package:
+  successful build, executable verification and artifact upload.
+- Manual Windows GUI verification: pending.
+- Manual Windows GUI verification: pending.
+- Keep this release in draft until the manual checklist is completed.

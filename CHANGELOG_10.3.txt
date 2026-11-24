@@ -1,0 +1,26 @@
+VELTRIX TRADING CLOCK — v10.3 / MARKET SESSION INTELLIGENCE
+
+SELECTABLE SESSION PROFILES
+- Added Current Configuration, Forex Standard, Equities Cash and Extended Monitoring profiles.
+- Added a custom profile editor for per-market local open/close times and active weekdays.
+- Profile changes are applied to the existing SessionDefinition objects used by clocks, alerts and the timeline.
+- Persisted the selected profile, original baseline schedule and custom schedules in config.json so profile switching does not overwrite the starting schedule.
+- Added validation for HH:MM values, same-day open/close ordering and non-empty weekday selections.
+
+WEEKLY SESSION HOURS
+- Added weekly scheduled-hours and active-day summaries for Sydney, Tokyo, London and New York.
+- Weekly reporting uses each session's local Monday-Sunday calendar week and IANA timezone, including daylight-saving duration changes.
+
+HISTORICAL SCHEDULED OVERLAPS
+- Added selectable 7, 30 and 90-day scheduled-overlap reconstruction.
+- Reports total overlap hours, average overlap per calendar day, busiest UTC day and overlap duration by market pair.
+- Historical reports are reconstructed from the currently selected schedule profile; they do not represent observed exchange opening records and do not include unknown holiday/emergency closures.
+
+ENGINEERING AND DOCUMENTATION
+- Added session_profiles.py and session_intelligence.py.
+- Added tests for preset/custom profile validation, metadata preservation, weekly hours, historical pair breakdowns and config persistence.
+- Updated README, install guide, quick start, Windows version metadata and CI artifact name to v10.3.
+
+VALIDATION REQUIREMENTS
+- v10.3 GitHub Actions passed compileall and all 138 tests on Python 3.10, 3.11 and 3.12; Windows PyInstaller packaging, executable verification and artifact upload also succeeded.
+- Manual Windows review must verify profile switching, custom hours persistence across restart, timezone/DST behavior, six themes and layout at normal/minimum window sizes.

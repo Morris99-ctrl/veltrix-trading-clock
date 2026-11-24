@@ -6,33 +6,23 @@ from __future__ import annotations
 
 import math
 import queue
-import shutil
 import sys
 import threading
 import time
 import tkinter as tk
 import webbrowser
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from zoneinfo import ZoneInfo
-from typing import Any, Callable, Optional
+from typing import Any
 
 from alert_engine import due_session_alerts
-from market_data import fetch_chart, fetch_market_snapshot, load_market_cache, save_market_cache
+from alert_intelligence import AlertCenterStore
+from market_data import fetch_market_snapshot, load_market_cache, save_market_cache
 from volatility_engine import instrument_summary, session_volatility_report, evaluate_volatility_regimes
-from bar_engine import build_bars_from_tick_csv, import_tick_csv
-from backtest_engine import (
-    BacktestConfig, export_backtest_html, export_trades_csv, run_out_of_sample, run_walk_forward,
-)
-from research_engine import (
-    analyse_research_assets, build_research_instrument_choices, custom_research_asset_key,
-    export_daily_observations_csv, export_html_report, export_summary_csv, import_ohlc_csv, infer_bar_interval_minutes,
-    load_research_cache, save_research_cache,
-)
 from calendar_engine import (
     calendar_is_due,
     calendar_retry_delay_seconds,
@@ -42,20 +32,47 @@ from calendar_engine import (
     save_calendar_cache,
 )
 from desktop_notifications import send_desktop_notification
-from data_gateway import (
-    CREDENTIAL_LOAD_ERROR, DataGatewayError, PROVIDER_CATALOG, audit_ohlc_bars, compare_ohlc_datasets,
-    fetch_massive_bars, fetch_twelve_data_bars, provider_statuses, test_provider_connection,
-)
 from session_engine import format_countdown, get_session_state, load_session_definitions
 from themes import THEMES
 from ui_theme import (
-    apply_veltrix_classic_widget_palette, apply_veltrix_ttk_palette, prepare_veltrix_ttk_theme,
+    apply_veltrix_classic_widget_palette, apply_veltrix_font_defaults,
+    apply_veltrix_ttk_palette, prepare_veltrix_ttk_theme, UI_FONT,
 )
 from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
+from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
+from session_clock import session_clock_hand_endpoints, session_clock_hand_polygon_coordinates
+from session_visuals import (
+    session_window_progress, session_window_arc_angles, utc_offset_label,
+    local_day_phase, timeline_probe_from_x, session_calendar_close_override,
+)
+from session_timeline import build_session_timeline
+from session_intelligence import historical_overlap_report, weekly_session_hours
+from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
+from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events
+from risk_engine import assess_session_risk, due_session_risk_alerts
+from alerts_dashboard import (
+    build_alerts_dashboard, refresh_alerts_dashboard,
+    apply_alerts_tree_theme, update_recent_alerts, toggle_alert_settings,
+)
+from alert_center_ui import (
+    build_alert_center, refresh_alert_center, apply_alert_center_theme,
+)
+from session_performance import analyse_session_performance, export_session_performance_csv
+from session_performance_ui import (
+    build_session_performance_page, refresh_session_performance_dataset_choices,
+    render_session_performance_result, apply_session_performance_theme,
+)
 from alarm_persistence import load_alarm_state, save_alarm_state
 from config_store import load_config, save_config
+from command_center_ui import (
+    build_command_center_page, refresh_command_center, apply_command_center_theme,
+)
+from market_intelligence_ui import (
+    build_market_intelligence_page, refresh_market_intelligence_page,
+    apply_market_intelligence_theme,
+)
 
 try:
     import pygame
@@ -67,13 +84,15 @@ BASE_DIR = APP_DATA_DIR
 CONFIG_PATH = BASE_DIR / "config.json"
 CALENDAR_CACHE_PATH = BASE_DIR / "calendar_cache.json"
 MARKET_CACHE_PATH = BASE_DIR / "market_cache.json"
-RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
-TICK_DATA_DIR = BASE_DIR / "tick_data"
+REGIME_DATA_PATH = BASE_DIR / "regime_data.json"
+LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "9.6"
+APP_VERSION = "10.16"
 UI_QUEUE_POLL_MS = 500
+SESSION_CLOCK_FRAME_MS = 16
+SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
 
 DIGIT_SEGMENTS = {
     "0": "abcdef",
@@ -98,7 +117,49 @@ class VeltrixTradingClock:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.config = self._load_config()
-        self.sessions = load_session_definitions(self.config["sessions"])
+        # Drop retired workspace preferences when an existing v9.x config is reused.
+        self.config.pop("research", None)
+        self.config.pop("backtest", None)
+        if isinstance(self.config.get("regime_lab"), dict):
+            self.config["regime_lab"].pop("selected_asset", None)
+        profile_settings = self.config.get("session_profiles", {})
+        if not isinstance(profile_settings, dict):
+            profile_settings = {}
+        raw_base_sessions = profile_settings.get("base_sessions")
+        if not isinstance(raw_base_sessions, list) or not raw_base_sessions:
+            raw_base_sessions = self.config["sessions"]
+        self.session_profile_base_sessions = [
+            dict(item) for item in raw_base_sessions if isinstance(item, dict)
+        ]
+        raw_custom_schedules = profile_settings.get("custom", {})
+        if not isinstance(raw_custom_schedules, dict):
+            raw_custom_schedules = {}
+        self.custom_session_schedules = {
+            str(key): dict(value)
+            for key, value in raw_custom_schedules.items()
+            if isinstance(value, dict)
+        }
+        self.active_session_profile = str(
+            profile_settings.get("selected", "Current Configuration")
+        )
+        try:
+            applied_schedules = build_profile_sessions(
+                self.session_profile_base_sessions,
+                self.active_session_profile,
+                self.custom_session_schedules,
+            )
+        except (ValueError, TypeError):
+            self.active_session_profile = "Current Configuration"
+            applied_schedules = build_profile_sessions(
+                self.session_profile_base_sessions, "Current Configuration"
+            )
+        self.config["sessions"] = applied_schedules
+        self.config["session_profiles"] = {
+            "selected": self.active_session_profile,
+            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
+            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
+        self.sessions = load_session_definitions(applied_schedules)
         self.home_zone = ZoneInfo(self.config.get("home_timezone", "Africa/Nairobi"))
         self.refresh_ms = max(1000, min(5000, int(self.config.get("refresh_milliseconds", 1000))))
         self.theme_name = self.config.get("theme", "CYAN")
@@ -113,14 +174,15 @@ class VeltrixTradingClock:
             except tk.TclError:
                 # Some non-Windows Tk builds do not support .ico window icons.
                 pass
-        self.root.geometry("1160x1020")
-        self.root.minsize(900, 760)
+        self.root.geometry("1280x900")
+        self.root.minsize(1080, 740)
         self.root.configure(bg=THEMES[self.theme_name]["bg"])
         # Use a ttk theme that honours Veltrix's palette on Windows as well as
         # Linux/macOS. Native Windows "vista" controls can remain white even
         # when fieldbackground and Treeview heading colours are configured.
         self.ttk_style = ttk.Style(self.root)
         self.ttk_theme_name = prepare_veltrix_ttk_theme(self.ttk_style)
+        apply_veltrix_font_defaults(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Original alarm-clock state and callbacks.
@@ -140,6 +202,7 @@ class VeltrixTradingClock:
                 )
         self.alarm_window: tk.Toplevel | None = None
         self.clock_job: str | None = None
+        self.session_animation_job: str | None = None
         self.alarm_job: str | None = None
         self.bell_job: str | None = None
         self.audio_available = False
@@ -150,7 +213,20 @@ class VeltrixTradingClock:
         self.minute_var = tk.StringVar(value="00")
         self.period_var = tk.StringVar(value="AM")
         self.theme_var = tk.StringVar(value=self.theme_name)
+        self.session_profile_var = tk.StringVar(value=self.active_session_profile)
+        self.session_history_period_var = tk.StringVar(value="30")
+        exchange_settings = self.config.get("exchange_calendar", {})
+        if not isinstance(exchange_settings, dict):
+            exchange_settings = {}
+        self.exchange_calendar_enabled_var = tk.BooleanVar(
+            value=bool(exchange_settings.get("enabled", False))
+        )
+        self.session_intelligence_cache_key: tuple | None = None
         self.cards: dict[str, dict[str, tk.Widget]] = {}
+        self.latest_session_states: list = []
+        self.session_probe_utc: datetime | None = None
+        self.session_timeline_plot: tuple[float, float, datetime] | None = None
+        self.world_dial_signature: tuple | None = None
         self.theme_items: list[tuple[tk.Widget, str, str | None]] = []
         self.clock_canvas_signature: tuple[int, int, str] | None = None
 
@@ -168,11 +244,28 @@ class VeltrixTradingClock:
             **self.config.get("alerts", {}),
         }
         self.alert_vars: dict[str, tk.BooleanVar] = {}
+        self.session_lead_vars: dict[str, dict[str, tk.StringVar]] = {}
+        self.session_lead_spins: list[tk.Spinbox] = []
+        self.risk_checkbuttons: list[tk.Checkbutton] = []
+        raw_risk_settings = self.config.get("session_risk", {})
+        if not isinstance(raw_risk_settings, dict):
+            raw_risk_settings = {}
+        self.session_risk_settings = {
+            "enabled": True,
+            "notifications_enabled": True,
+            "holiday_liquidity_flags": True,
+            "opening_window_minutes": 15,
+            "closing_window_minutes": 15,
+            "pre_open_window_minutes": 15,
+            **raw_risk_settings,
+        }
+        self.risk_alerted_keys: set[str] = set()
         self.alerted_session_keys: set[str] = set()
         self.alerted_event_ids: set[str] = set()
         self.previous_overlap_active: bool | None = None
         self.economic_events: list[dict] = list(self.config.get("economic_events", []))
         self.alert_log_lines: list[str] = []
+        self.alert_center = AlertCenterStore(self.config.get("alert_center", {}))
         self.is_closing = False
 
         # Phase 11: persistent personal focus timers, goals and milestones.
@@ -262,41 +355,22 @@ class VeltrixTradingClock:
         self.market_summaries: dict[str, dict] = {}
         self.market_status_message = "WAITING FOR MARKET DATA"
 
-        # Phase 6 historical research datasets. Imported CSV data and provider
-        # history are kept separately so refreshes never silently overwrite a broker import.
-        # Large research caches are read after the UI is built, never during Tk startup.
-        self.research_cache: dict = {"assets": {}, "provider_assets": {}, "tick_sources": {}}
-        self.research_asset_data: dict[str, dict] = {}
-        self.research_provider_assets: dict[str, dict] = {}
-        self.research_tick_sources: dict[str, dict] = {}
-        self.tick_source_label_to_key: dict[str, str] = {}
-        self.tick_source_var = tk.StringVar(value="")
-        self.tick_bar_method_var = tk.StringVar(value="Tick Imbalance")
-        self.tick_fixed_size_var = tk.StringVar(value="500")
-        self.tick_seed_size_var = tk.StringVar(value="250")
-        self.tick_ewma_span_var = tk.StringVar(value="20")
-        self.tick_imbalance_ewma_span_var = tk.StringVar(value="20")
-        self.tick_min_imbalance_var = tk.StringVar(value="0.05")
-        self.tick_output_name_var = tk.StringVar(value="")
-        self.research_cache_loading = True
-        self.research_cache_load_queue: queue.Queue[dict | None] = queue.Queue()
-        self.research_cache_load_job: str | None = None
-        self.research_cache_write_queue: queue.Queue[dict | None] = queue.Queue(maxsize=1)
-        self.research_cache_error_queue: queue.Queue[str] = queue.Queue()
-        self.research_cache_writer_thread: threading.Thread | None = None
-        self.research_settings = {
-            "interval": "1h", "range": "3mo", "window_days": 90,
-            "csv_timezone": "UTC", "selected_asset": (self.market_instruments[0]["key"] if self.market_instruments else ""),
-            **self.config.get("research", {}),
-        }
-        # Phase 12: causal market-regime research. This is descriptive analysis only;
-        # it does not emit trade signals or submit orders.
+        # Core Edition: standalone local OHLC dataset library for Regime Lab.
+        self.regime_datasets: dict[str, dict[str, Any]] = {}
+        self.regime_dataset_label_to_key: dict[str, str] = {}
+        self.regime_cache_loading = True
+        self.regime_cache_load_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.regime_cache_load_job: str | None = None
+        self.regime_cache_write_queue: queue.Queue[dict[str, dict[str, Any]] | None] = queue.Queue(maxsize=1)
+        self.regime_cache_writer_thread: threading.Thread | None = None
+        self.regime_import_result_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.regime_import_queue_job: str | None = None
+        self.regime_import_in_progress = False
         self.regime_settings = {
             "lookback": 20, "atr_fast_period": 14, "atr_slow_period": 50,
             "range_er_max": 0.25, "trend_er_min": 0.35,
             "trend_slope_atr_min": 0.20, "shock_atr_ratio": 1.80,
             "shock_true_range_multiple": 2.50, "forward_horizon": 10,
-            "selected_asset": str(self.research_settings.get("selected_asset", "")),
             **self.config.get("regime_lab", {}),
         }
         self.regime_vars = {
@@ -313,76 +387,20 @@ class VeltrixTradingClock:
         self.regime_in_progress = False
         self.regime_result_queue: queue.Queue[tuple[str, dict, dict | None, str | None]] = queue.Queue()
         self.regime_queue_job: str | None = None
-        self.research_fetch_in_progress = False
-        self.research_result_queue: queue.Queue[tuple[dict | None, str | None]] = queue.Queue()
-        self.research_queue_job: str | None = None
-        self.research_analysis_result_queue: queue.Queue[tuple[int, list[dict] | None, dict | None, dict | None, str | None]] = queue.Queue()
-        self.research_analysis_queue_job: str | None = None
-        self.research_analysis_in_progress = False
-        self.research_data_revision = 0
-        self.research_analysis_revision = -1
-        self.research_analysis_failed_revision = -1
-        self.research_rows: list[dict] = []
-        self.research_observations: dict[str, list[dict]] = {}
-        self.research_metadata_cache: dict[str, dict] = {}
-        self.research_asset_var = tk.StringVar(value="")
-        self.research_window_var = tk.StringVar(value=str(self.research_settings.get("window_days", 90)))
-        self.research_timezone_var = tk.StringVar(value=str(self.research_settings.get("csv_timezone", "UTC")))
 
-        # Phase 10 provider-independent data gateway and benchmark workspace.
-        today_utc = datetime.now(timezone.utc).date()
-        self.data_provider_var = tk.StringVar(value="Twelve Data")
-        self.data_market_type_var = tk.StringVar(value="forex")
-        self.data_symbol_var = tk.StringVar(value="XAU/USD")
-        self.data_canonical_var = tk.StringVar(value="XAUUSD_SPOT")
-        self.data_interval_var = tk.StringVar(value="5m")
-        self.data_start_var = tk.StringVar(value=(today_utc - timedelta(days=7)).isoformat())
-        self.data_end_var = tk.StringVar(value=today_utc.isoformat())
-        self.data_dataset_name_var = tk.StringVar(value="XAUUSD Spot · Twelve Data")
-        self.data_center_status_var = tk.StringVar(value="PROVIDER GATEWAY READY · NO PROVIDER REQUEST HAS BEEN MADE")
-        self.data_compare_left_var = tk.StringVar(value="")
-        self.data_compare_right_var = tk.StringVar(value="")
-        self.data_provider_status_labels: dict[str, tk.Label] = {}
-        self.data_center_entries: list[tk.Entry] = []
-        self.data_compare_label_to_key: dict[str, str] = {}
-        self.data_center_result_queue: queue.Queue[dict] = queue.Queue()
-        self.data_center_queue_job: str | None = None
-        self.data_center_busy = False
-
-        # Phase 7 strategy research and event-driven backtesting state.
-        self.backtest_settings = {
-            "fast_period": 20, "slow_period": 50, "atr_period": 14,
-            "stop_atr_multiple": 2.0, "target_r_multiple": 2.0, "direction": "both",
-            "initial_capital": 10_000.0, "risk_per_trade_pct": 0.5,
-            "commission_bps": 1.0, "commission_per_unit": 0.0, "slippage_bps": 1.0,
-            "point_value": 1.0, "quantity_step": 0.01, "max_leverage": 1.0,
-            "train_fraction_pct": 70, "walk_forward_train_fraction_pct": 50,
-            "walk_forward_folds": 3, "account_currency": "USD",
-            **self.config.get("backtest", {}),
-        }
-        self.backtest_vars = {
-            key: tk.StringVar(value=str(self.backtest_settings.get(key, default)))
-            for key, default in {
-                "fast_period": 20, "slow_period": 50, "atr_period": 14,
-                "stop_atr_multiple": 2.0, "target_r_multiple": 2.0, "direction": "both",
-                "initial_capital": 10_000.0, "risk_per_trade_pct": 0.5,
-                "commission_bps": 1.0, "commission_per_unit": 0.0, "slippage_bps": 1.0,
-                "point_value": 1.0, "quantity_step": 0.01, "max_leverage": 1.0,
-                "train_fraction_pct": 70, "walk_forward_train_fraction_pct": 50,
-                "walk_forward_folds": 3,
-            }.items()
-        }
-        self.backtest_asset_var = tk.StringVar(value="")
-        self.backtest_result: dict[str, Any] | None = None
-        self.backtest_in_progress = False
-        self.backtest_result_queue: queue.Queue[tuple[dict | None, str | None]] = queue.Queue()
-        self.backtest_queue_job: str | None = None
+        # Historical session-performance research uses the same local OHLC library.
+        self.session_performance_result: dict[str, Any] | None = None
+        self.session_performance_result_metadata: dict[str, Any] = {}
+        self.session_performance_in_progress = False
+        self.session_performance_result_queue: queue.Queue[tuple[str, dict, dict | None, str | None]] = queue.Queue()
+        self.session_performance_queue_job: str | None = None
 
         self._initialise_audio()
         self._build_interface()
         self.apply_theme()
         self._render_market_snapshot()
         self.update_clock()
+        self.session_animation_job = self.root.after(SESSION_CLOCK_FRAME_MS, self._animate_session_clocks)
         self.check_alarm()
         self.calendar_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_calendar_results)
         self.calendar_startup_fetch_job = self.root.after(700, lambda: self.refresh_live_calendar(silent=True))
@@ -390,21 +408,18 @@ class VeltrixTradingClock:
         self.market_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_market_results)
         self.market_startup_fetch_job = self.root.after(1200, lambda: self.refresh_market_data(silent=True))
         self._schedule_market_auto_refresh()
-        self.research_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_results)
-        self.research_analysis_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_analysis_results)
-        self.research_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_cache_load_results)
-        self.backtest_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_backtest_results)
         self.regime_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_results)
-        self.data_center_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_data_center_results)
-        self.focus_tick_job = self.root.after(1000, self._focus_timer_tick)
-        self.research_cache_writer_thread = threading.Thread(
-            target=self._research_cache_writer_loop, name="VeltrixResearchCacheWriter", daemon=False
+        self.regime_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_cache_load_results)
+        self.regime_import_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_import_results)
+        self.session_performance_queue_job = self.root.after(
+            UI_QUEUE_POLL_MS, self._drain_session_performance_results
         )
-        self.research_cache_writer_thread.start()
-        self._start_research_cache_load()
-        self._render_research_page()
-        self._refresh_data_center_providers()
-        self._refresh_data_center_registry()
+        self.focus_tick_job = self.root.after(1000, self._focus_timer_tick)
+        self.regime_cache_writer_thread = threading.Thread(
+            target=self._regime_cache_writer_loop, name="VeltrixRegimeCacheWriter", daemon=False
+        )
+        self.regime_cache_writer_thread.start()
+        self._start_regime_cache_load()
 
     @staticmethod
     def _load_config() -> dict:
@@ -417,6 +432,10 @@ class VeltrixTradingClock:
     def _frame(self, parent: tk.Widget, *, bg: str = "bg", **kwargs) -> tk.Frame:
         palette = THEMES[self.theme_name]
         resolved_bg = {"card": "panel", "raised": "dim"}.get(bg, bg)
+        # Surfaces are separated by tone and spacing, not bright one-pixel outlines.
+        for option in ("highlightthickness", "highlightbackground", "highlightcolor"):
+            kwargs.pop(option, None)
+        kwargs.update(highlightthickness=0, bd=0, relief="flat")
         frame = tk.Frame(parent, bg=palette[resolved_bg], **kwargs)
         self._register_theme(frame, bg)
         return frame
@@ -432,6 +451,7 @@ class VeltrixTradingClock:
     ) -> tk.Label:
         palette = THEMES[self.theme_name]
         resolved_bg = {"card": "panel", "raised": "dim"}.get(bg, bg)
+        kwargs.setdefault("font", UI_FONT)
         label = tk.Label(parent, text=text, bd=0, bg=palette[resolved_bg], fg=palette[fg], **kwargs)
         self._register_theme(label, bg, fg)
         return label
@@ -445,19 +465,19 @@ class VeltrixTradingClock:
         header.pack(fill="x", pady=(0, 13))
         brand_block = self._frame(header)
         brand_block.pack(side="left", anchor="w")
-        self.brand_label = self._label(brand_block, "VELTRIX", fg="bright", font=("Consolas", 23, "bold"))
+        self.brand_label = self._label(brand_block, "VELTRIX", fg="bright", font=("Segoe UI", 23, "bold"))
         self.brand_label.pack(anchor="w")
         self.subtitle_label = self._label(
-            brand_block, "CAPITAL  /  GLOBAL TRADING & RESEARCH TERMINAL", fg="muted", font=("Consolas", 8, "bold")
+            brand_block, "CAPITAL  /  GLOBAL TRADING CLOCK", fg="muted", font=("Segoe UI", 9, "bold")
         )
         self.subtitle_label.pack(anchor="w", pady=(1, 0))
 
         right_header = self._frame(header)
         right_header.pack(side="right", anchor="e")
-        self.live_label = self._label(right_header, "● LIVE MONITOR", fg="success", font=("Consolas", 9, "bold"))
+        self.live_label = self._label(right_header, "● LIVE MONITOR", fg="success", font=("Segoe UI", 10, "bold"))
         self.live_label.pack(side="left", padx=(0, 13))
         self.theme_selector = tk.OptionMenu(right_header, self.theme_var, *THEMES.keys(), command=self.set_theme)
-        self.theme_selector.configure(font=("Consolas", 9, "bold"), relief="flat", bd=0, padx=7, pady=5, cursor="hand2")
+        self.theme_selector.configure(font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=7, pady=5, cursor="hand2")
         self.theme_selector.pack(side="left")
 
         # Main clock display, retaining the original seven-segment visual identity.
@@ -473,81 +493,120 @@ class VeltrixTradingClock:
 
         info_side = self._frame(hero, bg="panel")
         info_side.grid(row=0, column=1, sticky="nsew")
-        self.local_heading = self._label(info_side, "LOCAL CONTROL CLOCK", bg="panel", fg="muted", font=("Consolas", 9, "bold"))
+        self.local_heading = self._label(info_side, "LOCAL CONTROL CLOCK", bg="panel", fg="muted", font=("Segoe UI", 10, "bold"))
         self.local_heading.pack(anchor="w", pady=(8, 2))
-        self.home_time_label = self._label(info_side, "--:--:--", bg="panel", fg="bright", font=("Consolas", 27, "bold"))
+        self.home_time_label = self._label(info_side, "--:--:--", bg="panel", fg="bright", font=("Segoe UI", 27, "bold"))
         self.home_time_label.pack(anchor="w")
-        self.home_date_label = self._label(info_side, "Loading date...", bg="panel", fg="text", font=("Segoe UI", 9))
+        self.home_date_label = self._label(info_side, "Loading date...", bg="panel", fg="text", font=("Segoe UI", 10))
         self.home_date_label.pack(anchor="w", pady=(1, 12))
-        self.next_alarm_label = self._label(info_side, "◉  NEXT ALARM: NONE", bg="panel", fg="muted", font=("Consolas", 9, "bold"), wraplength=340, justify="left")
+        self.next_alarm_label = self._label(info_side, "◉  NEXT ALARM: NONE", bg="panel", fg="muted", font=("Segoe UI", 10, "bold"), wraplength=340, justify="left")
         self.next_alarm_label.pack(anchor="w", pady=(3, 0))
-        self.audio_label = self._label(info_side, "AUDIO: SYSTEM BELL", bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+        self.audio_label = self._label(info_side, "AUDIO: SYSTEM BELL", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
         self.audio_label.pack(anchor="w", pady=(7, 0))
 
         # Main workspace navigation. The alarm strip remains visible on both pages.
         nav = self._frame(self.outer)
         nav.pack(fill="x", pady=(0, 9))
+        self.command_center_nav_button = tk.Button(
+            nav, text="COMMAND CENTER", command=lambda: self.show_page("command_center"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+        )
+        self.command_center_nav_button.pack(side="left", padx=(0, 5))
         self.sessions_nav_button = tk.Button(
             nav, text="GLOBAL SESSIONS", command=lambda: self.show_page("sessions"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
-        self.sessions_nav_button.pack(side="left", padx=(0, 6))
+        self.sessions_nav_button.pack(side="left", padx=(0, 5))
+        self.session_performance_nav_button = tk.Button(
+            nav, text="SESSION PERFORMANCE", command=lambda: self.show_page("session_performance"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+        )
+        self.session_performance_nav_button.pack(side="left", padx=(0, 5))
         self.alerts_nav_button = tk.Button(
             nav, text="ALERTS & EVENTS", command=lambda: self.show_page("alerts"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.alerts_nav_button.pack(side="left", padx=(0, 6))
         self.calendar_nav_button = tk.Button(
             nav, text="ECONOMIC CALENDAR", command=lambda: self.show_page("calendar"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.calendar_nav_button.pack(side="left", padx=(0, 6))
         self.volatility_nav_button = tk.Button(
             nav, text="VOLATILITY LAB", command=lambda: self.show_page("volatility"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.volatility_nav_button.pack(side="left", padx=(0, 6))
-        self.research_nav_button = tk.Button(
-            nav, text="RESEARCH LAB", command=lambda: self.show_page("research"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-        )
-        self.research_nav_button.pack(side="left", padx=(0, 6))
         self.regime_nav_button = tk.Button(
             nav, text="REGIME LAB", command=lambda: self.show_page("regime"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
         self.regime_nav_button.pack(side="left", padx=(0, 6))
-        self.strategy_nav_button = tk.Button(
-            nav, text="STRATEGY LAB", command=lambda: self.show_page("strategy"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+        self.market_intelligence_nav_button = tk.Button(
+            nav, text="MARKET INTEL", command=lambda: self.show_page("market_intelligence"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
         )
-        self.strategy_nav_button.pack(side="left", padx=(0, 6))
-        self.data_center_nav_button = tk.Button(
-            nav, text="DATA CENTER", command=lambda: self.show_page("data_center"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
-        )
-        self.data_center_nav_button.pack(side="left", padx=(0, 6))
+        self.market_intelligence_nav_button.pack(side="left", padx=(0, 6))
         self.focus_nav_button = tk.Button(
             nav, text="FOCUS & GOALS", command=lambda: self.show_page("focus"),
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
         self.focus_nav_button.pack(side="left")
 
         self.page_host = self._frame(self.outer)
         self.page_host.pack(fill="both", expand=True)
+        self.command_center_view = self._frame(self.page_host)
         self.sessions_view = self._frame(self.page_host)
+        self.session_performance_view = self._frame(self.page_host)
         self.alerts_view = self._frame(self.page_host)
         self.calendar_view = self._frame(self.page_host)
         self.volatility_view = self._frame(self.page_host)
-        self.research_view = self._frame(self.page_host)
         self.regime_view = self._frame(self.page_host)
-        self.strategy_view = self._frame(self.page_host)
-        self.data_center_view = self._frame(self.page_host)
+        self.market_intelligence_view = self._frame(self.page_host)
         self.focus_view = self._frame(self.page_host)
         self.sessions_view.pack(fill="both", expand=True)
 
+        # The Global Sessions page is vertically scrollable so the four clocks,
+        # 24-hour map and market summary remain usable on shorter displays.
+        sessions_scroll_shell = self._frame(self.sessions_view)
+        sessions_scroll_shell.pack(fill="both", expand=True)
+        self.sessions_canvas = tk.Canvas(
+            sessions_scroll_shell, bg=THEMES[self.theme_name]["bg"],
+            highlightthickness=0, bd=0,
+        )
+        self.sessions_scrollbar = ttk.Scrollbar(
+            sessions_scroll_shell, orient="vertical", command=self.sessions_canvas.yview,
+        )
+        self.sessions_canvas.configure(yscrollcommand=self.sessions_scrollbar.set)
+        self.sessions_canvas.pack(side="left", fill="both", expand=True)
+        self.sessions_scrollbar.pack(side="right", fill="y")
+        self.sessions_content = self._frame(self.sessions_canvas)
+        self.sessions_content_window = self.sessions_canvas.create_window(
+            (0, 0), window=self.sessions_content, anchor="nw",
+        )
+        self.sessions_content.bind(
+            "<Configure>", lambda _event: self.sessions_canvas.configure(
+                scrollregion=self.sessions_canvas.bbox("all")
+            )
+        )
+        self.sessions_canvas.bind(
+            "<Configure>", lambda event: self.sessions_canvas.itemconfigure(
+                self.sessions_content_window, width=event.width
+            )
+        )
+        self.sessions_canvas.bind(
+            "<MouseWheel>",
+            lambda event: self.sessions_canvas.yview_scroll(int(-event.delta / 120), "units"),
+        )
+        self.sessions_canvas.bind(
+            "<Button-4>", lambda _event: self.sessions_canvas.yview_scroll(-1, "units"),
+        )
+        self.sessions_canvas.bind(
+            "<Button-5>", lambda _event: self.sessions_canvas.yview_scroll(1, "units"),
+        )
+
         # Global session summary.
-        summary = self._frame(self.sessions_view)
+        summary = self._frame(self.sessions_content)
         summary.pack(fill="x", pady=(0, 10))
         for column in range(3):
             summary.grid_columnconfigure(column, weight=1, uniform="summary")
@@ -555,15 +614,15 @@ class VeltrixTradingClock:
         self.summary_overlap = self._summary_tile(summary, 1, "ACTIVE OVERLAPS", "NONE")
         self.summary_next = self._summary_tile(summary, 2, "NEXT TRANSITION", "Calculating")
 
-        section = self._frame(self.sessions_view)
+        section = self._frame(self.sessions_content)
         section.pack(fill="x", pady=(4, 8))
-        self.section_title = self._label(section, "GLOBAL MARKET SESSIONS", fg="bright", font=("Consolas", 11, "bold"))
+        self.section_title = self._label(section, "GLOBAL MARKET SESSIONS", fg="bright", font=("Segoe UI", 12, "bold"))
         self.section_title.pack(side="left")
-        self.section_hint = self._label(section, "SCHEDULED WEEKDAY HOURS · LOCAL CENTRE TIME", fg="muted", font=("Consolas", 8, "bold"))
+        self.section_hint = self._label(section, "SCHEDULED WEEKDAY HOURS · LOCAL CENTRE TIME", fg="muted", font=("Segoe UI", 9, "bold"))
         self.section_hint.pack(side="right")
 
         # Four independent session cards.
-        self.session_grid = self._frame(self.sessions_view)
+        self.session_grid = self._frame(self.sessions_content)
         self.session_grid.pack(fill="x")
         for column in range(2):
             self.session_grid.grid_columnconfigure(column, weight=1, uniform="session")
@@ -573,59 +632,763 @@ class VeltrixTradingClock:
             row, column = divmod(index, 2)
             self._build_session_card(session, row, column)
 
+        self._build_session_timeline(self.sessions_content)
+
+        build_command_center_page(self)
         self._build_alerts_page()
         self._build_calendar_page()
         self._build_market_page()
-        self._build_research_page()
         self._build_regime_page()
-        self._build_strategy_page()
-        self._build_data_center_page()
+        build_market_intelligence_page(self)
+        build_session_performance_page(self)
         self._build_focus_page()
-        self.show_page("sessions")
+        self.show_page("command_center")
 
         # Alarm control strip from the original clock. This stays visible on both pages.
         alarm_panel = self._frame(self.outer, bg="panel", padx=14, pady=10)
         alarm_panel.pack(fill="x", pady=(10, 0))
         alarm_panel.grid_columnconfigure(0, weight=1)
-        self.alarm_title = self._label(alarm_panel, "ALARM CONTROL", bg="panel", fg="bright", font=("Consolas", 9, "bold"))
+        self.alarm_title = self._label(alarm_panel, "ALARM CONTROL", bg="panel", fg="bright", font=("Segoe UI", 10, "bold"))
         self.alarm_title.grid(row=0, column=0, sticky="w", pady=(0, 7))
         controls = self._frame(alarm_panel, bg="panel")
         controls.grid(row=1, column=0, sticky="w")
         spin_options = {
-            "font": ("Consolas", 11, "bold"), "justify": "center", "relief": "flat", "bd": 0,
-            "highlightthickness": 1, "width": 4,
+            "font": ("Segoe UI", 11, "bold"), "justify": "center", "relief": "flat", "bd": 0,
+            "highlightthickness": 0, "width": 4,
         }
         self.hour_spin = tk.Spinbox(controls, from_=1, to=12, format="%02.0f", textvariable=self.hour_var, **spin_options)
         self.minute_spin = tk.Spinbox(controls, from_=0, to=59, format="%02.0f", textvariable=self.minute_var, **spin_options)
         self.period_spin = tk.Spinbox(controls, values=("AM", "PM"), textvariable=self.period_var,
-                                      font=("Consolas", 11, "bold"), justify="center", relief="flat", bd=0,
-                                      highlightthickness=1, width=4)
+                                      font=("Segoe UI", 12, "bold"), justify="center", relief="flat", bd=0,
+                                      highlightthickness=0, width=4)
         self.hour_spin.pack(side="left", padx=(0, 5))
         self.minute_spin.pack(side="left", padx=(0, 5))
         self.period_spin.pack(side="left", padx=(0, 12))
         self.set_button = tk.Button(controls, text="SET ALARM", command=self.set_alarm,
-                                    font=("Consolas", 9, "bold"), relief="flat", bd=0,
+                                    font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
                                     padx=12, pady=7, cursor="hand2")
         self.set_button.pack(side="left", padx=(0, 7))
         self.cancel_button = tk.Button(controls, text="CLEAR", command=self.cancel_alarm,
-                                       font=("Consolas", 9, "bold"), relief="flat", bd=0,
+                                       font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
                                        padx=12, pady=7, cursor="hand2")
         self.cancel_button.pack(side="left")
 
-        self.status_label = self._label(alarm_panel, self.status_message, bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+        self.status_label = self._label(alarm_panel, self.status_message, bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
         self.status_label.grid(row=2, column=0, sticky="w", pady=(9, 0))
 
         # Market intelligence footer.
-        footer = self._frame(self.sessions_view, bg="panel", padx=14, pady=9)
+        footer = self._frame(self.sessions_content, bg="panel", padx=14, pady=9)
         footer.pack(fill="x", pady=(10, 0))
-        self.overlap_label = self._label(footer, "Checking session alignment...", bg="panel", fg="bright", font=("Consolas", 9, "bold"), anchor="w", justify="left")
+        self.overlap_label = self._label(footer, "Checking session alignment...", bg="panel", fg="bright", font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
         self.overlap_label.pack(fill="x")
         self.footer_note = self._label(
             footer,
             "Session hours are configurable conventions. Public holidays, broker hours and instrument-specific hours are not yet modelled.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w", justify="left", wraplength=1050,
+            bg="panel", fg="muted", font=("Segoe UI", 10), anchor="w", justify="left", wraplength=1050,
         )
         self.footer_note.pack(fill="x", pady=(4, 0))
+
+    def _build_session_timeline(self, parent: tk.Widget) -> None:
+        """Build the UTC 24-hour map and its live overlap/transition summaries."""
+        panel = self._frame(parent, bg="panel", padx=14, pady=10)
+        panel.pack(fill="x", pady=(2, 10))
+        header = self._frame(panel, bg="panel")
+        header.pack(fill="x")
+        self.timeline_title = self._label(
+            header, "24-HOUR GLOBAL SESSION MAP", bg="panel", fg="bright",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.timeline_title.pack(side="left")
+        self.timeline_utc_label = self._label(
+            header, "UTC · MIDNIGHT TO MIDNIGHT", bg="panel", fg="muted",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.timeline_utc_label.pack(side="right")
+
+        profile_controls = self._frame(panel, bg="panel")
+        profile_controls.pack(fill="x", pady=(8, 2))
+        self.session_profile_label = self._label(
+            profile_controls, "PROFILE", bg="panel", fg="muted",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.session_profile_label.pack(side="left", padx=(0, 6))
+        self.session_profile_combo = ttk.Combobox(
+            profile_controls, textvariable=self.session_profile_var,
+            values=PROFILE_NAMES, state="readonly", width=19, style="TCombobox",
+        )
+        self.session_profile_combo.pack(side="left", padx=(0, 6))
+        self.apply_session_profile_button = tk.Button(
+            profile_controls, text="APPLY", command=self._apply_selected_session_profile,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        )
+        self.apply_session_profile_button.pack(side="left", padx=(0, 5))
+        self.edit_custom_session_profile_button = tk.Button(
+            profile_controls, text="EDIT CUSTOM", command=self.edit_custom_session_profile,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+        )
+        self.edit_custom_session_profile_button.pack(side="left")
+
+        self.exchange_calendar_toggle = tk.Checkbutton(
+            profile_controls,
+            text="CASH EXCHANGE HOLIDAYS / EARLY CLOSES",
+            variable=self.exchange_calendar_enabled_var,
+            command=self._toggle_exchange_calendar,
+            font=("Segoe UI", 9, "bold"),
+            relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            bg=THEMES[self.theme_name]["panel"],
+            fg=THEMES[self.theme_name]["text"],
+            activebackground=THEMES[self.theme_name]["panel"],
+            activeforeground=THEMES[self.theme_name]["bright"],
+            selectcolor=THEMES[self.theme_name]["dim"],
+        )
+        self.exchange_calendar_toggle.pack(side="right")
+        self._register_theme(self.exchange_calendar_toggle, "panel", "text")
+
+        visual_row = self._frame(panel, bg="panel")
+        visual_row.pack(fill="x", pady=(5, 2))
+        world_dial_panel = self._frame(visual_row, bg="panel")
+        world_dial_panel.pack(side="left", fill="y", padx=(0, 15))
+        self.world_dial_title = self._label(
+            world_dial_panel, "WORLD SESSION DIAL", bg="panel", fg="muted",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.world_dial_title.pack(anchor="center", pady=(0, 3))
+        self.world_dial_canvas = tk.Canvas(
+            world_dial_panel, width=260, height=250,
+            bg=THEMES[self.theme_name]["panel"], highlightthickness=0, bd=0,
+        )
+        self.world_dial_canvas.pack()
+        timeline_side = self._frame(visual_row, bg="panel")
+        timeline_side.pack(side="left", fill="both", expand=True)
+        self.timeline_interaction_hint = self._label(
+            timeline_side, "CLICK OR DRAG A LANE TO PROBE ANY UTC TIME",
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
+        )
+        self.timeline_interaction_hint.pack(anchor="w", pady=(0, 4))
+        self.session_timeline_canvas = tk.Canvas(
+            timeline_side, height=166, bg=THEMES[self.theme_name]["panel"],
+            highlightthickness=0, bd=0, cursor="crosshair",
+        )
+        self.session_timeline_canvas.pack(fill="x", expand=True, pady=(10, 2))
+        self.session_timeline_canvas.bind("<Button-1>", self._probe_session_timeline)
+        self.session_timeline_canvas.bind("<B1-Motion>", self._probe_session_timeline)
+        self.session_timeline_signature: tuple[int, int, str, str] | None = None
+        self.world_dial_signature = None
+        self.session_timeline_plot = None
+
+        self.timeline_probe_label = self._label(
+            panel, "TIME PROBE · CLICK OR DRAG THE TIMELINE TO INSPECT SESSION ALIGNMENT",
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.timeline_probe_label.pack(fill="x", pady=(1, 3))
+
+        self.timeline_overlap_label = self._label(
+            panel, "OVERLAPS · CALCULATING", bg="panel", fg="success",
+            font=("Segoe UI", 9, "bold"), anchor="w", justify="left", wraplength=1050,
+        )
+        self.timeline_overlap_label.pack(fill="x", pady=(2, 3))
+        self.timeline_upcoming_label = self._label(
+            panel, "NEXT TRANSITIONS · CALCULATING", bg="panel", fg="muted",
+            font=("Segoe UI", 9), anchor="w", justify="left", wraplength=1050,
+        )
+        self.timeline_upcoming_label.pack(fill="x")
+
+        self.exchange_calendar_status_label = self._label(
+            panel, "EXCHANGE CALENDAR OFF · GENERIC WEEKDAY SCHEDULES ONLY",
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.exchange_calendar_status_label.pack(fill="x", pady=(5, 1))
+        self.exchange_calendar_events_label = self._label(
+            panel, "UPCOMING EXCHANGE EXCEPTIONS · CALENDAR OVERLAY DISABLED",
+            bg="panel", fg="warning", font=("Segoe UI", 9),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.exchange_calendar_events_label.pack(fill="x", pady=(1, 2))
+
+        analytics = self._frame(panel, bg="panel")
+        analytics.pack(fill="x", pady=(8, 0))
+        analytics_header = self._frame(analytics, bg="panel")
+        analytics_header.pack(fill="x")
+        self.session_analytics_title = self._label(
+            analytics_header, "MARKET SESSION INTELLIGENCE", bg="panel", fg="bright",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.session_analytics_title.pack(side="left")
+        self.session_history_period_combo = ttk.Combobox(
+            analytics_header, textvariable=self.session_history_period_var,
+            values=("7", "30", "90"), state="readonly", width=5, style="TCombobox",
+        )
+        self.session_history_period_combo.pack(side="right")
+        self.session_history_period_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._refresh_session_intelligence(
+                datetime.now(timezone.utc), force=True
+            ),
+        )
+        self.session_history_period_label = self._label(
+            analytics_header, "HISTORY DAYS", bg="panel", fg="muted",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.session_history_period_label.pack(side="right", padx=(0, 6))
+        self.weekly_session_hours_label = self._label(
+            analytics, "WEEKLY SCHEDULED HOURS · LOCAL MON–SUN · CALCULATING",
+            bg="panel", fg="text", font=("Segoe UI", 9, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.weekly_session_hours_label.pack(fill="x", pady=(7, 3))
+        self.historical_overlap_label = self._label(
+            analytics, "HISTORICAL SCHEDULED OVERLAP · CALCULATING",
+            bg="panel", fg="success", font=("Segoe UI", 9, "bold"),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.historical_overlap_label.pack(fill="x", pady=(2, 3))
+        self.historical_pair_label = self._label(
+            analytics, "OVERLAP BREAKDOWN · CALCULATING",
+            bg="panel", fg="muted", font=("Segoe UI", 9),
+            anchor="w", justify="left", wraplength=1050,
+        )
+        self.historical_pair_label.pack(fill="x")
+
+    def _draw_world_session_dial(self, now_utc: datetime, snapshot) -> None:
+        """Render the four UTC session windows as concentric 24-hour tracks."""
+        canvas = self.world_dial_canvas
+        palette = THEMES[self.theme_name]
+        now_utc = now_utc.astimezone(timezone.utc)
+        start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        signature = (
+            self.theme_name, start_utc.date().isoformat(),
+            bool(self.exchange_calendar_enabled_var.get()),
+            tuple((s.key, s.opens, s.closes, s.weekdays, s.timezone_name) for s in self.sessions),
+        )
+        if self.world_dial_signature != signature:
+            canvas.delete("all")
+            canvas.configure(bg=palette["panel"])
+            cx, cy, outer = 130.0, 125.0, 113.0
+            canvas.create_oval(
+                cx-outer, cy-outer, cx+outer, cy+outer,
+                fill=palette["bg"], outline=palette["border"], width=3,
+                tags="world-dial-static",
+            )
+            for hour in range(24):
+                angle = math.radians(hour * 15 - 90)
+                major = hour % 6 == 0
+                inner_tick = 100.0 if major else 103.0
+                outer_tick = 107.0
+                canvas.create_line(
+                    cx+math.cos(angle)*inner_tick, cy+math.sin(angle)*inner_tick,
+                    cx+math.cos(angle)*outer_tick, cy+math.sin(angle)*outer_tick,
+                    fill=palette["bright"] if major else palette["muted"],
+                    width=1.5 if major else 0.7, tags="world-dial-static",
+                )
+                if major:
+                    label_radius = 121.0
+                    canvas.create_text(
+                        cx+math.cos(angle)*label_radius, cy+math.sin(angle)*label_radius,
+                        text=f"{hour:02d}", fill=palette["muted"],
+                        font=("Segoe UI", 9, "bold"), tags="world-dial-static",
+                    )
+            colours = (palette["success"], palette["bright"], palette["warning"], palette["error"])
+            radii = (91.0, 79.0, 67.0, 55.0)
+            for index, session in enumerate(self.sessions):
+                radius = radii[index % len(radii)]
+                colour = colours[index % len(colours)]
+                box = (cx-radius, cy-radius, cx+radius, cy+radius)
+                canvas.create_oval(*box, outline=palette["dim"], width=4, tags="world-dial-static")
+                for window in snapshot.windows:
+                    if window.session_key != session.key:
+                        continue
+                    offset = (window.starts_at - start_utc).total_seconds() / 86400
+                    duration = (window.ends_at - window.starts_at).total_seconds() / 86400
+                    canvas.create_arc(
+                        *box, start=90-offset*360, extent=-duration*360,
+                        style=tk.ARC, outline=colour, width=4, tags="world-dial-static",
+                    )
+            canvas.create_oval(
+                cx-39, cy-39, cx+39, cy+39,
+                fill=palette["panel"], outline=palette["border"], width=1,
+                tags="world-dial-static",
+            )
+            canvas.create_text(
+                cx, cy-15, text="VELTRIX", fill=palette["muted"],
+                font=("Segoe UI", 9, "bold"), tags="world-dial-static",
+            )
+            canvas.create_text(
+                cx, cy+28, text="UTC · 24H", fill=palette["muted"],
+                font=("Segoe UI", 9, "bold"), tags="world-dial-static",
+            )
+            self.world_dial_signature = signature
+        else:
+            canvas.delete("world-dial-dynamic")
+
+        cx, cy = 130.0, 125.0
+        seconds = now_utc.hour*3600 + now_utc.minute*60 + now_utc.second + now_utc.microsecond/1_000_000
+        angle = math.radians(seconds / 86400 * 360 - 90)
+        tip_x, tip_y = cx+math.cos(angle)*46, cy+math.sin(angle)*46
+        canvas.create_line(
+            cx, cy, tip_x, tip_y, fill=palette["bright"], width=2,
+            capstyle=tk.ROUND, tags="world-dial-dynamic",
+        )
+        canvas.create_oval(
+            tip_x-3, tip_y-3, tip_x+3, tip_y+3,
+            fill=palette["bright"], outline=palette["bright"], tags="world-dial-dynamic",
+        )
+        canvas.create_text(
+            cx, cy+1, text=now_utc.strftime("%H:%M"),
+            fill=palette["text"], font=("Segoe UI", 12, "bold"),
+            tags="world-dial-dynamic",
+        )
+        canvas.create_text(
+            cx, cy+16, text=now_utc.strftime("%a %d %b").upper(),
+            fill=palette["muted"], font=("Segoe UI", 7, "bold"),
+            tags="world-dial-dynamic",
+        )
+
+    def _draw_session_timeline(self, now_utc: datetime, states: list) -> None:
+        """Render the UTC session map, world dial and interactive time probe."""
+        canvas = self.session_timeline_canvas
+        palette = THEMES[self.theme_name]
+        start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_utc = start_utc + timedelta(hours=24)
+        snapshot = build_session_timeline(
+            self.sessions, start_utc, hours=24,
+            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        )
+        self._draw_world_session_dial(now_utc, snapshot)
+        if self.session_probe_utc is not None and self.session_probe_utc.date() != start_utc.date():
+            self.session_probe_utc = None
+
+        width = max(620, canvas.winfo_width())
+        height = 166
+        signature = (width, height, self.theme_name, start_utc.date().isoformat())
+        left, right = 92.0, float(width - 15)
+        self.session_timeline_plot = (left, right, start_utc)
+        span = right - left
+        top, lane_step, lane_height = 31.0, 23.0, 12.0
+
+        if self.session_timeline_signature != signature:
+            canvas.delete("all")
+            canvas.configure(bg=palette["panel"])
+            for hour in range(0, 25, 3):
+                x = left + span * hour / 24
+                canvas.create_line(
+                    x, top - 7, x, top + lane_step * (len(self.sessions) + 1),
+                    fill=palette["dim"], width=1, tags="timeline-static",
+                )
+                anchor = "center"
+                if hour == 0:
+                    anchor = "w"
+                elif hour == 24:
+                    anchor = "e"
+                canvas.create_text(
+                    x, 10, text=f"{hour:02d}:00", fill=palette["muted"],
+                    anchor=anchor, font=("Segoe UI", 9), tags="timeline-static",
+                )
+            for index, session in enumerate(self.sessions):
+                y = top + index * lane_step
+                canvas.create_text(
+                    left - 9, y + lane_height / 2, text=session.name,
+                    fill=palette["text"], anchor="e", font=("Segoe UI", 9, "bold"),
+                    tags="timeline-static",
+                )
+                canvas.create_rectangle(
+                    left, y, right, y + lane_height,
+                    fill=palette["bg"], outline=palette["dim"], width=1,
+                    tags="timeline-static",
+                )
+            overlap_y = top + len(self.sessions) * lane_step + 4
+            canvas.create_text(
+                left - 9, overlap_y + lane_height / 2, text="OVERLAP",
+                fill=palette["bright"], anchor="e", font=("Segoe UI", 9, "bold"),
+                tags="timeline-static",
+            )
+            canvas.create_rectangle(
+                left, overlap_y, right, overlap_y + lane_height,
+                fill=palette["bg"], outline=palette["dim"], width=1,
+                tags="timeline-static",
+            )
+            self.session_timeline_signature = signature
+        else:
+            canvas.delete("timeline-dynamic")
+
+        total_seconds = (end_utc - start_utc).total_seconds()
+
+        def x_at(moment: datetime) -> float:
+            seconds = (moment.astimezone(timezone.utc) - start_utc).total_seconds()
+            return left + span * seconds / total_seconds
+
+        session_colours = (
+            palette["success"], palette["bright"], palette["warning"], palette["error"],
+        )
+        for index, session in enumerate(self.sessions):
+            colour = session_colours[index % len(session_colours)]
+            y = top + index * lane_step
+            for window in snapshot.windows:
+                if window.session_key != session.key:
+                    continue
+                x1, x2 = x_at(window.starts_at), x_at(window.ends_at)
+                canvas.create_rectangle(
+                    x1, y + 1, max(x1 + 1, x2), y + lane_height - 1,
+                    fill=colour, outline=colour, tags="timeline-dynamic",
+                )
+
+        overlap_y = top + len(self.sessions) * lane_step + 4
+        for overlap in snapshot.overlaps:
+            x1, x2 = x_at(overlap.starts_at), x_at(overlap.ends_at)
+            canvas.create_rectangle(
+                x1, overlap_y + 1, max(x1 + 1, x2), overlap_y + lane_height - 1,
+                fill=palette["error"], outline=palette["error"], tags="timeline-dynamic",
+            )
+
+        if start_utc <= now_utc < end_utc:
+            marker_x = x_at(now_utc)
+            canvas.create_line(
+                marker_x, top - 12, marker_x, overlap_y + lane_height + 5,
+                fill=palette["bright"], width=2, dash=(4, 2), tags="timeline-dynamic",
+            )
+            canvas.create_oval(
+                marker_x - 3, top - 15, marker_x + 3, top - 9,
+                fill=palette["bright"], outline=palette["bright"], tags="timeline-dynamic",
+            )
+
+        if self.session_probe_utc is not None and start_utc <= self.session_probe_utc < end_utc:
+            probe_x = x_at(self.session_probe_utc)
+            canvas.create_line(
+                probe_x, top-14, probe_x, overlap_y+lane_height+5,
+                fill=palette["warning"], width=2, dash=(2, 2), tags="timeline-dynamic",
+            )
+            canvas.create_polygon(
+                probe_x-4, top-12, probe_x+4, top-12, probe_x, top-6,
+                fill=palette["warning"], outline=palette["warning"], tags="timeline-dynamic",
+            )
+
+        if snapshot.overlaps:
+            overlap_text = "  |  ".join(
+                f"{' + '.join(item.session_names)} {item.starts_at.strftime('%H:%M')}–{item.ends_at.strftime('%H:%M')} UTC"
+                for item in snapshot.overlaps
+            )
+            total_overlap = sum(
+                (item.ends_at - item.starts_at).total_seconds() for item in snapshot.overlaps
+            )
+            overlap_hours, remainder = divmod(int(total_overlap), 3600)
+            overlap_minutes = remainder // 60
+            self.timeline_overlap_label.configure(
+                text=f"OVERLAPS TODAY · {overlap_hours}h {overlap_minutes:02d}m TOTAL  |  {overlap_text}",
+                fg=palette["success"],
+            )
+        else:
+            self.timeline_overlap_label.configure(
+                text="OVERLAPS TODAY · NONE SCHEDULED", fg=palette["muted"],
+            )
+
+        upcoming = sorted(states, key=lambda state: state.seconds_to_transition)[:3]
+        items = [
+            f"{state.definition.name} {state.transition_kind} "
+            f"{state.transition_at.strftime('%H:%M')} {state.transition_at.tzname()} "
+            f"({format_countdown(state.seconds_to_transition)})"
+            for state in upcoming
+        ]
+        self.timeline_upcoming_label.configure(
+            text="NEXT TRANSITIONS · " + ("  |  ".join(items) if items else "NONE"),
+            fg=palette["muted"],
+        )
+
+    def _probe_session_timeline(self, event) -> None:
+        """Inspect configured session state at a clicked UTC minute."""
+        if self.session_timeline_plot is None:
+            return
+        left, right, start_utc = self.session_timeline_plot
+        probe = timeline_probe_from_x(event.x, left, right, start_utc)
+        self.session_probe_utc = probe
+        enabled = bool(self.exchange_calendar_enabled_var.get())
+        probe_states = [
+            get_exchange_aware_session_state(session, probe, enabled=enabled)
+            for session in self.sessions
+        ]
+        active = [state.definition.name for state in probe_states if state.is_open]
+        closed = [state.definition.name for state in probe_states if not state.is_open]
+        if len(active) >= 2:
+            alignment, colour = "OVERLAP · " + " + ".join(active), THEMES[self.theme_name]["success"]
+        elif active:
+            alignment, colour = "ACTIVE · " + ", ".join(active), THEMES[self.theme_name]["bright"]
+        else:
+            alignment, colour = "NO TRACKED SESSION OPEN", THEMES[self.theme_name]["muted"]
+        self.timeline_probe_label.configure(
+            text=(
+                f"TIME PROBE · {probe.strftime('%a %d %b %H:%M')} UTC"
+                f"  |  {alignment}  |  CLOSED: {', '.join(closed) if closed else 'NONE'}"
+            ),
+            fg=colour,
+        )
+        if self.latest_session_states:
+            self._draw_session_timeline(datetime.now(timezone.utc), self.latest_session_states)
+
+    def _toggle_exchange_calendar(self) -> None:
+        """Enable or disable official cash-exchange holiday overlays."""
+        enabled = bool(self.exchange_calendar_enabled_var.get())
+        if enabled and self.active_session_profile not in {"Equities Cash", "Custom"}:
+            proceed = messagebox.askyesno(
+                "Cash-exchange calendar overlay",
+                "You are using a non-equities session profile. Exchange holidays and early closes "
+                "will be applied to the currently configured session windows, but this will not "
+                "convert those windows into official exchange trading hours. Continue?",
+                parent=self.root,
+            )
+            if not proceed:
+                self.exchange_calendar_enabled_var.set(False)
+                return
+        self.config["exchange_calendar"] = {"enabled": enabled}
+        self.session_timeline_signature = None
+        self._save_config()
+        self._set_alert_banner(
+            "OFFICIAL CASH-EXCHANGE HOLIDAY OVERLAY ENABLED"
+            if enabled else "EXCHANGE CALENDAR OVERLAY DISABLED",
+            "success" if enabled else "muted",
+        )
+        if self.clock_job is not None:
+            try:
+                self.root.after_cancel(self.clock_job)
+            except tk.TclError:
+                pass
+            self.clock_job = None
+        self.update_clock()
+
+    def _update_exchange_calendar_summary(self, now_utc: datetime, states: list) -> None:
+        """Show venue coverage and the next published closure/early-close exceptions."""
+        palette = THEMES[self.theme_name]
+        if not self.exchange_calendar_enabled_var.get():
+            self.exchange_calendar_status_label.configure(
+                text="EXCHANGE CALENDAR OFF · GENERIC WEEKDAY SCHEDULES ONLY",
+                fg=palette["muted"],
+            )
+            self.exchange_calendar_events_label.configure(
+                text="ENABLE CASH-EXCHANGE OVERLAY TO SHOW PUBLISHED HOLIDAYS AND EARLY CLOSES",
+                fg=palette["muted"],
+            )
+            return
+
+        out_of_range = [
+            state.definition.name for state in states
+            if state.calendar_status in {"OUT_OF_RANGE", "NO_VENUE_MAPPING"}
+        ]
+        status = "EXCHANGE CALENDAR ON · ASX / TOKYO STOCK EXCHANGE / LSE / NYSE · BUNDLED DATA THROUGH 2027"
+        if out_of_range:
+            status += " · OUT OF PUBLISHED RANGE: " + ", ".join(out_of_range)
+        self.exchange_calendar_status_label.configure(text=status, fg=palette["success"])
+
+        events = upcoming_exchange_events(now_utc, days_ahead=45)
+        parts = []
+        for event in events[:5]:
+            info = EXCHANGE_CALENDARS[event.exchange_key]
+            label = {
+                "EARLY_CLOSE": "EARLY CLOSE",
+                "CLOSE_PROCESS": "CLOSING PROCESS",
+            }.get(event.status, "CLOSED")
+            local_date = event.event_date.strftime("%d %b")
+            close_note = f" {event.close_time.strftime('%H:%M')} {info.timezone_name}" if event.close_time else ""
+            parts.append(f"{info.name} {local_date} {event.title} [{label}{close_note}]")
+        self.exchange_calendar_events_label.configure(
+            text="UPCOMING EXCHANGE EXCEPTIONS · " + (
+                "  |  ".join(parts) if parts else "NONE IN NEXT 45 DAYS"
+            ),
+            fg=palette["warning"],
+        )
+
+    def _apply_selected_session_profile(self) -> None:
+        """Apply a preset or saved custom market-hours profile."""
+        selected = self.session_profile_var.get().strip()
+        try:
+            schedules = build_profile_sessions(
+                self.session_profile_base_sessions,
+                selected,
+                self.custom_session_schedules,
+            )
+            sessions = load_session_definitions(schedules)
+        except (ValueError, TypeError) as exc:
+            messagebox.showerror("Invalid session profile", str(exc), parent=self.root)
+            self.session_profile_var.set(self.active_session_profile)
+            return
+
+        self.sessions = sessions
+        self.config["sessions"] = schedules
+        self.active_session_profile = selected
+        refresh_session_performance_dataset_choices(self)
+        self.config["session_profiles"] = {
+            "selected": selected,
+            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
+            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
+        self.session_timeline_signature = None
+        self.session_intelligence_cache_key = None
+        self._refresh_session_intelligence(datetime.now(timezone.utc), force=True)
+        self._save_config()
+        self._set_alert_banner(
+            f"SESSION PROFILE APPLIED · {selected.upper()} · CLOCKS AND TIMELINE UPDATED",
+            "success",
+        )
+
+    def edit_custom_session_profile(self) -> None:
+        """Open a small editor for each session's local open/close times and weekdays."""
+        window = tk.Toplevel(self.root)
+        window.title("Veltrix · Custom Market Session Profile")
+        window.transient(self.root)
+        window.geometry("930x455")
+        window.minsize(850, 410)
+        window.configure(bg=THEMES[self.theme_name]["bg"])
+
+        shell = self._frame(window, padx=16, pady=14)
+        shell.pack(fill="both", expand=True)
+        self._label(
+            shell, "CUSTOM MARKET SESSION PROFILE", fg="bright",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            shell,
+            "Set local open/close times and active weekdays for each market. Times use each market's own timezone.",
+            fg="muted", font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(4, 12))
+
+        weekdays = (("Mon", 0), ("Tue", 1), ("Wed", 2), ("Thu", 3),
+                    ("Fri", 4), ("Sat", 5), ("Sun", 6))
+        grid = self._frame(shell)
+        grid.pack(fill="both", expand=True)
+        headings = (("MARKET", 0), ("OPEN", 1), ("CLOSE", 2))
+        for title, column in headings:
+            self._label(
+                grid, title, fg="muted", font=("Segoe UI", 9, "bold"),
+            ).grid(row=0, column=column, sticky="w", padx=(0, 8), pady=(0, 8))
+        for index, (label, _day) in enumerate(weekdays, start=3):
+            self._label(
+                grid, label.upper(), fg="muted", font=("Segoe UI", 9, "bold"),
+            ).grid(row=0, column=index, padx=2, pady=(0, 8))
+
+        controls: dict[str, dict[str, Any]] = {}
+        for row, session in enumerate(self.sessions, start=1):
+            default = {
+                "open": session.opens.strftime("%H:%M"),
+                "close": session.closes.strftime("%H:%M"),
+                "weekdays": list(session.weekdays),
+            }
+            saved = self.custom_session_schedules.get(session.key, default)
+            open_var = tk.StringVar(value=str(saved.get("open", default["open"])))
+            close_var = tk.StringVar(value=str(saved.get("close", default["close"])))
+            day_vars = {
+                day: tk.BooleanVar(value=day in saved.get("weekdays", default["weekdays"]))
+                for _label, day in weekdays
+            }
+            self._label(
+                grid, session.name, fg="text", font=("Segoe UI", 9, "bold"),
+            ).grid(row=row, column=0, sticky="w", padx=(0, 9), pady=6)
+            ttk.Entry(grid, textvariable=open_var, width=8, justify="center").grid(
+                row=row, column=1, padx=(0, 7), pady=6,
+            )
+            ttk.Entry(grid, textvariable=close_var, width=8, justify="center").grid(
+                row=row, column=2, padx=(0, 7), pady=6,
+            )
+            for column, (_label, day) in enumerate(weekdays, start=3):
+                ttk.Checkbutton(grid, variable=day_vars[day]).grid(
+                    row=row, column=column, padx=2, pady=6,
+                )
+            controls[session.key] = {
+                "open": open_var, "close": close_var, "weekdays": day_vars,
+                "name": session.name,
+            }
+
+        footer = self._frame(shell)
+        footer.pack(fill="x", pady=(12, 0))
+
+        def save_custom() -> None:
+            candidate: dict[str, dict[str, Any]] = {}
+            try:
+                for key, fields in controls.items():
+                    schedule = validate_session_schedule({
+                        "open": fields["open"].get(),
+                        "close": fields["close"].get(),
+                        "weekdays": [
+                            day for day, variable in fields["weekdays"].items()
+                            if variable.get()
+                        ],
+                    }, name=fields["name"])
+                    candidate[key] = schedule
+            except ValueError as exc:
+                messagebox.showerror("Invalid custom schedule", str(exc), parent=window)
+                return
+
+            self.custom_session_schedules = candidate
+            self.session_profile_var.set("Custom")
+            window.destroy()
+            self._apply_selected_session_profile()
+
+        tk.Button(
+            footer, text="SAVE & APPLY CUSTOM PROFILE", command=save_custom,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=13, pady=8,
+            bg=THEMES[self.theme_name]["button_active"], fg=THEMES[self.theme_name]["bright"],
+            cursor="hand2",
+        ).pack(side="right")
+        tk.Button(
+            footer, text="CANCEL", command=window.destroy,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=13, pady=8,
+            bg=THEMES[self.theme_name]["button_bg"], fg=THEMES[self.theme_name]["button_fg"],
+            cursor="hand2",
+        ).pack(side="right", padx=(0, 7))
+        window.grab_set()
+
+    def _refresh_session_intelligence(
+        self, now_utc: datetime, *, force: bool = False
+    ) -> None:
+        """Refresh weekly scheduled hours and reconstructed historical overlap on demand."""
+        try:
+            period = int(self.session_history_period_var.get())
+        except (AttributeError, TypeError, ValueError):
+            period = 30
+        schedule_signature = tuple(
+            (item.key, item.timezone_name, item.opens.isoformat(), item.closes.isoformat(), item.weekdays)
+            for item in self.sessions
+        )
+        exchange_overlay = bool(self.exchange_calendar_enabled_var.get())
+        cache_key = (
+            now_utc.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            period,
+            self.active_session_profile,
+            schedule_signature,
+            exchange_overlay,
+        )
+        if not force and cache_key == self.session_intelligence_cache_key:
+            return
+
+        weekly = weekly_session_hours(
+            self.sessions, now_utc, apply_exchange_calendar=exchange_overlay
+        )
+        history = historical_overlap_report(
+            self.sessions, now_utc, days=period, apply_exchange_calendar=exchange_overlay
+        )
+        weekly_parts = [
+            f"{item.session_name} {item.scheduled_hours:.1f}H/{item.active_days}D"
+            for item in weekly
+        ]
+        weekly_title = "WEEKLY EXCHANGE-ADJUSTED HOURS" if exchange_overlay else "WEEKLY SCHEDULED HOURS"
+        self.weekly_session_hours_label.configure(
+            text=f"{weekly_title} · LOCAL MON–SUN  |  " + "  ·  ".join(weekly_parts)
+        )
+        busiest = (
+            f"{history.busiest_utc_date} {history.busiest_day_hours:.1f}H"
+            if history.busiest_utc_date else "NONE"
+        )
+        self.historical_overlap_label.configure(
+            text=(
+                f"PAST {period}D {'EXCHANGE-ADJUSTED' if exchange_overlay else 'SCHEDULED'} OVERLAP · {history.total_overlap_hours:.1f}H TOTAL"
+                f"  ·  {history.average_daily_overlap_hours:.2f}H/DAY AVG"
+                f"  ·  BUSIEST UTC DAY {busiest}"
+            )
+        )
+        pair_parts = [
+            f"{left} + {right} {hours:.1f}H"
+            for left, right, hours in history.pair_overlap_hours
+        ]
+        self.historical_pair_label.configure(
+            text="PAIR BREAKDOWN · " + ("  |  ".join(pair_parts) if pair_parts else "NO SCHEDULED OVERLAPS")
+        )
+        self.session_intelligence_cache_key = cache_key
 
     def _build_focus_page(self) -> None:
         """Build the personal stopwatch, countdown and long-term goals workspace."""
@@ -653,11 +1416,11 @@ class VeltrixTradingClock:
         header = self._frame(self.focus_content, bg="panel", padx=15, pady=12)
         header.pack(fill="x", pady=(0, 10))
         self._label(header, "FOCUS & GOALS CENTER", bg="panel", fg="bright",
-                    font=("Consolas", 14, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 14, "bold")).pack(anchor="w")
         self._label(
             header,
             "PERSONAL EXECUTION TRACKING  ·  LOCAL-FIRST STORAGE  ·  DEADLINE AWARE",
-            bg="panel", fg="muted", font=("Consolas", 8, "bold"),
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(3, 0))
 
         timer_row = self._frame(self.focus_content)
@@ -668,13 +1431,13 @@ class VeltrixTradingClock:
         timer_card = self._frame(timer_row, bg="panel", padx=14, pady=12)
         timer_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         self._label(timer_card, "FOCUS TIMER", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         controls = ttk.Frame(timer_card)
         controls.pack(fill="x", pady=(10, 5))
         ttk.Label(controls, text="MODE").grid(row=0, column=0, sticky="w", padx=(0, 5))
         self.focus_mode_combo = ttk.Combobox(
             controls, textvariable=self.focus_mode_var, values=("Stopwatch", "Countdown"),
-            state="readonly", width=13, style="Veltrix.Data.TCombobox",
+            state="readonly", width=13, style="TCombobox",
         )
         self.focus_mode_combo.grid(row=0, column=1, sticky="w", padx=(0, 12))
         self.focus_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._focus_mode_changed())
@@ -701,12 +1464,12 @@ class VeltrixTradingClock:
 
         self.focus_timer_display = self._label(
             timer_card, "00:00:00", bg="panel", fg="bright",
-            font=("Consolas", 39, "bold"), anchor="center",
+            font=("Segoe UI", 39, "bold"), anchor="center",
         )
         self.focus_timer_display.pack(fill="x", pady=(13, 1))
         self.focus_timer_status_label = self._label(
             timer_card, "READY · CHOOSE A MODE AND START", bg="panel", fg="muted",
-            font=("Consolas", 8, "bold"), anchor="center",
+            font=("Segoe UI", 9, "bold"), anchor="center",
         )
         self.focus_timer_status_label.pack(fill="x", pady=(0, 11))
         timer_buttons = ttk.Frame(timer_card)
@@ -722,9 +1485,9 @@ class VeltrixTradingClock:
         daily_card = self._frame(timer_row, bg="panel", padx=14, pady=12)
         daily_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         self._label(daily_card, "TODAY'S FOCUS", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.focus_daily_total_label = self._label(
-            daily_card, "00:00:00", bg="panel", fg="bright", font=("Consolas", 29, "bold")
+            daily_card, "00:00:00", bg="panel", fg="bright", font=("Segoe UI", 29, "bold")
         )
         self.focus_daily_total_label.pack(anchor="w", pady=(12, 1))
         target_row = ttk.Frame(daily_card)
@@ -738,12 +1501,12 @@ class VeltrixTradingClock:
         self.focus_daily_progress = ttk.Progressbar(daily_card, mode="determinate", maximum=4, value=0)
         self.focus_daily_progress.pack(fill="x", pady=(5, 4))
         self.focus_daily_progress_label = self._label(
-            daily_card, "0% OF DAILY TARGET", bg="panel", fg="muted", font=("Consolas", 8, "bold")
+            daily_card, "0% OF DAILY TARGET", bg="panel", fg="muted", font=("Segoe UI", 9, "bold")
         )
         self.focus_daily_progress_label.pack(anchor="w")
         self._label(
             daily_card, "Timer intervals are recorded locally.\nA running timer continues across app restarts.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=300,
+            bg="panel", fg="muted", font=("Segoe UI", 10), justify="left", wraplength=300,
         ).pack(anchor="w", pady=(14, 0))
 
         history_card = self._frame(self.focus_content, bg="panel", padx=14, pady=11)
@@ -751,11 +1514,11 @@ class VeltrixTradingClock:
         history_header = self._frame(history_card, bg="panel")
         history_header.pack(fill="x", pady=(0, 7))
         self._label(history_header, "RECENT FOCUS SESSIONS", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(side="left")
+                    font=("Segoe UI", 10, "bold")).pack(side="left")
         ttk.Button(history_header, text="REFRESH", command=self._refresh_focus_history).pack(side="right")
         self.focus_history_tree = ttk.Treeview(
             history_card, columns=("started", "mode", "label", "duration", "status"),
-            show="headings", height=4, style="Veltrix.Research.Treeview",
+            show="headings", height=4, style="Veltrix.Treeview",
         )
         for col, heading, width in (
             ("started", "STARTED", 145), ("mode", "MODE", 95), ("label", "SESSION", 260),
@@ -768,15 +1531,15 @@ class VeltrixTradingClock:
         goals_header = self._frame(self.focus_content, bg="panel", padx=14, pady=10)
         goals_header.pack(fill="x", pady=(0, 9))
         self._label(goals_header, "LONG-TERM GOALS", bg="panel", fg="bright",
-                    font=("Consolas", 11, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 12, "bold")).pack(anchor="w")
         self._label(
             goals_header,
             "Set a deadline, break the outcome into milestones, and track the days remaining.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(3, 0))
         self.focus_goal_countdown_label = self._label(
             goals_header, "SELECT A GOAL TO VIEW ITS LIVE DEADLINE COUNTDOWN",
-            bg="panel", fg="bright", font=("Consolas", 10, "bold"),
+            bg="panel", fg="bright", font=("Segoe UI", 10, "bold"),
         )
         self.focus_goal_countdown_label.pack(anchor="w", pady=(8, 0))
 
@@ -784,7 +1547,7 @@ class VeltrixTradingClock:
         goals_card.pack(fill="x", pady=(0, 10))
         self.focus_goal_tree = ttk.Treeview(
             goals_card, columns=("title", "category", "deadline", "remaining", "progress", "status"),
-            show="headings", height=5, style="Veltrix.Research.Treeview",
+            show="headings", height=5, style="Veltrix.Treeview",
         )
         for col, heading, width in (
             ("title", "GOAL", 260), ("category", "CATEGORY", 105), ("deadline", "DEADLINE", 105),
@@ -798,7 +1561,7 @@ class VeltrixTradingClock:
         editor = self._frame(self.focus_content, bg="panel", padx=14, pady=12)
         editor.pack(fill="x", pady=(0, 10))
         self.focus_goal_editor_heading = self._label(
-            editor, "CREATE GOAL", bg="panel", fg="bright", font=("Consolas", 9, "bold")
+            editor, "CREATE GOAL", bg="panel", fg="bright", font=("Segoe UI", 10, "bold")
         )
         self.focus_goal_editor_heading.pack(anchor="w", pady=(0, 8))
         form = ttk.Frame(editor)
@@ -810,7 +1573,7 @@ class VeltrixTradingClock:
         self.focus_goal_category_combo = ttk.Combobox(
             form, textvariable=self.focus_goal_category_var,
             values=("Personal", "Education", "Career", "Finance", "Business", "Health", "Other"),
-            state="readonly", width=15, style="Veltrix.Data.TCombobox",
+            state="readonly", width=15, style="TCombobox",
         )
         self.focus_goal_category_combo.grid(row=0, column=3, sticky="w", pady=3)
         ttk.Label(form, text="START DATE (YYYY-MM-DD)").grid(row=1, column=0, sticky="w", padx=(0, 5), pady=3)
@@ -821,7 +1584,7 @@ class VeltrixTradingClock:
         self.focus_goal_status_combo = ttk.Combobox(
             form, textvariable=self.focus_goal_status_var,
             values=("Not started", "In progress", "Completed", "Archived"),
-            state="readonly", width=16, style="Veltrix.Data.TCombobox",
+            state="readonly", width=16, style="TCombobox",
         )
         self.focus_goal_status_combo.grid(row=2, column=1, sticky="w", pady=3)
         ttk.Label(form, text="MANUAL PROGRESS (%)").grid(row=2, column=2, sticky="w", padx=(0, 5), pady=3)
@@ -831,7 +1594,7 @@ class VeltrixTradingClock:
         ttk.Label(editor, text="DESCRIPTION / SUCCESS CRITERIA").pack(anchor="w", pady=(7, 3))
         self.focus_goal_description = tk.Text(
             editor, height=3, wrap="word", relief="flat", bd=0,
-            highlightthickness=1, padx=8, pady=6,
+            highlightthickness=0, padx=8, pady=6,
         )
         self.focus_goal_description.pack(fill="x", pady=(0, 8))
         goal_actions = ttk.Frame(editor)
@@ -841,7 +1604,7 @@ class VeltrixTradingClock:
         ttk.Button(goal_actions, text="DELETE GOAL", command=self._delete_focus_goal).pack(side="left")
         self.focus_goal_status_label = self._label(
             editor, "Goals are stored locally on this computer.", bg="panel", fg="muted",
-            font=("Consolas", 8),
+            font=("Segoe UI", 9),
         )
         self.focus_goal_status_label.pack(anchor="w", pady=(7, 0))
 
@@ -850,10 +1613,10 @@ class VeltrixTradingClock:
         milestone_header = self._frame(milestone_card, bg="panel")
         milestone_header.pack(fill="x", pady=(0, 7))
         self._label(milestone_header, "GOAL MILESTONES", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(side="left")
+                    font=("Segoe UI", 10, "bold")).pack(side="left")
         self.focus_milestone_tree = ttk.Treeview(
             milestone_card, columns=("milestone", "status"), show="headings", height=4,
-            style="Veltrix.Research.Treeview",
+            style="Veltrix.Treeview",
         )
         self.focus_milestone_tree.heading("milestone", text="MILESTONE")
         self.focus_milestone_tree.heading("status", text="STATUS")
@@ -1233,17 +1996,65 @@ class VeltrixTradingClock:
         self._refresh_focus_goals()
 
     def _build_alerts_page(self) -> None:
-        """Build configurable session alerts and manual economic-event reminders."""
+        """Build the Market Watch command centre and retain the rule editor."""
         palette = THEMES[self.theme_name]
+        self.alerts_scroll_shell = self._frame(self.alerts_view)
+        self.alerts_scroll_shell.pack(fill="both", expand=True)
+        self.alerts_canvas = tk.Canvas(
+            self.alerts_scroll_shell, bg=palette["bg"], highlightthickness=0, bd=0,
+        )
+        self.alerts_scrollbar = ttk.Scrollbar(
+            self.alerts_scroll_shell, orient="vertical", command=self.alerts_canvas.yview,
+            style="Veltrix.Alerts.Vertical.TScrollbar",
+        )
+        self.alerts_canvas.configure(yscrollcommand=self.alerts_scrollbar.set)
+        self.alerts_canvas.pack(side="left", fill="both", expand=True)
+        self.alerts_scrollbar.pack(side="right", fill="y")
+        self.alerts_content = self._frame(self.alerts_canvas)
+        self.alerts_content_window = self.alerts_canvas.create_window(
+            (0, 0), window=self.alerts_content, anchor="nw",
+        )
+        self.alerts_content.bind(
+            "<Configure>", lambda _event: self.alerts_canvas.configure(
+                scrollregion=self.alerts_canvas.bbox("all")
+            )
+        )
+        self.alerts_canvas.bind(
+            "<Configure>", lambda event: self.alerts_canvas.itemconfigure(
+                self.alerts_content_window, width=event.width
+            )
+        )
+        self.alerts_canvas.bind(
+            "<MouseWheel>",
+            lambda event: self.alerts_canvas.yview_scroll(int(-event.delta / 120), "units"),
+        )
+        self.alerts_canvas.bind(
+            "<Button-4>", lambda _event: self.alerts_canvas.yview_scroll(-1, "units"),
+        )
+        self.alerts_canvas.bind(
+            "<Button-5>", lambda _event: self.alerts_canvas.yview_scroll(1, "units"),
+        )
+        self.alert_settings_container = self._frame(self.alerts_content, bg="panel", padx=4, pady=3)
+        self.alert_settings_container.pack_forget()
+        build_alert_center(self, self.alerts_content)
+        build_alerts_dashboard(self, self.alerts_content)
+        settings_toggle_row = self._frame(self.alerts_content, bg="panel", padx=7, pady=5)
+        settings_toggle_row.pack(fill="x", pady=(0, 6))
+        self.alert_config_toggle = tk.Button(
+            settings_toggle_row, text="ALERT RULES / PREFERENCES  ▸",
+            command=lambda: toggle_alert_settings(self),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+        )
+        self.alert_config_toggle.pack(side="left")
 
-        settings_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=11)
+        settings_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
         settings_panel.pack(fill="x", pady=(0, 10))
         self._label(settings_panel, "SESSION ALERT ENGINE", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             settings_panel,
             "Choose which market transitions should generate an in-app alert.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(2, 8))
 
         toggles = self._frame(settings_panel, bg="panel")
@@ -1263,7 +2074,7 @@ class VeltrixTradingClock:
             self.alert_vars[key] = variable
             check = tk.Checkbutton(
                 toggles, text=label, variable=variable, command=self.save_alert_settings,
-                font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=5, pady=3,
+                font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=5, pady=3,
                 cursor="hand2", selectcolor=palette["dim"], activebackground=palette["panel"],
             )
             check.pack(side="left", padx=(0, 7))
@@ -1272,40 +2083,154 @@ class VeltrixTradingClock:
         lead_row = self._frame(settings_panel, bg="panel")
         lead_row.pack(fill="x", pady=(8, 0))
         self._label(lead_row, "PRE-OPEN MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left")
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
         self.pre_open_var = tk.StringVar(value=str(self.alert_settings.get("pre_open_minutes", 15)))
         self.pre_open_spin = tk.Spinbox(
             lead_row, from_=1, to=180, textvariable=self.pre_open_var,
-            width=4, font=("Consolas", 9, "bold"), justify="center", relief="flat", bd=0,
+            width=4, font=("Segoe UI", 10, "bold"), justify="center", relief="flat", bd=0,
         )
         self.pre_open_spin.pack(side="left", padx=(6, 16))
         self._label(lead_row, "PRE-CLOSE MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left")
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
         self.pre_close_var = tk.StringVar(value=str(self.alert_settings.get("pre_close_minutes", 10)))
         self.pre_close_spin = tk.Spinbox(
             lead_row, from_=1, to=180, textvariable=self.pre_close_var,
-            width=4, font=("Consolas", 9, "bold"), justify="center", relief="flat", bd=0,
+            width=4, font=("Segoe UI", 10, "bold"), justify="center", relief="flat", bd=0,
         )
         self.pre_close_spin.pack(side="left", padx=(6, 12))
         self.save_alert_button = tk.Button(
             lead_row, text="SAVE ALERT SETTINGS", command=self.save_alert_settings,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
         )
         self.save_alert_button.pack(side="left")
         self.test_alert_button = tk.Button(
             lead_row, text="TEST NOTIFICATION", command=self.test_notification,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
         )
         self.test_alert_button.pack(side="left", padx=(7, 0))
 
-        event_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=11)
+        overrides_title = self._label(
+            settings_panel, "SESSION-SPECIFIC REMINDER OVERRIDES",
+            bg="panel", fg="bright", font=("Segoe UI", 9, "bold"),
+        )
+        overrides_title.pack(anchor="w", pady=(12, 2))
+        self._label(
+            settings_panel,
+            "Each market has independent lead times, initially set to the global default values.",
+            bg="panel", fg="muted", font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(0, 5))
+        self.session_lead_vars = {}
+        self.session_lead_spins = []
+        saved_overrides = self.alert_settings.get("session_lead_overrides", {})
+        if not isinstance(saved_overrides, dict):
+            saved_overrides = {}
+        for session in self.sessions:
+            override = saved_overrides.get(session.key, {})
+            if not isinstance(override, dict):
+                override = {}
+            row = self._frame(settings_panel, bg="panel")
+            row.pack(fill="x", pady=2)
+            self._label(
+                row, session.name, bg="panel", fg="text",
+                font=("Segoe UI", 9, "bold"), width=12,
+            ).pack(side="left")
+            open_var = tk.StringVar(
+                value=str(override.get("pre_open_minutes", self.alert_settings.get("pre_open_minutes", 15)))
+            )
+            close_var = tk.StringVar(
+                value=str(override.get("pre_close_minutes", self.alert_settings.get("pre_close_minutes", 10)))
+            )
+            self._label(row, "PRE-OPEN", bg="panel", fg="muted", font=("Segoe UI", 8)).pack(side="left", padx=(5, 3))
+            open_spin = tk.Spinbox(
+                row, from_=1, to=180, textvariable=open_var, width=4,
+                font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
+            )
+            open_spin.pack(side="left", padx=(0, 12))
+            self._label(row, "PRE-CLOSE", bg="panel", fg="muted", font=("Segoe UI", 8)).pack(side="left", padx=(0, 3))
+            close_spin = tk.Spinbox(
+                row, from_=1, to=180, textvariable=close_var, width=4,
+                font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
+            )
+            close_spin.pack(side="left")
+            self.session_lead_vars[session.key] = {"pre_open": open_var, "pre_close": close_var}
+            self.session_lead_spins.extend((open_spin, close_spin))
+
+        risk_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
+        risk_panel.pack(fill="x", pady=(0, 10))
+        self._label(
+            risk_panel, "SESSION RISK AWARENESS", bg="panel", fg="bright",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            risk_panel,
+            "Schedule-based cautions for opening/closing windows and exchange holiday-adjacent conditions. These are not live liquidity measurements.",
+            bg="panel", fg="muted", font=("Segoe UI", 10), wraplength=1050,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 8))
+        risk_toggles = self._frame(risk_panel, bg="panel")
+        risk_toggles.pack(fill="x")
+        self.risk_enabled_var = tk.BooleanVar(value=bool(self.session_risk_settings.get("enabled", True)))
+        self.risk_notifications_var = tk.BooleanVar(
+            value=bool(self.session_risk_settings.get("notifications_enabled", True))
+        )
+        self.holiday_liquidity_var = tk.BooleanVar(
+            value=bool(self.session_risk_settings.get("holiday_liquidity_flags", True))
+        )
+        for variable, label in (
+            (self.risk_enabled_var, "SHOW SESSION RISK FLAGS"),
+            (self.risk_notifications_var, "RISK NOTIFICATIONS"),
+            (self.holiday_liquidity_var, "HOLIDAY LIQUIDITY CAUTIONS"),
+        ):
+            check = tk.Checkbutton(
+                risk_toggles, text=label, variable=variable, command=self.save_alert_settings,
+                font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=5, pady=3,
+                cursor="hand2", bg=palette["panel"], fg=palette["text"],
+                selectcolor=palette["dim"], activebackground=palette["panel"],
+                activeforeground=palette["bright"],
+            )
+            check.pack(side="left", padx=(0, 8))
+            self.risk_checkbuttons.append(check)
+        risk_windows = self._frame(risk_panel, bg="panel")
+        risk_windows.pack(fill="x", pady=(7, 0))
+        self._label(risk_windows, "OPENING CAUTION MIN", bg="panel", fg="muted",
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.risk_opening_window_var = tk.StringVar(
+            value=str(self.session_risk_settings.get("opening_window_minutes", 15))
+        )
+        self.risk_opening_window_spin = tk.Spinbox(
+            risk_windows, from_=0, to=180, textvariable=self.risk_opening_window_var,
+            width=4, font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
+        )
+        self.risk_opening_window_spin.pack(side="left", padx=(6, 16))
+        self._label(risk_windows, "CLOSING CAUTION MIN", bg="panel", fg="muted",
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.risk_closing_window_var = tk.StringVar(
+            value=str(self.session_risk_settings.get("closing_window_minutes", 15))
+        )
+        self.risk_closing_window_spin = tk.Spinbox(
+            risk_windows, from_=0, to=180, textvariable=self.risk_closing_window_var,
+            width=4, font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
+        )
+        self.risk_closing_window_spin.pack(side="left", padx=(6, 16))
+        self.risk_pre_open_window_var = tk.StringVar(
+            value=str(self.session_risk_settings.get("pre_open_window_minutes", 15))
+        )
+        self._label(risk_windows, "PRE-OPEN FLAG MIN", bg="panel", fg="muted",
+                    font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.risk_pre_open_window_spin = tk.Spinbox(
+            risk_windows, from_=0, to=180, textvariable=self.risk_pre_open_window_var,
+            width=4, font=("Segoe UI", 9), justify="center", relief="flat", bd=0,
+        )
+        self.risk_pre_open_window_spin.pack(side="left", padx=(6, 0))
+
+        event_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=11)
         event_panel.pack(fill="x", pady=(0, 10))
         self._label(event_panel, "ECONOMIC EVENT REMINDERS", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             event_panel,
             f"Add events manually. Times are interpreted in {self.home_zone.key} (your control timezone).",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(2, 8))
 
         event_form = self._frame(event_panel, bg="panel")
@@ -1314,56 +2239,56 @@ class VeltrixTradingClock:
         self.event_datetime_var = tk.StringVar(value=(datetime.now(self.home_zone) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M"))
         self.event_name_entry = tk.Entry(
             event_form, textvariable=self.event_name_var, width=25,
-            font=("Consolas", 9), relief="flat", bd=0,
+            font=("Segoe UI", 10), relief="flat", bd=0,
         )
         self.event_name_entry.pack(side="left", padx=(0, 7), ipady=6)
         self.event_datetime_entry = tk.Entry(
             event_form, textvariable=self.event_datetime_var, width=19,
-            font=("Consolas", 9), relief="flat", bd=0,
+            font=("Segoe UI", 10), relief="flat", bd=0,
         )
         self.event_datetime_entry.pack(side="left", padx=(0, 7), ipady=6)
         self.add_event_button = tk.Button(
             event_form, text="ADD EVENT", command=self.add_economic_event,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=11, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=11, pady=6, cursor="hand2",
         )
         self.add_event_button.pack(side="left")
         self._label(event_form, "REMIND", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left", padx=(14, 4))
+                    font=("Segoe UI", 9, "bold")).pack(side="left", padx=(14, 4))
         self.event_lead_var = tk.StringVar(value=str(self.config.get("event_reminder_minutes", 15)))
         self.event_lead_spin = tk.Spinbox(
             event_form, from_=0, to=1440, textvariable=self.event_lead_var,
-            width=5, font=("Consolas", 9, "bold"), justify="center", relief="flat", bd=0,
+            width=5, font=("Segoe UI", 10, "bold"), justify="center", relief="flat", bd=0,
         )
         self.event_lead_spin.pack(side="left")
         self._label(event_form, "MIN BEFORE", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left", padx=(4, 0))
+                    font=("Segoe UI", 9, "bold")).pack(side="left", padx=(4, 0))
 
         event_list_row = self._frame(event_panel, bg="panel")
         event_list_row.pack(fill="x", pady=(9, 0))
         self.event_listbox = tk.Listbox(
-            event_list_row, height=4, font=("Consolas", 8), relief="flat", bd=0,
+            event_list_row, height=4, font=("Segoe UI", 9), relief="flat", bd=0,
             activestyle="none", exportselection=False,
         )
         self.event_listbox.pack(side="left", fill="x", expand=True)
         self.remove_event_button = tk.Button(
             event_list_row, text="REMOVE SELECTED", command=self.remove_economic_event,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
         )
         self.remove_event_button.pack(side="left", padx=(8, 0), anchor="n")
 
-        feed_panel = self._frame(self.alerts_view, bg="panel", padx=14, pady=10)
+        feed_panel = self._frame(self.alert_settings_container, bg="panel", padx=14, pady=10)
         feed_panel.pack(fill="both", expand=True)
         self._label(feed_panel, "ALERT ACTIVITY", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.alert_banner = self._label(
             feed_panel, "NO ALERTS YET  ·  Session notifications will appear here.",
-            bg="panel", fg="muted", font=("Consolas", 8, "bold"), anchor="w", justify="left",
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"), anchor="w", justify="left",
         )
         self.alert_banner.pack(fill="x", pady=(4, 7))
         feed_row = self._frame(feed_panel, bg="panel")
         feed_row.pack(fill="both", expand=True)
         self.alert_listbox = tk.Listbox(
-            feed_row, height=5, font=("Consolas", 8), relief="flat", bd=0,
+            feed_row, height=5, font=("Segoe UI", 9), relief="flat", bd=0,
             activestyle="none", exportselection=False,
         )
         self.alert_listbox.pack(fill="both", expand=True)
@@ -1377,27 +2302,27 @@ class VeltrixTradingClock:
         connection = self._frame(self.calendar_view, bg="panel", padx=14, pady=11)
         connection.pack(fill="x", pady=(0, 9))
         self._label(connection, "LIVE ECONOMIC CALENDAR", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             connection,
             "ShowMyTrades public calendar · 9 major currencies · No API key · 15-minute refresh floor.",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(2, 8))
         source_row = self._frame(connection, bg="panel")
         source_row.pack(fill="x")
         self.calendar_status_label = self._label(
             source_row, "CONNECTING TO PUBLIC CALENDAR...",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w",
+            bg="panel", fg="warning", font=("Segoe UI", 9, "bold"), anchor="w",
         )
         self.calendar_status_label.pack(side="left", fill="x", expand=True)
         self.refresh_calendar_button = tk.Button(
             source_row, text="REFRESH CALENDAR", command=self.refresh_live_calendar,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
         )
         self.refresh_calendar_button.pack(side="right")
         self.calendar_freshness_label = self._label(
             connection, "Loading cached calendar data...",
-            bg="panel", fg="muted", font=("Segoe UI", 8), anchor="w",
+            bg="panel", fg="muted", font=("Segoe UI", 10), anchor="w",
         )
         self.calendar_freshness_label.pack(fill="x", pady=(7, 0))
         if self.calendar_last_updated:
@@ -1418,21 +2343,21 @@ class VeltrixTradingClock:
         self.calendar_filter = ttk.Combobox(
             controls, textvariable=self.calendar_filter_var,
             values=("All impact levels", "High impact", "Medium impact", "Low impact", "Market holidays"),
-            state="readonly", width=18, font=("Consolas", 8),
+            state="readonly", width=18, font=("Segoe UI", 9),
         )
         self.calendar_filter.pack(side="left", padx=(0, 8))
         self.calendar_filter.bind("<<ComboboxSelected>>", lambda _event: self._refresh_calendar_table())
         self.calendar_search_var = tk.StringVar()
         self.calendar_search_entry = tk.Entry(
             controls, textvariable=self.calendar_search_var, width=28,
-            font=("Consolas", 8), relief="flat", bd=0,
+            font=("Segoe UI", 9), relief="flat", bd=0,
         )
         self.calendar_search_entry.pack(side="left", padx=(0, 8), ipady=6)
         self.calendar_search_entry.insert(0, "Search currency / event")
         self.calendar_search_entry.bind("<FocusIn>", self._clear_calendar_search_placeholder)
         self.calendar_search_var.trace_add("write", lambda *_args: self._refresh_calendar_table())
         self.calendar_count_label = self._label(
-            controls, "0 EVENTS", bg="panel", fg="muted", font=("Consolas", 8, "bold"),
+            controls, "0 EVENTS", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
         )
         self.calendar_count_label.pack(side="right")
 
@@ -1444,24 +2369,24 @@ class VeltrixTradingClock:
         self.calendar_reminder_check = tk.Checkbutton(
             reminder_row, text="REMIND ME BEFORE HIGH-IMPACT RELEASES",
             variable=self.calendar_reminder_enabled_var, command=self.save_calendar_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=4, pady=2,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=4, pady=2,
             cursor="hand2", selectcolor=palette["dim"], activebackground=palette["panel"],
         )
         self.calendar_reminder_check.pack(side="left")
         self._label(reminder_row, "LEAD MIN", bg="panel", fg="muted",
-                    font=("Consolas", 8, "bold")).pack(side="left", padx=(12, 5))
+                    font=("Segoe UI", 9, "bold")).pack(side="left", padx=(12, 5))
         self.calendar_reminder_minutes_var = tk.StringVar(
             value=str(self.calendar_settings.get("reminder_minutes", 15))
         )
         self.calendar_reminder_spin = tk.Spinbox(
             reminder_row, from_=0, to=1440, textvariable=self.calendar_reminder_minutes_var,
-            width=5, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0,
+            width=5, font=("Segoe UI", 9, "bold"), justify="center", relief="flat", bd=0,
             command=self.save_calendar_preferences,
         )
         self.calendar_reminder_spin.pack(side="left")
         self.save_calendar_preferences_button = tk.Button(
             reminder_row, text="SAVE REMINDER SETTINGS", command=self.save_calendar_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
         )
         self.save_calendar_preferences_button.pack(side="left", padx=(10, 0))
 
@@ -1469,7 +2394,7 @@ class VeltrixTradingClock:
         table_panel.pack(fill="both", expand=True)
         self._label(
             table_panel, f"UPCOMING MACRO RELEASES · DISPLAYED IN {datetime.now(self.home_zone).tzname()} ({self.home_zone.key})",
-            bg="panel", fg="bright", font=("Consolas", 8, "bold"),
+            bg="panel", fg="bright", font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(0, 7))
         table_frame = self._frame(table_panel, bg="panel")
         table_frame.pack(fill="both", expand=True)
@@ -1492,7 +2417,7 @@ class VeltrixTradingClock:
         self.calendar_tree.tag_configure("medium", foreground=palette["warning"])
         self.calendar_tree.tag_configure("low", foreground=palette["success"])
         self.calendar_tree.tag_configure("holiday", foreground=palette["muted"])
-        self.calendar_tree.tag_configure("tentative", font=("Consolas", 8, "italic"))
+        self.calendar_tree.tag_configure("tentative", font=("Segoe UI", 9, "italic"))
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.calendar_tree.yview)
         horizontal_scrollbar = ttk.Scrollbar(table_panel, orient="horizontal", command=self.calendar_tree.xview)
         self.calendar_tree.configure(yscrollcommand=scrollbar.set, xscrollcommand=horizontal_scrollbar.set)
@@ -1502,7 +2427,7 @@ class VeltrixTradingClock:
         attribution = self.calendar_payload.get("attribution", {})
         self.calendar_attribution_label = self._label(
             table_panel, str(attribution.get("text", "Economic calendar by ShowMyTrades")) + "  ·  VIEW SOURCE",
-            bg="panel", fg="muted", font=("Segoe UI", 7, "underline"), anchor="w", cursor="hand2",
+            bg="panel", fg="muted", font=("Segoe UI", 9, "underline"), anchor="w", cursor="hand2",
         )
         self.calendar_attribution_label.pack(fill="x", pady=(5, 0))
         self.calendar_attribution_label.bind("<Button-1>", lambda _event: self._open_calendar_source())
@@ -1540,25 +2465,25 @@ class VeltrixTradingClock:
         header = self._frame(self.market_content, bg="panel", padx=14, pady=10)
         header.pack(fill="x", pady=(0, 9))
         self._label(header, "MARKET VOLATILITY MONITOR", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.market_description_label = self._label(
             header, "5m realised volatility (√Σr²) · Daily Wilder ATR(14) · 20-session 1σ move",
-            bg="panel", fg="muted", font=("Segoe UI", 8),
+            bg="panel", fg="muted", font=("Segoe UI", 10),
         )
         self.market_description_label.pack(anchor="w", pady=(2, 7))
         top_row = self._frame(header, bg="panel")
         top_row.pack(fill="x")
         self.market_status_label = self._label(top_row, "WAITING FOR MARKET DATA...", bg="panel", fg="warning",
-                                               font=("Consolas", 8, "bold"), anchor="w")
+                                               font=("Segoe UI", 9, "bold"), anchor="w")
         self.market_status_label.pack(side="left", fill="x", expand=True)
         self.refresh_market_button = tk.Button(
             top_row, text="REFRESH MARKET DATA", command=self.refresh_market_data,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
         )
         self.refresh_market_button.pack(side="right")
         self.market_freshness_label = self._label(
             header, "Yahoo Finance legacy fallback · Unofficial feed · Price timing may vary · Provider validation pending",
-            bg="panel", fg="muted", font=("Segoe UI", 7), anchor="w",
+            bg="panel", fg="muted", font=("Segoe UI", 9), anchor="w",
         )
         self.market_freshness_label.pack(fill="x", pady=(6, 0))
 
@@ -1568,21 +2493,21 @@ class VeltrixTradingClock:
             cards_frame.grid_columnconfigure(column, weight=1, uniform="market_asset")
         self.market_asset_cards: dict[str, dict[str, tk.Widget]] = {}
         for column, instrument in enumerate(self.market_instruments):
-            card = self._frame(cards_frame, bg="panel", padx=11, pady=9, highlightthickness=1, bd=0)
+            card = self._frame(cards_frame, bg="panel", padx=11, pady=9, highlightthickness=0, bd=0)
             card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < len(self.market_instruments)-1 else 0))
             name = self._label(card, str(instrument.get("name", instrument["key"])), bg="panel", fg="bright",
-                               font=("Consolas", 9, "bold"))
+                               font=("Segoe UI", 10, "bold"))
             name.pack(anchor="w")
             symbol = self._label(card, str(instrument.get("symbol", "")), bg="panel", fg="muted",
-                                 font=("Consolas", 7))
+                                 font=("Segoe UI", 8))
             symbol.pack(anchor="w", pady=(1, 5))
-            price = self._label(card, "--", bg="panel", fg="text", font=("Consolas", 17, "bold"))
+            price = self._label(card, "--", bg="panel", fg="text", font=("Segoe UI", 17, "bold"))
             price.pack(anchor="w")
-            atr = self._label(card, "ATR(14): N/A", bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+            atr = self._label(card, "ATR(14): N/A", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
             atr.pack(anchor="w", pady=(5, 0))
-            expected = self._label(card, "1D EXPECTED MOVE: N/A", bg="panel", fg="muted", font=("Consolas", 8, "bold"))
+            expected = self._label(card, "1D EXPECTED MOVE: N/A", bg="panel", fg="muted", font=("Segoe UI", 9, "bold"))
             expected.pack(anchor="w", pady=(2, 0))
-            quote_time = self._label(card, "No quote loaded", bg="panel", fg="muted", font=("Segoe UI", 7))
+            quote_time = self._label(card, "No quote loaded", bg="panel", fg="muted", font=("Segoe UI", 9))
             quote_time.pack(anchor="w", pady=(4, 0))
             self.market_asset_cards[str(instrument["key"])] = {
                 "frame": card, "name": name, "symbol": symbol, "price": price,
@@ -1592,7 +2517,7 @@ class VeltrixTradingClock:
         table_panel = self._frame(self.market_content, bg="panel", padx=11, pady=9)
         table_panel.pack(fill="both", expand=True, pady=(0, 9))
         self._label(table_panel, "SESSION-BY-SESSION REALISED VOLATILITY", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
         table_frame = self._frame(table_panel, bg="panel")
         table_frame.pack(fill="both", expand=True)
         columns = ("instrument", "session", "realised", "range", "bars", "regime", "observation")
@@ -1620,1035 +2545,212 @@ class VeltrixTradingClock:
         self.market_regime_enabled_var = tk.BooleanVar(value=bool(self.market_settings.get("regime_alerts_enabled", True)))
         self.market_regime_check = tk.Checkbutton(
             controls, text="VOLATILITY REGIME ALERTS", variable=self.market_regime_enabled_var,
-            command=self.save_market_preferences, font=("Consolas", 8, "bold"), relief="flat", bd=0,
+            command=self.save_market_preferences, font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
             padx=4, pady=2, cursor="hand2", selectcolor=palette["dim"], activebackground=palette["panel"],
         )
         self.market_regime_check.pack(side="left")
-        self._label(controls, "EXPANSION ≥", bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(side="left", padx=(10, 4))
+        self._label(controls, "EXPANSION ≥", bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(10, 4))
         self.market_expansion_var = tk.StringVar(value=str(self.market_settings.get("expansion_multiple", 1.5)))
         self.market_expansion_spin = tk.Spinbox(controls, from_=1.1, to=5.0, increment=0.1,
-            textvariable=self.market_expansion_var, width=4, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0)
+            textvariable=self.market_expansion_var, width=4, font=("Segoe UI", 9, "bold"), justify="center", relief="flat", bd=0)
         self.market_expansion_spin.pack(side="left")
-        self._label(controls, "CONTRACTION ≤", bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(side="left", padx=(9, 4))
+        self._label(controls, "CONTRACTION ≤", bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(9, 4))
         self.market_contraction_var = tk.StringVar(value=str(self.market_settings.get("contraction_multiple", 0.67)))
         self.market_contraction_spin = tk.Spinbox(controls, from_=0.1, to=0.99, increment=0.01,
-            textvariable=self.market_contraction_var, width=4, font=("Consolas", 8, "bold"), justify="center", relief="flat", bd=0)
+            textvariable=self.market_contraction_var, width=4, font=("Segoe UI", 9, "bold"), justify="center", relief="flat", bd=0)
         self.market_contraction_spin.pack(side="left")
         self.save_market_settings_button = tk.Button(controls, text="SAVE SETTINGS", command=self.save_market_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2")
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=5, cursor="hand2")
         self.save_market_settings_button.pack(side="left", padx=(10, 0))
 
         alerts_panel = self._frame(self.market_content, bg="panel", padx=12, pady=8)
         alerts_panel.pack(fill="x")
         self._label(alerts_panel, "VOLATILITY REGIME ACTIVITY", bg="panel", fg="bright",
-                    font=("Consolas", 8, "bold")).pack(anchor="w")
-        self.market_alert_listbox = tk.Listbox(alerts_panel, height=2, font=("Consolas", 7),
+                    font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.market_alert_listbox = tk.Listbox(alerts_panel, height=2, font=("Segoe UI", 9),
             relief="flat", bd=0, activestyle="none", exportselection=False)
         self.market_alert_listbox.pack(fill="x", pady=(4, 0))
         self.market_alert_listbox.insert("end", "No expansion or contraction alerts have been recorded this run.")
 
-    def _build_research_page(self) -> None:
-        """Build Phase 6 historical research, broker CSV import and report export workspace."""
-        self.research_canvas = tk.Canvas(self.research_view, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(self.research_view, orient="vertical", command=self.research_canvas.yview)
-        self.research_canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.research_canvas.pack(side="left", fill="both", expand=True)
-        self.research_content = self._frame(self.research_canvas)
-        self.research_content_window = self.research_canvas.create_window(
-            (0, 0), window=self.research_content, anchor="nw"
-        )
-        self.research_content.bind(
-            "<Configure>", lambda _event: self.research_canvas.configure(
-                scrollregion=self.research_canvas.bbox("all")
-            )
-        )
-        self.research_canvas.bind(
-            "<Configure>", lambda event: self.research_canvas.itemconfigure(
-                self.research_content_window, width=event.width
-            )
-        )
-
-        header = self._frame(self.research_content, bg="panel", padx=14, pady=11)
-        header.pack(fill="x", pady=(0, 9))
-        self._label(header, "HISTORICAL SESSION RESEARCH LAB", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
-        self._label(
-            header,
-            "30 / 60 / 90-CALENDAR-DAY DISTRIBUTIONS · VOLATILITY PERCENTILES · BROKER CSV IMPORT",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
-        ).pack(anchor="w", pady=(3, 6))
-        self.research_status_label = self._label(
-            header, "NO HISTORICAL RESEARCH DATA · FETCH PROVIDER HISTORY OR IMPORT A BROKER CSV",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=900,
-        )
-        self.research_status_label.pack(fill="x")
-
-        controls = self._frame(self.research_content, bg="panel", padx=12, pady=10)
-        controls.pack(fill="x", pady=(0, 9))
-        controls.grid_columnconfigure(0, weight=1)
-        controls.grid_columnconfigure(1, weight=1)
-        controls.grid_columnconfigure(2, weight=1)
-        self._label(controls, "INSTRUMENT", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self._label(controls, "ROLLING WINDOW", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=1, sticky="w", padx=8
-        )
-        self._label(controls, "TIMEZONE FOR NAIVE CSV TIMES", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        self.research_label_to_key: dict[str, str] = {}
-        self.research_asset_combo = ttk.Combobox(
-            controls, textvariable=self.research_asset_var, values=(),
-            state="readonly", width=32, style="Veltrix.Research.TCombobox",
-        )
-        self.research_asset_combo.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(4, 10))
-        self._refresh_research_instrument_choices(
-            preferred_key=str(self.research_settings.get("selected_asset", ""))
-        )
-        self.research_asset_combo.bind("<<ComboboxSelected>>", lambda _event: self._research_preferences_changed())
-
-        self.research_window_combo = ttk.Combobox(
-            controls, textvariable=self.research_window_var, values=("30", "60", "90"),
-            state="readonly", width=12, style="Veltrix.Research.TCombobox",
-        )
-        self.research_window_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=(4, 10))
-        self.research_window_combo.bind("<<ComboboxSelected>>", lambda _event: self._research_preferences_changed())
-        timezone_values = ("UTC", "Africa/Nairobi", "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney")
-        self.research_timezone_combo = ttk.Combobox(
-            controls, textvariable=self.research_timezone_var, values=timezone_values,
-            state="readonly", width=24, style="Veltrix.Research.TCombobox",
-        )
-        self.research_timezone_combo.grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(4, 10))
-        self.research_timezone_combo.bind("<<ComboboxSelected>>", lambda _event: self._research_preferences_changed())
-
-        action_row = self._frame(controls, bg="panel")
-        action_row.grid(row=2, column=0, columnspan=3, sticky="ew")
-        self.research_fetch_button = tk.Button(
-            action_row, text="FETCH 90D HISTORY", command=self.fetch_research_history,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_fetch_button.pack(side="left", padx=(0, 6))
-        self.research_import_button = tk.Button(
-            action_row, text="IMPORT CSV TO SELECTED", command=self.import_research_csv,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_import_button.pack(side="left", padx=6)
-        self.research_custom_import_button = tk.Button(
-            action_row, text="IMPORT AS NEW INSTRUMENT", command=self.import_research_csv_as_new_instrument,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_custom_import_button.pack(side="left", padx=6)
-        self.research_restore_button = tk.Button(
-            action_row, text="RESTORE PROVIDER DATA", command=self.restore_provider_research_data,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_restore_button.pack(side="left", padx=6)
-        export_row = self._frame(controls, bg="panel")
-        export_row.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 0))
-        self.research_csv_button = tk.Button(
-            export_row, text="EXPORT SUMMARY CSV", command=self.export_research_summary,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_csv_button.pack(side="left", padx=6)
-        self.research_detail_csv_button = tk.Button(
-            export_row, text="EXPORT DAILY CSV", command=self.export_research_daily,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_detail_csv_button.pack(side="left", padx=6)
-        self.research_html_button = tk.Button(
-            export_row, text="EXPORT HTML REPORT", command=self.export_research_html,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.research_html_button.pack(side="left", padx=6)
-
-        self._build_tick_bar_panel()
-
-        summary_panel = self._frame(self.research_content, bg="panel", padx=11, pady=9)
-        summary_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(summary_panel, "ROLLING SESSION DISTRIBUTION", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 3))
-        self._label(
-            summary_panel,
-            "RV = √Σ(log returns²) · P75/P90 = historical percentiles · Latest percentile ranks the latest session within its window",
-            bg="panel", fg="muted", font=("Segoe UI", 7),
-        ).pack(anchor="w", pady=(0, 7))
-        summary_frame = self._frame(summary_panel, bg="panel")
-        summary_frame.pack(fill="both", expand=True)
-        summary_columns = ("session", "samples", "mean", "median", "p75", "p90", "latest", "rank", "range", "win")
-        self.research_summary_tree = ttk.Treeview(
-            summary_frame, columns=summary_columns, show="headings", height=4,
-            style="Veltrix.Research.Treeview", selectmode="browse",
-        )
-        summary_headings = {
-            "session": ("SESSION", 100), "samples": ("SAMPLES", 65), "mean": ("MEAN RV %", 85),
-            "median": ("MEDIAN RV %", 90), "p75": ("P75 %", 75), "p90": ("P90 %", 75),
-            "latest": ("LATEST RV %", 95), "rank": ("LATEST PCTL", 95),
-            "range": ("MEDIAN RANGE %", 110), "win": ("WIN RATE %", 90),
-        }
-        for key, (heading, width) in summary_headings.items():
-            self.research_summary_tree.heading(key, text=heading)
-            self.research_summary_tree.column(key, width=width, minwidth=55, anchor="center", stretch=(key == "session"))
-        summary_scroll = ttk.Scrollbar(summary_frame, orient="vertical", command=self.research_summary_tree.yview)
-        self.research_summary_tree.configure(yscrollcommand=summary_scroll.set)
-        self.research_summary_tree.pack(side="left", fill="both", expand=True)
-        summary_scroll.pack(side="right", fill="y")
-
-        detail_panel = self._frame(self.research_content, bg="panel", padx=11, pady=9)
-        detail_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(detail_panel, "DAILY SESSION OBSERVATIONS · MOST RECENT 30", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        detail_frame = self._frame(detail_panel, bg="panel")
-        detail_frame.pack(fill="both", expand=True)
-        detail_columns = ("date", "session", "rv", "range", "return", "bars", "interval", "status")
-        self.research_detail_tree = ttk.Treeview(
-            detail_frame, columns=detail_columns, show="headings", height=9,
-            style="Veltrix.Research.Treeview", selectmode="browse",
-        )
-        detail_headings = {
-            "date": ("LOCAL SESSION DATE", 125), "session": ("SESSION", 105),
-            "rv": ("REALISED VOL %", 115), "range": ("RANGE %", 90),
-            "return": ("SESSION RETURN %", 115), "bars": ("BARS / RETURNS", 105),
-            "interval": ("MEDIAN ELAPSED (MIN)", 125), "status": ("OBSERVATION", 145),
-        }
-        for key, (heading, width) in detail_headings.items():
-            self.research_detail_tree.heading(key, text=heading)
-            self.research_detail_tree.column(key, width=width, minwidth=70, anchor="center")
-        detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical", command=self.research_detail_tree.yview)
-        self.research_detail_tree.configure(yscrollcommand=detail_scroll.set)
-        self.research_detail_tree.pack(side="left", fill="both", expand=True)
-        detail_scroll.pack(side="right", fill="y")
-
-        methodology = self._frame(self.research_content, bg="panel", padx=12, pady=9)
-        methodology.pack(fill="x", pady=(0, 8))
-        self._label(
-            methodology,
-            "METHODOLOGY: One observation per instrument, session and local date. Rolling windows are calendar days ending at the latest valid completed observation date. The first sampled bar's open-to-close return is included. For time bars, close-to-close returns across gaps greater than 1.6× the inferred interval (with a 2-minute tolerance) are excluded. For fixed-tick and TIB datasets, elapsed time varies by design, so adjacent within-session returns are retained; the displayed median elapsed minutes is descriptive, not a fixed sampling interval. An open current session is marked PARTIAL and excluded from historical distributions. Percentile rank uses mid-ranks for ties. Different bar constructions can produce different realised-volatility estimates and must not be compared as identical sampling schemes.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=950,
-        ).pack(fill="x")
-        self._apply_research_tree_theme()
-
-    def _build_tick_bar_panel(self) -> None:
-        """Add Phase 8 raw-tick import and alternative bar-construction controls."""
-        panel = self._frame(self.research_content, bg="panel", padx=12, pady=10)
-        panel.pack(fill="x", pady=(0, 9))
-        self._label(panel, "PHASE 8 · MULTI-RESOLUTION / INFORMATION-DRIVEN BAR BUILDER",
-                    bg="panel", fg="bright", font=("Consolas", 9, "bold")).pack(anchor="w")
-        self._label(
-            panel,
-            "IMPORT RAW TICK CSV, THEN BUILD FIXED-TICK OR TICK IMBALANCE BARS. OUTPUTS REMAIN STANDARD OHLC DATASETS FOR THE RESEARCH AND STRATEGY LABS.",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"), wraplength=980, justify="left",
-        ).pack(anchor="w", pady=(3, 8))
-
-        top = self._frame(panel, bg="panel")
-        top.pack(fill="x")
-        for column in range(3):
-            top.grid_columnconfigure(column, weight=1)
-        self._label(top, "RAW TICK SOURCE", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self._label(top, "BAR CONSTRUCTION", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=1, sticky="w", padx=8
-        )
-        self._label(top, "OUTPUT DATASET NAME", bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        self.tick_source_combo = ttk.Combobox(
-            top, textvariable=self.tick_source_var, values=(), state="readonly", width=42,
-            style="Veltrix.Research.TCombobox",
-        )
-        self.tick_source_combo.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(4, 9))
-        self.tick_source_combo.bind("<<ComboboxSelected>>", lambda _event: self._tick_source_changed())
-        self.tick_bar_method_combo = ttk.Combobox(
-            top, textvariable=self.tick_bar_method_var,
-            values=("Fixed Tick", "Tick Imbalance"), state="readonly", width=22,
-            style="Veltrix.Research.TCombobox",
-        )
-        self.tick_bar_method_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=(4, 9))
-        self.tick_bar_method_combo.bind("<<ComboboxSelected>>", lambda _event: self._tick_source_changed())
-        self.tick_output_name_entry = tk.Entry(
-            top, textvariable=self.tick_output_name_var, font=("Consolas", 9), relief="flat", bd=0,
-        )
-        self.tick_output_name_entry.grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(4, 9), ipady=6)
-
-        parameters = self._frame(panel, bg="panel")
-        parameters.pack(fill="x")
-        parameter_fields = (
-            ("FIXED TICKS / BAR", self.tick_fixed_size_var, 10),
-            ("TIB SEED TICKS", self.tick_seed_size_var, 10),
-            ("BAR-LENGTH EWMA (BARS)", self.tick_ewma_span_var, 10),
-            ("IMBALANCE EWMA (TICKS)", self.tick_imbalance_ewma_span_var, 10),
-            ("MIN IMBALANCE FLOOR", self.tick_min_imbalance_var, 10),
-        )
-        for column, (label, variable, width) in enumerate(parameter_fields):
-            parameters.grid_columnconfigure(column, weight=1)
-            self._label(parameters, label, bg="panel", fg="muted", font=("Consolas", 7, "bold")).grid(
-                row=0, column=column, sticky="w", padx=(0, 8) if column == 0 else 8
-            )
-            entry = tk.Entry(parameters, textvariable=variable, width=width, font=("Consolas", 9), relief="flat", bd=0)
-            entry.grid(row=1, column=column, sticky="ew", padx=(0, 8) if column == 0 else 8, pady=(4, 8), ipady=5)
-
-        actions = self._frame(panel, bg="panel")
-        actions.pack(fill="x", pady=(2, 5))
-        self.tick_import_button = tk.Button(
-            actions, text="IMPORT RAW TICK CSV", command=self.import_raw_tick_csv,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.tick_import_button.pack(side="left", padx=(0, 7))
-        self.tick_build_button = tk.Button(
-            actions, text="BUILD OHLC BARS FROM TICKS", command=self.build_bars_from_ticks,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=6, cursor="hand2",
-        )
-        self.tick_build_button.pack(side="left", padx=7)
-        self._label(
-            panel,
-            "DATA QUALITY: Last prices use the tick rule, not exchange-stamped aggressor side. If Last is unavailable, Bid/Ask midpoint is used and explicitly labelled as a quote-flow proxy. The TIB seed/calibration bar is retained and labelled. Volume is recorded only as supplied metadata; no volume bars are built until its meaning is verified.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=980,
-        ).pack(fill="x", pady=(3, 0))
-        self._refresh_tick_source_choices()
-
-    def _selected_tick_source_key(self) -> str:
-        return self.tick_source_label_to_key.get(self.tick_source_var.get(), "")
-
-    def _refresh_tick_source_choices(self, preferred_key: str | None = None) -> None:
-        labels: list[str] = []
-        mapping: dict[str, str] = {}
-        for key, record in self.research_tick_sources.items():
-            if not isinstance(record, dict):
-                continue
-            name = str(record.get("name") or key)
-            meta = record.get("metadata", {}) if isinstance(record.get("metadata"), dict) else {}
-            ticks = int(meta.get("valid_ticks", 0) or 0)
-            source_label = "LAST" if meta.get("price_source") == "last_price_tick_rule" else "MIDQUOTE PROXY"
-            label = f"{name} · {ticks:,} TICKS · {source_label}"
-            if label in mapping:
-                label = f"{label} · {key[-6:]}"
-            labels.append(label)
-            mapping[label] = str(key)
-        self.tick_source_label_to_key = mapping
-        if not hasattr(self, "tick_source_combo"):
+    def run_session_performance(self) -> None:
+        """Run historical session/overlap performance calculations off the Tk thread."""
+        if self.session_performance_in_progress:
             return
-        self.tick_source_combo.configure(values=labels)
-        target_key = preferred_key or self._selected_tick_source_key()
-        target = next((label for label, key in mapping.items() if key == target_key), labels[0] if labels else "")
-        self.tick_source_var.set(target)
-        self.tick_build_button.configure(state="normal" if target else "disabled")
-
-    def _tick_source_changed(self) -> None:
-        key = self._selected_tick_source_key()
-        source = self.research_tick_sources.get(key, {})
-        name = str(source.get("name") or "Tick Data")
-        method = self.tick_bar_method_var.get()
-        if method == "Fixed Tick":
-            suffix = f"Fixed {self.tick_fixed_size_var.get().strip() or '500'}-tick Bars"
-        else:
-            suffix = "Tick Imbalance Bars"
-        self.tick_output_name_var.set(f"{name} · {suffix}" if key else "")
-
-    def import_raw_tick_csv(self) -> None:
-        """Copy, validate and register a raw tick CSV without blocking Tk."""
-        if self.research_fetch_in_progress:
+        if self.regime_cache_loading:
+            self.session_performance_status_label.configure(
+                text="LOCAL OHLC DATA LIBRARY IS STILL LOADING · RETRY IN A MOMENT",
+                fg=THEMES[self.theme_name]["warning"],
+            )
             return
-        path = filedialog.askopenfilename(
-            parent=self.root, title="Import broker raw tick CSV",
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+        key = self.session_performance_dataset_label_to_key.get(
+            self.session_performance_dataset_var.get(), ""
         )
-        if not path:
+        dataset = self.regime_datasets.get(key)
+        if not isinstance(dataset, dict) or not dataset.get("bars"):
+            self.session_performance_status_label.configure(
+                text="NO DATASET SELECTED · IMPORT A COMPLETED OHLC CSV IN REGIME LAB FIRST",
+                fg=THEMES[self.theme_name]["warning"],
+            )
             return
-        default_name = Path(path).stem.replace("_", " ").replace("-", " ").strip().title()
-        name = simpledialog.askstring(
-            "Name raw tick source", "Source / instrument name (e.g. Spot Gold · Broker A):",
-            initialvalue=default_name, parent=self.root,
-        )
-        if name is None or not name.strip():
+        metadata = dataset.get("metadata", {}) if isinstance(dataset.get("metadata"), dict) else {}
+        if (
+            dataset.get("variable_interval_bars")
+            or metadata.get("variable_interval_bars")
+            or metadata.get("bar_construction")
+        ):
+            self.session_performance_status_label.configure(
+                text="UNSUPPORTED DATA · THIS STUDY REQUIRES FIXED-INTERVAL OHLC BARS, NOT TICK / VARIABLE BARS",
+                fg=THEMES[self.theme_name]["error"],
+            )
             return
         try:
-            slug = custom_research_asset_key(name.strip()).replace("csv_", "tick_", 1)
-        except ValueError as exc:
-            messagebox.showerror("Invalid tick source name", str(exc), parent=self.root)
+            interval = float(dataset.get("bar_interval_minutes") or 0)
+            minimum_bars = int(self.session_performance_min_bars_var.get())
+            minimum_coverage = float(self.session_performance_min_coverage_var.get())
+            rolling_window = int(self.session_performance_rolling_window_var.get())
+            ranking_minimum = int(self.session_performance_ranking_min_samples_var.get())
+            minimum_regime_coverage = float(self.session_performance_min_regime_coverage_var.get())
+            validation_train_pct = float(self.session_performance_validation_train_pct_var.get())
+            validation_min_holdout = int(self.session_performance_validation_min_holdout_var.get())
+            if minimum_bars < 1 or minimum_bars > 500:
+                raise ValueError("Minimum bars must be from 1 to 500.")
+            if not 0 <= minimum_coverage <= 100:
+                raise ValueError("Minimum coverage must be from 0 to 100.")
+            if not 2 <= rolling_window <= 250:
+                raise ValueError("Rolling window must be from 2 to 250 session days.")
+            if not 1 <= ranking_minimum <= rolling_window:
+                raise ValueError("Minimum ranking sample must be at least 1 and no greater than the rolling window.")
+            if not 0 <= minimum_regime_coverage <= 100:
+                raise ValueError("Minimum regime coverage must be from 0 to 100.")
+            if not 50 <= validation_train_pct <= 90:
+                raise ValueError("Validation training share must be from 50 to 90 percent.")
+            if not 1 <= validation_min_holdout <= 250:
+                raise ValueError("Minimum holdout sample must be from 1 to 250.")
+            if interval <= 0:
+                raise ValueError("Dataset does not contain a valid median bar interval.")
+            regime_config = self._collect_regime_config()
+        except (ValueError, tk.TclError) as exc:
+            self.session_performance_status_label.configure(
+                text=f"INVALID STUDY PARAMETERS · {exc}",
+                fg=THEMES[self.theme_name]["error"],
+            )
             return
-        source_key = f"{slug}_{uuid4().hex[:8]}"
-        storage_file = f"{source_key}.csv"
-        # Capture the selected timezone when this raw source is first imported.
-        zone = self.research_timezone_var.get().strip() or "UTC"
-        self.research_fetch_in_progress = True
-        for button_name in ("tick_import_button", "tick_build_button", "research_fetch_button", "research_import_button", "research_custom_import_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="disabled")
-        self.research_status_label.configure(
-            text=f"IMPORTING RAW TICKS · {Path(path).name} · VALIDATING TIMESTAMPS AND PRICE FIELDS IN BACKGROUND...",
+
+        bars = tuple(dict(item) for item in dataset.get("bars", []) if isinstance(item, dict))
+        sessions = tuple(self.sessions)
+        study_metadata = {
+            "key": key,
+            "name": str(dataset.get("name") or key),
+            "source": str(dataset.get("source") or "Unknown source"),
+            "symbol": str(dataset.get("symbol") or ""),
+            "bar_interval_minutes": interval,
+            "session_profile": str(self.active_session_profile),
+            "rolling_window_sessions": rolling_window,
+            "ranking_min_samples": ranking_minimum,
+            "minimum_regime_coverage_pct": minimum_regime_coverage,
+            "validation_train_pct": validation_train_pct,
+            "validation_min_holdout_samples": validation_min_holdout,
+            "regime_config": asdict(regime_config),
+        }
+        self.session_performance_result = None
+        self.session_performance_result_metadata = {}
+        self.session_performance_export_button.configure(state="disabled")
+        self.session_performance_in_progress = True
+        self.session_performance_run_button.configure(state="disabled", text="ANALYSING...")
+        self.session_performance_status_label.configure(
+            text=f"ANALYSING {len(bars):,} OHLC BARS · {study_metadata['name']} · BACKGROUND TASK",
             fg=THEMES[self.theme_name]["warning"],
         )
 
-        def worker():
-            stored_path = TICK_DATA_DIR / storage_file
+        def worker() -> None:
             try:
-                TICK_DATA_DIR.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, stored_path)
-                ticks, meta = import_tick_csv(stored_path, naive_timezone=zone)
-                meta["original_file_name"] = Path(path).name
-                record = {
-                    "name": name.strip(),
-                    "storage_file": storage_file,
-                    "original_file_name": Path(path).name,
-                    "imported_at": datetime.now(timezone.utc).isoformat(),
-                    "metadata": meta,
+                regime_analysis = analyse_market_regimes(bars, regime_config)
+                # Only causal regime labels are passed to session analysis.
+                # Forward-return outcomes produced for the Regime Lab display are ignored.
+                causal_labels = {
+                    str(row["timestamp_utc"]): str(row["regime"])
+                    for row in regime_analysis.get("records", [])
                 }
-                result, error = {"kind": "tick_import", "source_key": source_key, "record": record}, None
-            except Exception as exc:
-                try:
-                    stored_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                result, error = None, str(exc)
-            self.research_result_queue.put((result, error))
-
-        threading.Thread(target=worker, name="VeltrixTickCSVImport", daemon=True).start()
-
-    def build_bars_from_ticks(self) -> None:
-        """Build a separate OHLC dataset from the selected raw tick source."""
-        if self.research_fetch_in_progress:
-            return
-        source_key = self._selected_tick_source_key()
-        source = self.research_tick_sources.get(source_key)
-        if not source:
-            messagebox.showinfo("Raw tick source required", "Import a raw tick CSV first.", parent=self.root)
-            return
-        storage_file = Path(str(source.get("storage_file") or "")).name
-        source_path = TICK_DATA_DIR / storage_file
-        if not storage_file or not source_path.is_file():
-            messagebox.showerror(
-                "Raw tick file not found",
-                f"The stored tick file is missing:\n{source_path}\nRe-import the broker tick CSV to restore it.",
-                parent=self.root,
-            )
-            return
-        method_label = self.tick_bar_method_var.get().strip()
-        method = "fixed_tick" if method_label == "Fixed Tick" else "tick_imbalance"
-        try:
-            ticks_per_bar = int(self.tick_fixed_size_var.get())
-            seed_ticks = int(self.tick_seed_size_var.get())
-            ewma_span = int(self.tick_ewma_span_var.get())
-            imbalance_ewma_span = int(self.tick_imbalance_ewma_span_var.get())
-            min_floor = float(self.tick_min_imbalance_var.get())
-        except (ValueError, tk.TclError):
-            messagebox.showerror("Invalid bar settings", "Tick counts and EWMA span must be whole numbers; the imbalance floor must be numeric.", parent=self.root)
-            return
-        output_name = self.tick_output_name_var.get().strip()
-        if not output_name:
-            suffix = f"Fixed {ticks_per_bar}-tick Bars" if method == "fixed_tick" else "Tick Imbalance Bars"
-            output_name = f"{source.get('name') or 'Tick Data'} · {suffix}"
-        try:
-            asset_key = custom_research_asset_key(output_name)
-        except ValueError as exc:
-            messagebox.showerror("Invalid output dataset name", str(exc), parent=self.root)
-            return
-        if asset_key in self.research_asset_data:
-            asset_key = f"{asset_key}_{uuid4().hex[:6]}"
-        # Reuse the timezone captured when this raw source was registered. Changing
-        # the UI timezone later must not silently reinterpret the same source file.
-        zone = str((source.get("metadata") or {}).get("timezone_for_naive_timestamps") or "UTC")
-        self.research_fetch_in_progress = True
-        for button_name in ("tick_import_button", "tick_build_button", "research_fetch_button", "research_import_button", "research_custom_import_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="disabled")
-        self.research_status_label.configure(
-            text=f"BUILDING {method_label.upper()} · {source.get('name')} · PROCESSING RAW TICKS IN BACKGROUND...",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-        source_name = str(source.get("name") or source_key)
-
-        def worker():
-            try:
-                bars, meta = build_bars_from_tick_csv(
-                    source_path, method=method, naive_timezone=zone,
-                    ticks_per_bar=ticks_per_bar, seed_ticks=seed_ticks,
-                    ewma_span=ewma_span, imbalance_ewma_span=imbalance_ewma_span,
-                    min_expected_imbalance_fraction=min_floor,
+                result = analyse_session_performance(
+                    bars, sessions,
+                    bar_interval_minutes=interval,
+                    minimum_bars_per_session=minimum_bars,
+                    minimum_coverage_pct=minimum_coverage,
+                    rolling_window_sessions=rolling_window,
+                    ranking_min_samples=ranking_minimum,
+                    regime_labels=causal_labels,
+                    minimum_regime_coverage_pct=minimum_regime_coverage,
+                    validation_train_pct=validation_train_pct,
+                    validation_min_holdout_samples=validation_min_holdout,
                 )
-                record = {
-                    "bars": [bar.to_dict() for bar in bars],
-                    "source": f"Broker tick CSV · {source_name} → {meta.get('bar_construction_label', method_label)}",
-                    "name": output_name,
-                    "symbol": "",
-                    "unit": "broker price units",
-                    "bar_interval_minutes": float(meta.get("median_bar_duration_minutes") or 0.0),
-                    "metadata": {
-                        **meta,
-                        "custom_instrument": True,
-                        "point_value": 1.0,
-                        "quantity_step": 0.01,
-                        "contract_spec_status": "Illustrative defaults; verify broker point value, contract size and quantity step before backtesting.",
-                        "source_tick_key": source_key,
-                        "source_tick_name": source_name,
-                    },
-                }
-                result, error = {"kind": "tick_bars", "asset_key": asset_key, "record": record}, None
-            except Exception as exc:
-                result, error = None, str(exc)
-            self.research_result_queue.put((result, error))
-
-        threading.Thread(target=worker, name="VeltrixTickBarBuilder", daemon=True).start()
-
-    def _build_data_center_page(self) -> None:
-        """Build Phase 10 provider connection, historical import and data benchmark UI."""
-        self.data_center_canvas = tk.Canvas(self.data_center_view, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(self.data_center_view, orient="vertical", command=self.data_center_canvas.yview)
-        self.data_center_canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.data_center_canvas.pack(side="left", fill="both", expand=True)
-        self.data_center_content = self._frame(self.data_center_canvas)
-        self.data_center_content_window = self.data_center_canvas.create_window(
-            (0, 0), window=self.data_center_content, anchor="nw"
-        )
-        self.data_center_content.bind(
-            "<Configure>", lambda _event: self.data_center_canvas.configure(
-                scrollregion=self.data_center_canvas.bbox("all")
-            )
-        )
-        self.data_center_canvas.bind(
-            "<Configure>", lambda event: self.data_center_canvas.itemconfigure(
-                self.data_center_content_window, width=event.width
-            )
-        )
-
-        header = self._frame(self.data_center_content, bg="panel", padx=14, pady=11)
-        header.pack(fill="x", pady=(0, 9))
-        self._label(header, "VELTRIX MARKET DATA GATEWAY", bg="panel", fg="bright",
-                    font=("Consolas", 11, "bold")).pack(anchor="w")
-        self._label(
-            header,
-            "PHASE 10 · PROVIDER ADAPTERS · HISTORICAL DATA · QUALITY AUDITS · CROSS-FEED BENCHMARKS",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
-        ).pack(anchor="w", pady=(3, 6))
-        self.data_center_status_label = self._label(
-            header, textvariable=self.data_center_status_var, bg="panel", fg="warning",
-            font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=1000,
-        )
-        self.data_center_status_label.pack(fill="x")
-
-        providers_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        providers_panel.pack(fill="x", pady=(0, 9))
-        self._label(providers_panel, "PROVIDER CANDIDATES", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        provider_grid = self._frame(providers_panel, bg="panel")
-        provider_grid.pack(fill="x")
-        for column in range(3):
-            provider_grid.grid_columnconfigure(column, weight=1, uniform="provider_card")
-        self.data_provider_cards: dict[str, dict[str, tk.Widget]] = {}
-        provider_copy = {
-            "massive": ("INDEX / FUTURES / FX", "Forex aggregates are bid-quote bars; the volume field is quote count, not traded volume. Verify ticker and plan access."),
-            "twelve_data": ("SPOT / FX CANDIDATE", "Broad multi-asset API. XAU/USD is an OTC composite price feed, not an exchange tape."),
-            "databento": ("EXCHANGE MICROSTRUCTURE", "Excellent futures research candidate. SDK adapter is not enabled in this release."),
-        }
-        for column, provider_id in enumerate(("massive", "twelve_data", "databento")):
-            spec = PROVIDER_CATALOG[provider_id]
-            subline, description = provider_copy[provider_id]
-            card = self._frame(
-                provider_grid, bg="panel", padx=10, pady=9, highlightthickness=1,
-                highlightbackground=THEMES[self.theme_name]["border"],
-            )
-            card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < 2 else 0))
-            self._label(card, spec["name"].upper(), bg="panel", fg="bright",
-                        font=("Consolas", 9, "bold")).pack(anchor="w")
-            self._label(card, subline, bg="panel", fg="muted",
-                        font=("Consolas", 7, "bold")).pack(anchor="w", pady=(2, 5))
-            self._label(card, description, bg="panel", fg="text", font=("Segoe UI", 8),
-                        justify="left", wraplength=300, height=3).pack(fill="x")
-            status = self._label(card, "CHECKING CREDENTIAL STATUS...", bg="panel", fg="warning",
-                                 font=("Consolas", 7, "bold"), anchor="w")
-            status.pack(fill="x", pady=(7, 5))
-            if spec["adapter"]:
-                command = lambda pid=provider_id: self._test_data_provider(pid)
-                button = tk.Button(card, text="TEST API CONNECTION", command=command,
-                                   font=("Consolas", 7, "bold"), relief="flat", bd=0,
-                                   padx=8, pady=6, cursor="hand2")
-            else:
-                button = tk.Button(card, text="ADAPTER NOT ENABLED", state="disabled",
-                                   font=("Consolas", 7, "bold"), relief="flat", bd=0,
-                                   padx=8, pady=6, cursor="arrow")
-            button.pack(anchor="w")
-            self.data_provider_cards[provider_id] = {"card": card, "status": status, "button": button}
-        self.data_test_massive_button = self.data_provider_cards["massive"]["button"]
-        self.data_test_twelve_button = self.data_provider_cards["twelve_data"]["button"]
-
-        security_note = self._label(
-            self.data_center_content,
-            "API KEYS ARE READ FROM THE LOCAL .env FILE IN THE VELTRIX DATA FOLDER OR PROCESS ENVIRONMENT VARIABLES. "
-            "EXISTING PROCESS/WINDOWS VARIABLES TAKE PRECEDENCE. KEYS ARE NEVER SAVED IN config.json OR THE RESEARCH CACHE. "
-            "Create .env from .env.example in the Veltrix data folder, add MASSIVE_API_KEY and/or TWELVE_DATA_API_KEY, then restart Veltrix. "
-            "Databento is a registered candidate only; its adapter is intentionally deferred until a separate cost/licence and schema review.",
-            fg="muted", font=("Segoe UI", 8), wraplength=1000, justify="left",
-        )
-        security_note.pack(fill="x", padx=3, pady=(0, 9))
-
-        fetch_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        fetch_panel.pack(fill="x", pady=(0, 9))
-        self._label(fetch_panel, "HISTORICAL DATA ACQUISITION", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 7))
-        for column in range(4):
-            fetch_panel.grid_columnconfigure(column, weight=1, uniform="data_fetch_field")
-
-        def add_combo(row: int, column: int, label: str, variable: tk.StringVar,
-                      values: tuple[str, ...], width: int = 22) -> ttk.Combobox:
-            self._label(fetch_panel, label, bg="panel", fg="muted",
-                        font=("Consolas", 7, "bold")).grid(row=row, column=column, sticky="w", padx=(0, 8))
-            combo = ttk.Combobox(fetch_panel, textvariable=variable, values=values, width=width,
-                                 state="readonly", style="Veltrix.Data.TCombobox")
-            combo.grid(row=row + 1, column=column, sticky="ew", padx=(0, 8), pady=(3, 8))
-            return combo
-
-        def add_entry(row: int, column: int, label: str, variable: tk.StringVar, width: int = 24) -> tk.Entry:
-            self._label(fetch_panel, label, bg="panel", fg="muted",
-                        font=("Consolas", 7, "bold")).grid(row=row, column=column, sticky="w", padx=(0, 8))
-            entry = tk.Entry(fetch_panel, textvariable=variable, width=width, relief="flat", bd=0,
-                             highlightthickness=1, font=("Consolas", 9))
-            entry.grid(row=row + 1, column=column, sticky="ew", padx=(0, 8), pady=(3, 8), ipady=5)
-            self.data_center_entries.append(entry)
-            return entry
-
-        self.data_provider_combo = add_combo(1, 0, "PROVIDER", self.data_provider_var,
-                                             ("Twelve Data", "Massive"), 18)
-        self.data_market_combo = add_combo(1, 1, "MASSIVE MARKET TYPE", self.data_market_type_var,
-                                           ("forex", "indices", "futures"), 16)
-        add_entry(1, 2, "PROVIDER-NATIVE SYMBOL", self.data_symbol_var, 22)
-        add_entry(1, 3, "CANONICAL INSTRUMENT ID", self.data_canonical_var, 22)
-        self.data_interval_combo = add_combo(3, 0, "BAR INTERVAL", self.data_interval_var,
-                                             ("1m", "5m", "15m", "30m", "1h", "1d"), 12)
-        add_entry(3, 1, "START DATE · PROVIDER BASIS", self.data_start_var, 18)
-        add_entry(3, 2, "END DATE · PROVIDER BASIS", self.data_end_var, 18)
-        add_entry(3, 3, "REGISTERED DATASET NAME", self.data_dataset_name_var, 26)
-        self.data_provider_combo.bind("<<ComboboxSelected>>", self._data_provider_selection_changed)
-
-        self._label(
-            fetch_panel,
-            "Twelve Data example: XAU/USD. Massive requires its own ticker format, e.g. C:XAUUSD or C:EURUSD for FX, I:SPX for an index, or an exact futures contract ticker. "
-            "Do not assign the same canonical ID to spot and futures merely because both reference Gold. "
-            "Date boundaries are provider-specific (Massive FX/index: ET; Massive futures and Twelve Data intraday: UTC; Twelve Data daily: exchange local). "
-            "Stored bar timestamps are normalised to UTC. Inspect the audit and actual returned coverage before research use.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), wraplength=980, justify="left",
-        ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(0, 8))
-        self.data_fetch_button = tk.Button(
-            fetch_panel, text="FETCH & REGISTER DATASET", command=self._fetch_provider_history,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=8, cursor="hand2",
-        )
-        self.data_fetch_button.grid(row=6, column=0, sticky="w", pady=(0, 2))
-        self.data_audit_button = tk.Button(
-            fetch_panel, text="RUN DATA QUALITY AUDIT", command=self._audit_registered_datasets,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=8, cursor="hand2",
-        )
-        self.data_audit_button.grid(row=6, column=1, sticky="w", pady=(0, 2))
-
-        registry_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        registry_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(registry_panel, "REGISTERED MARKET-DATASETS", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        registry_columns = ("name", "provider", "symbol", "interval", "bars", "invalid", "dupes", "large_gaps")
-        self.data_registry_tree = ttk.Treeview(
-            registry_panel, columns=registry_columns, show="headings", height=7, style="Veltrix.Data.Treeview",
-        )
-        headings = {
-            "name": ("DATASET", 205), "provider": ("SOURCE", 110), "symbol": ("SYMBOL", 105),
-            "interval": ("INTERVAL", 65), "bars": ("BARS", 65), "invalid": ("INVALID", 65),
-            "dupes": ("DUPLICATES", 80), "large_gaps": ("GAP CANDIDATES", 105),
-        }
-        for key, (heading, width) in headings.items():
-            self.data_registry_tree.heading(key, text=heading)
-            self.data_registry_tree.column(key, width=width, minwidth=48, anchor="center", stretch=(key == "name"))
-        registry_scroll = ttk.Scrollbar(registry_panel, orient="vertical", command=self.data_registry_tree.yview)
-        self.data_registry_tree.configure(yscrollcommand=registry_scroll.set)
-        self.data_registry_tree.pack(side="left", fill="both", expand=True)
-        registry_scroll.pack(side="right", fill="y")
-
-        compare_panel = self._frame(self.data_center_content, bg="panel", padx=12, pady=10)
-        compare_panel.pack(fill="x", pady=(0, 9))
-        self._label(compare_panel, "CROSS-PROVIDER BENCHMARK", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 7))
-        for column in range(3):
-            compare_panel.grid_columnconfigure(column, weight=1)
-        self.data_compare_left_combo = ttk.Combobox(
-            compare_panel, textvariable=self.data_compare_left_var, state="readonly", width=45,
-            style="Veltrix.Data.TCombobox",
-        )
-        self.data_compare_left_combo.grid(row=1, column=0, sticky="ew", padx=(0, 7))
-        self.data_compare_right_combo = ttk.Combobox(
-            compare_panel, textvariable=self.data_compare_right_var, state="readonly", width=45,
-            style="Veltrix.Data.TCombobox",
-        )
-        self.data_compare_right_combo.grid(row=1, column=1, sticky="ew", padx=(0, 7))
-        self.data_compare_button = tk.Button(
-            compare_panel, text="COMPARE MATCHED BARS", command=self._compare_provider_datasets,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
-        )
-        self.data_compare_button.grid(row=1, column=2, sticky="ew")
-        self.data_compare_result_label = self._label(
-            compare_panel,
-            "Comparison requires the same canonical instrument ID and bar interval. It uses exact UTC timestamp matches; "
-            "a shared label is not proof that two feeds represent the same underlying product.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), wraplength=980, justify="left",
-        )
-        self.data_compare_result_label.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        self._apply_data_center_tree_theme()
-
-    def _set_data_center_status(self, message: str, kind: str = "muted") -> None:
-        self.data_center_status_var.set(message)
-        if hasattr(self, "data_center_status_label"):
-            palette = THEMES[self.theme_name]
-            colour = {"success": palette["success"], "warning": palette["warning"],
-                      "error": palette["error"]}.get(kind, palette["text"])
-            self.data_center_status_label.configure(fg=colour)
-
-    def _refresh_data_center_providers(self) -> None:
-        statuses = {item.provider_id: item for item in provider_statuses()}
-        palette = THEMES[self.theme_name]
-        for provider_id, card in getattr(self, "data_provider_cards", {}).items():
-            status = statuses[provider_id]
-            if not status.adapter_available:
-                text, colour = "CANDIDATE ONLY · ADAPTER NOT ENABLED", palette["warning"]
-            elif status.credential_configured:
-                text, colour = f"API KEY DETECTED · {status.env_var}", palette["success"]
-            else:
-                text, colour = f"API KEY MISSING · SET {status.env_var}", palette["warning"]
-            card["status"].configure(text=text, fg=colour)
-
-    def _apply_data_center_tree_theme(self) -> None:
-        palette = THEMES[self.theme_name]
-        style = ttk.Style(self.root)
-        style.configure(
-            "Veltrix.Data.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
-        )
-        style.configure(
-            "Veltrix.Data.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
-        )
-        style.map("Veltrix.Data.Treeview", background=[("selected", palette["button_active"])],
-                  foreground=[("selected", palette["bright"])])
-        style.configure(
-            "Veltrix.Data.TCombobox", fieldbackground=palette["entry_bg"],
-            background=palette["button_bg"], foreground=palette["entry_fg"], arrowcolor=palette["bright"],
-        )
-        if hasattr(self, "data_center_canvas"):
-            self.data_center_canvas.configure(bg=palette["bg"])
-
-    def _data_provider_selection_changed(self, _event=None) -> None:
-        provider_name = self.data_provider_var.get()
-        if provider_name == "Massive":
-            self._set_data_center_status(
-                "MASSIVE SELECTED · USE A MASSIVE-NATIVE TICKER AND VERIFY SYMBOL/PLAN ENTITLEMENT BEFORE COMPARISON.",
-                "warning",
-            )
-        else:
-            self._set_data_center_status(
-                "TWELVE DATA SELECTED · OTC FX / METALS PRICES ARE PROVIDER-SUPPLIED COMPOSITES, NOT CONSOLIDATED EXCHANGE TRADES.",
-                "warning",
-            )
-
-    def _test_data_provider(self, provider_id: str) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING.", "warning")
-            return
-        self.data_center_busy = True
-        for key in ("massive", "twelve_data"):
-            self.data_provider_cards[key]["button"].configure(state="disabled")
-        self._set_data_center_status(f"TESTING {PROVIDER_CATALOG[provider_id]['name'].upper()} API CONNECTION...")
-
-        def worker() -> None:
-            try:
-                result = test_provider_connection(provider_id)
-                self.data_center_result_queue.put({"kind": "provider_test_ok", "provider_id": provider_id, "result": result})
-            except Exception as exc:
-                self.data_center_result_queue.put({"kind": "provider_test_error", "provider_id": provider_id, "error": str(exc)})
-
-        threading.Thread(target=worker, name=f"Veltrix{provider_id.title()}ConnectionTest", daemon=True).start()
-
-    def _fetch_provider_history(self) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING. WAIT FOR IT TO FINISH.", "warning")
-            return
-        provider_id = {"Massive": "massive", "Twelve Data": "twelve_data"}.get(self.data_provider_var.get())
-        if not provider_id:
-            self._set_data_center_status("SELECT A SUPPORTED PROVIDER.", "error")
-            return
-        provider_symbol = self.data_symbol_var.get().strip()
-        canonical_symbol = self.data_canonical_var.get().strip().upper().replace(" ", "_")
-        dataset_name = self.data_dataset_name_var.get().strip()
-        interval = self.data_interval_var.get().strip()
-        start_date = self.data_start_var.get().strip()
-        end_date = self.data_end_var.get().strip()
-        asset_class = self.data_market_type_var.get().strip().lower()
-        if not provider_symbol or not canonical_symbol:
-            self._set_data_center_status("PROVIDER SYMBOL AND CANONICAL INSTRUMENT ID ARE REQUIRED.", "error")
-            return
-        if not dataset_name:
-            dataset_name = f"{canonical_symbol} · {PROVIDER_CATALOG[provider_id]['name']}"
-        self.data_center_busy = True
-        self.data_fetch_button.configure(state="disabled")
-        self.data_audit_button.configure(state="disabled")
-        self.data_compare_button.configure(state="disabled")
-        self._set_data_center_status(
-            f"FETCHING {provider_symbol} FROM {PROVIDER_CATALOG[provider_id]['name'].upper()} · {interval} BARS · UTC DATE RANGE...",
-            "warning",
-        )
-
-        def worker() -> None:
-            try:
-                if provider_id == "twelve_data":
-                    bars, metadata = fetch_twelve_data_bars(
-                        provider_symbol, interval=interval, start_date=start_date, end_date=end_date,
-                    )
-                else:
-                    bars, metadata = fetch_massive_bars(
-                        provider_symbol, asset_class=asset_class, interval=interval,
-                        start_date=start_date, end_date=end_date,
-                    )
-                quality = audit_ohlc_bars(bars)
-                quality["invalid_bars"] = int(metadata.get("invalid_rows_skipped", 0))
-                quality["duplicate_timestamps"] = int(metadata.get("duplicate_timestamps_removed", 0))
-                interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30,
-                                    "1h": 60, "1d": 1440}[interval]
-                metadata.update({
-                    "provider_id": provider_id,
-                    "provider": PROVIDER_CATALOG[provider_id]["name"],
-                    "provider_symbol": metadata.get("provider_symbol") or provider_symbol,
-                    "canonical_symbol": canonical_symbol,
-                    "requested_interval": interval,
-                    "requested_start": start_date,
-                    "requested_end": end_date,
-                    "asset_class": asset_class if provider_id == "massive" else "provider_defined",
-                    "source_mode": "historical_rest_api",
-                    "timestamp_basis": "UTC",
-                    "request_date_basis": metadata.get("request_date_basis") or metadata.get("request_window_timezone") or "Provider-defined; verify provider documentation.",
-                    "quality_audit": quality,
-                    "commercial_licence_reviewed": False,
-                })
-                record = {
-                    "bars": [bar.to_dict() for bar in bars],
-                    "source": f"{PROVIDER_CATALOG[provider_id]['name']} API · historical",
-                    "name": dataset_name,
-                    "symbol": provider_symbol,
-                    "unit": "provider price units",
-                    "bar_interval_minutes": interval_minutes,
-                    "metadata": metadata,
-                }
-                dataset_key = f"provider_{provider_id}_{uuid4().hex[:10]}"
-                self.data_center_result_queue.put({
-                    "kind": "provider_fetch_ok", "record": record, "dataset_key": dataset_key,
-                    "bar_count": len(bars), "quality": quality,
-                })
-            except Exception as exc:
-                self.data_center_result_queue.put({"kind": "provider_fetch_error", "error": str(exc)})
-
-        threading.Thread(target=worker, name=f"Veltrix{provider_id.title()}HistoricalFetch", daemon=True).start()
-
-    def _refresh_data_center_registry(self) -> None:
-        if not hasattr(self, "data_registry_tree"):
-            return
-        for item in self.data_registry_tree.get_children(""):
-            self.data_registry_tree.delete(item)
-        for key, record in sorted(self.research_asset_data.items(), key=lambda item: str(item[1].get("name", item[0])).casefold()):
-            bars = record.get("bars", []) if isinstance(record, dict) else []
-            if not bars:
-                continue
-            meta = record.get("metadata", {}) if isinstance(record, dict) else {}
-            audit = meta.get("quality_audit", {}) if isinstance(meta, dict) else {}
-            provider = meta.get("provider") or record.get("source", "Imported")
-            interval = meta.get("requested_interval") or record.get("bar_interval_minutes", "N/A")
-            interval_label = f"{interval}" if isinstance(interval, str) else f"{interval:g}m"
-            self.data_registry_tree.insert("", "end", iid=str(key), values=(
-                record.get("name", key), provider, record.get("symbol", ""), interval_label,
-                f"{len(bars):,}", audit.get("invalid_bars", meta.get("invalid_rows_skipped", "—")),
-                audit.get("duplicate_timestamps", meta.get("duplicate_timestamps_removed", "—")), audit.get("gaps_over_3x_median", "—"),
-            ))
-        self._refresh_data_compare_choices()
-
-    def _refresh_data_compare_choices(self) -> None:
-        options: list[str] = []
-        mapping: dict[str, str] = {}
-        for key, record in self.research_asset_data.items():
-            metadata = record.get("metadata", {}) if isinstance(record, dict) else {}
-            if not record.get("bars") or not metadata.get("canonical_symbol") or not metadata.get("provider_id"):
-                continue
-            label = f"{record.get('name', key)} · {metadata.get('provider', metadata.get('provider_id'))}"
-            if label in mapping:
-                label = f"{label} · {key}"
-            mapping[label] = key
-            options.append(label)
-        self.data_compare_label_to_key = mapping
-        if hasattr(self, "data_compare_left_combo"):
-            self.data_compare_left_combo.configure(values=options)
-            self.data_compare_right_combo.configure(values=options)
-            if self.data_compare_left_var.get() not in mapping:
-                self.data_compare_left_var.set(options[0] if options else "")
-            if self.data_compare_right_var.get() not in mapping:
-                self.data_compare_right_var.set(options[1] if len(options) > 1 else (options[0] if options else ""))
-
-    def _audit_registered_datasets(self) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING.", "warning")
-            return
-        snapshots = [(key, dict(record), list(record.get("bars", [])))
-                     for key, record in self.research_asset_data.items() if record.get("bars")]
-        if not snapshots:
-            self._set_data_center_status("NO REGISTERED RESEARCH DATASETS TO AUDIT.", "warning")
-            return
-        self.data_center_busy = True
-        self.data_audit_button.configure(state="disabled")
-        self.data_fetch_button.configure(state="disabled")
-        self._set_data_center_status(f"AUDITING {len(snapshots)} REGISTERED DATASET(S) IN A BACKGROUND WORKER...")
-
-        def worker() -> None:
-            try:
-                results = {}
-                for key, record, bars in snapshots:
-                    audit = audit_ohlc_bars(bars)
-                    metadata = record.get("metadata", {}) if isinstance(record.get("metadata"), dict) else {}
-                    audit["invalid_bars"] = max(audit.get("invalid_bars", 0), int(metadata.get("invalid_rows_skipped", 0) or 0))
-                    audit["duplicate_timestamps"] = max(
-                        audit.get("duplicate_timestamps", 0), int(metadata.get("duplicate_timestamps_removed", 0) or 0)
-                    )
-                    results[key] = audit
-                self.data_center_result_queue.put({"kind": "audit_ok", "results": results})
-            except Exception as exc:
-                self.data_center_result_queue.put({"kind": "audit_error", "error": str(exc)})
-
-        threading.Thread(target=worker, name="VeltrixDataQualityAudit", daemon=True).start()
-
-    def _compare_provider_datasets(self) -> None:
-        if self.data_center_busy:
-            self._set_data_center_status("ANOTHER DATA-CENTER TASK IS RUNNING.", "warning")
-            return
-        left_key = self.data_compare_label_to_key.get(self.data_compare_left_var.get())
-        right_key = self.data_compare_label_to_key.get(self.data_compare_right_var.get())
-        if not left_key or not right_key or left_key == right_key:
-            self._set_data_center_status("SELECT TWO DIFFERENT PROVIDER DATASETS TO COMPARE.", "error")
-            return
-        left = self.research_asset_data[left_key]
-        right = self.research_asset_data[right_key]
-        left_meta = left.get("metadata", {})
-        right_meta = right.get("metadata", {})
-        self.data_center_busy = True
-        self.data_compare_button.configure(state="disabled")
-        self._set_data_center_status("ALIGNING PROVIDER DATASETS ON EXACT UTC BAR TIMESTAMPS...")
-
-        def worker() -> None:
-            try:
-                result = compare_ohlc_datasets(
-                    list(left.get("bars", [])), list(right.get("bars", [])),
-                    left_group=str(left_meta.get("canonical_symbol", "")),
-                    right_group=str(right_meta.get("canonical_symbol", "")),
-                    left_interval=left.get("bar_interval_minutes"),
-                    right_interval=right.get("bar_interval_minutes"),
+                result["metadata"]["regime_warmup_bars"] = int(
+                    regime_analysis.get("metadata", {}).get("warmup_bars", 0)
                 )
-                self.data_center_result_queue.put({"kind": "compare_ok", "result": result,
-                                                   "left": left.get("name", left_key),
-                                                   "right": right.get("name", right_key)})
+                result["metadata"]["regime_classified_bars"] = int(
+                    regime_analysis.get("metadata", {}).get("classified_bars", 0)
+                )
+                self.session_performance_result_queue.put((key, study_metadata, result, None))
             except Exception as exc:
-                self.data_center_result_queue.put({"kind": "compare_error", "error": str(exc)})
+                self.session_performance_result_queue.put((key, study_metadata, None, str(exc)))
 
-        threading.Thread(target=worker, name="VeltrixProviderBenchmark", daemon=True).start()
+        threading.Thread(
+            target=worker, name="VeltrixSessionPerformance", daemon=True
+        ).start()
 
-    def _drain_data_center_results(self) -> None:
+    def _drain_session_performance_results(self) -> None:
         if self.is_closing:
             return
         try:
             while True:
-                result = self.data_center_result_queue.get_nowait()
-                kind = result.get("kind")
-                self.data_center_busy = False
-                for provider_id, card in self.data_provider_cards.items():
-                    card["button"].configure(
-                        state="normal" if PROVIDER_CATALOG[provider_id]["adapter"] else "disabled"
+                key, metadata, result, error = self.session_performance_result_queue.get_nowait()
+                self.session_performance_in_progress = False
+                self.session_performance_run_button.configure(state="normal", text="RUN SESSION STUDY")
+                selected_key = self.session_performance_dataset_label_to_key.get(
+                    self.session_performance_dataset_var.get(), ""
+                )
+                if key != selected_key or metadata.get("session_profile") != self.active_session_profile:
+                    self.session_performance_status_label.configure(
+                        text="STUDY FINISHED FOR A PREVIOUS DATASET SELECTION · SELECT IT AGAIN TO VIEW",
+                        fg=THEMES[self.theme_name]["warning"],
                     )
-                for button_name in ("data_fetch_button", "data_audit_button", "data_compare_button"):
-                    getattr(self, button_name).configure(state="normal")
-
-                if kind == "provider_test_ok":
-                    provider_id = result["provider_id"]
-                    detail = result["result"]
-                    self._set_data_center_status(
-                        f"{PROVIDER_CATALOG[provider_id]['name'].upper()} CONNECTION VERIFIED · "
-                        f"{detail.get('elapsed_ms')} MS · {detail.get('detail')}", "success",
+                    continue
+                if error:
+                    self.session_performance_result = None
+                    self.session_performance_export_button.configure(state="disabled")
+                    self.session_performance_status_label.configure(
+                        text=f"SESSION STUDY FAILED · {error[:220]}",
+                        fg=THEMES[self.theme_name]["error"],
                     )
-                    self.data_provider_cards[provider_id]["status"].configure(
-                        text=f"CONNECTION OK · {detail.get('elapsed_ms')} MS", fg=THEMES[self.theme_name]["success"]
-                    )
-                elif kind == "provider_test_error":
-                    provider_id = result["provider_id"]
-                    self._set_data_center_status(
-                        f"{PROVIDER_CATALOG[provider_id]['name'].upper()} CONNECTION TEST FAILED · {result.get('error')}", "error"
-                    )
-                    self.data_provider_cards[provider_id]["status"].configure(
-                        text=f"TEST FAILED · {result.get('error')}", fg=THEMES[self.theme_name]["error"]
-                    )
-                elif kind == "provider_fetch_ok":
-                    key = result["dataset_key"]
-                    record = result["record"]
-                    self.research_asset_data[key] = record
-                    self._mark_research_data_changed()
-                    self._refresh_research_instrument_choices(preferred_key=key)
-                    self.save_research_preferences()
-                    self._save_research_cache()
-                    self._refresh_data_center_registry()
-                    self._render_research_page()
-                    quality = result["quality"]
-                    meta = record.get("metadata", {})
-                    warnings = []
-                    if meta.get("potentially_truncated"):
-                        warnings.append(f"Twelve Data reached its {meta.get('response_limit', 5000):,}-bar response limit; requested coverage may be truncated.")
-                    if meta.get("pagination_complete") is False:
-                        warnings.append("Massive pagination safety cap reached; requested coverage may be truncated.")
-                    if quality.get("invalid_bars", 0):
-                        warnings.append(f"{quality['invalid_bars']} malformed provider row(s) were skipped.")
-                    if quality.get("duplicate_timestamps", 0):
-                        warnings.append(f"{quality['duplicate_timestamps']} duplicate timestamp row(s) were removed.")
-                    suffix = (" · WARNING: " + " ".join(warnings)) if warnings else ""
-                    status_kind = "warning" if warnings else "success"
-                    self._set_data_center_status(
-                        f"DATASET REGISTERED · {record.get('name')} · {result['bar_count']:,} BARS · "
-                        f"INVALID {quality.get('invalid_bars', 0)} · DUPLICATES {quality.get('duplicate_timestamps', 0)} · "
-                        f"BASIS: {meta.get('price_basis', 'provider-defined')}" + suffix, status_kind,
-                    )
-                elif kind == "provider_fetch_error":
-                    self._set_data_center_status(f"HISTORICAL FETCH FAILED · {result.get('error')}", "error")
-                elif kind == "audit_ok":
-                    for key, audit in result["results"].items():
-                        if key in self.research_asset_data:
-                            metadata = self.research_asset_data[key].setdefault("metadata", {})
-                            metadata["quality_audit"] = audit
-                    self._save_research_cache()
-                    self._refresh_data_center_registry()
-                    invalid = sum(item.get("invalid_bars", 0) for item in result["results"].values())
-                    duplicates = sum(item.get("duplicate_timestamps", 0) for item in result["results"].values())
-                    self._set_data_center_status(
-                        f"AUDIT COMPLETE · {len(result['results'])} DATASETS · {invalid} INVALID BARS · "
-                        f"{duplicates} DUPLICATE TIMESTAMPS. LARGE GAPS ARE REVIEW CANDIDATES, NOT AUTOMATICALLY MISSING DATA.",
-                        "success",
-                    )
-                elif kind == "audit_error":
-                    self._set_data_center_status(f"DATA QUALITY AUDIT FAILED · {result.get('error')}", "error")
-                elif kind == "compare_ok":
-                    metrics = result["result"]
-                    corr = metrics.get("matched_return_correlation")
-                    corr_text = "N/A" if corr is None else f"{corr:.4f}"
-                    self.data_compare_result_label.configure(
-                        text=(f"{result['left']} vs {result['right']} · {metrics['matched_timestamps']:,} MATCHED BARS · "
-                              f"MEAN ABS CLOSE DIFF {metrics['mean_absolute_close_difference_bps']:.3f} BPS · "
-                              f"P95 ABS DIFF {metrics['p95_absolute_close_difference_bps']:.3f} BPS · "
-                              f"RETURN CORRELATION {corr_text} · COVERAGE {metrics['left_overlap_pct']:.1f}% / "
-                              f"{metrics['right_overlap_pct']:.1f}%. {metrics['method_note']}"),
-                    )
-                    self._set_data_center_status("PROVIDER COMPARISON COMPLETE · INTERPRET PRICE BASIS BEFORE JUDGING DIFFERENCES.", "success")
-                elif kind == "compare_error":
-                    self._set_data_center_status(f"PROVIDER COMPARISON NOT RUN · {result.get('error')}", "warning")
+                    continue
+                render_session_performance_result(self, metadata, result)
         except queue.Empty:
             pass
         if not self.is_closing:
-            self.data_center_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_data_center_results)
+            self.session_performance_queue_job = self.root.after(
+                UI_QUEUE_POLL_MS, self._drain_session_performance_results
+            )
+
+    def export_session_performance(self) -> None:
+        if not self.session_performance_result:
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export daily session-performance and overlap rows",
+            defaultextension=".csv",
+            initialfile="veltrix_session_performance_v10_12.csv",
+            filetypes=(("CSV files", "*.csv"),),
+        )
+        if not path:
+            return
+        try:
+            export_session_performance_csv(path, self.session_performance_result)
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror("Session performance export failed", str(exc), parent=self.root)
+            return
+        self.session_performance_status_label.configure(
+            text=f"DAILY SESSION / OVERLAP ROWS EXPORTED · {Path(path).name}",
+            fg=THEMES[self.theme_name]["success"],
+        )
 
     def _build_regime_page(self) -> None:
         """Build Phase 12 causal market-regime research workspace."""
@@ -2674,17 +2776,17 @@ class VeltrixTradingClock:
 
         header = self._frame(self.regime_content, bg="panel", padx=14, pady=11)
         header.pack(fill="x", pady=(0, 9))
-        self._label(header, "MARKET REGIME RESEARCH LAB", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
+        self._label(header, "CAUSAL MARKET REGIME LAB", bg="panel", fg="bright",
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self._label(
             header,
             "CAUSAL OHLC CLASSIFICATION · TREND / RANGE / VOLATILITY SHOCK · HISTORICAL OUTCOME STUDY",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
+            bg="panel", fg="muted", font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(3, 6))
         self.regime_status_label = self._label(
             header,
-            "RESEARCH ONLY · LOAD OR IMPORT COMPLETED OHLC HISTORY IN RESEARCH LAB, THEN RUN CLASSIFICATION",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=980,
+            "LOCAL OHLC DATA · IMPORT A COMPLETED BAR CSV HERE, THEN RUN CLASSIFICATION",
+            bg="panel", fg="warning", font=("Segoe UI", 9, "bold"), anchor="w", justify="left", wraplength=980,
         )
         self.regime_status_label.pack(fill="x")
 
@@ -2692,17 +2794,17 @@ class VeltrixTradingClock:
         controls.pack(fill="x", pady=(0, 9))
         controls.grid_columnconfigure(0, weight=1)
         self._label(controls, "DATASET / INSTRUMENT", bg="panel", fg="muted",
-                    font=("Consolas", 7, "bold")).grid(row=0, column=0, sticky="w")
+                    font=("Segoe UI", 8, "bold")).grid(row=0, column=0, sticky="w")
         self.regime_asset_combo = ttk.Combobox(
             controls, textvariable=self.regime_asset_var,
-            values=list(self.research_label_to_key.keys()), state="readonly", width=54,
+            values=list(self.regime_dataset_label_to_key.keys()), state="readonly", width=54,
             style="Veltrix.Regime.TCombobox",
         )
         self.regime_asset_combo.grid(row=1, column=0, sticky="ew", pady=(4, 9))
-        selected_key = str(self.regime_settings.get("selected_asset") or self.research_settings.get("selected_asset") or "")
-        selected_label = next((label for label, key in self.research_label_to_key.items() if key == selected_key), "")
-        if not selected_label and self.research_label_to_key:
-            selected_label = next(iter(self.research_label_to_key))
+        selected_key = str(self.regime_settings.get("selected_asset") or "")
+        selected_label = next((label for label, key in self.regime_dataset_label_to_key.items() if key == selected_key), "")
+        if not selected_label and self.regime_dataset_label_to_key:
+            selected_label = next(iter(self.regime_dataset_label_to_key))
         self.regime_asset_var.set(selected_label)
         self.regime_asset_combo.bind("<<ComboboxSelected>>", lambda _event: self._regime_asset_changed())
 
@@ -2727,10 +2829,10 @@ class VeltrixTradingClock:
             cell = self._frame(fields, bg="panel")
             cell.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 7, 7 if column < 2 else 0),
                       pady=(0, 7))
-            self._label(cell, label, bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(anchor="w")
+            self._label(cell, label, bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(anchor="w")
             widget = tk.Entry(
                 cell, textvariable=self.regime_vars[key], width=17,
-                font=("Consolas", 9, "bold"), relief="flat", bd=0, highlightthickness=1,
+                font=("Segoe UI", 10, "bold"), relief="flat", bd=0, highlightthickness=0,
             )
             self._register_theme(widget, "entry_bg", "entry_fg")
             widget.pack(fill="x", pady=(3, 0), ipady=5)
@@ -2738,27 +2840,33 @@ class VeltrixTradingClock:
 
         actions = self._frame(controls, bg="panel")
         actions.grid(row=3, column=0, sticky="ew", pady=(3, 0))
+        self.regime_import_button = tk.Button(
+            actions, text="IMPORT OHLC CSV", command=self.import_regime_csv,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7,
+            cursor="hand2", state="disabled",
+        )
+        self.regime_import_button.pack(side="left", padx=(0, 7))
         self.regime_run_button = tk.Button(
             actions, text="RUN REGIME ANALYSIS", command=self.run_regime_analysis,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.regime_run_button.pack(side="left", padx=(0, 7))
         self.regime_export_button = tk.Button(
             actions, text="EXPORT REGIME CSV", command=self.export_regime_results,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7,
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7,
             cursor="hand2", state="disabled",
         )
         self.regime_export_button.pack(side="left", padx=7)
         self.regime_save_button = tk.Button(
             actions, text="SAVE SETTINGS", command=self.save_regime_preferences,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
         )
         self.regime_save_button.pack(side="left", padx=7)
 
         metrics_panel = self._frame(self.regime_content, bg="panel", padx=11, pady=9)
         metrics_panel.pack(fill="x", pady=(0, 9))
         self._label(metrics_panel, "CLASSIFICATION SNAPSHOT", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
+                    font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 7))
         metrics_grid = self._frame(metrics_panel, bg="panel")
         metrics_grid.pack(fill="x")
         for column in range(3):
@@ -2772,21 +2880,21 @@ class VeltrixTradingClock:
         for index, (key, title, initial) in enumerate(metric_specs):
             row, column = divmod(index, 3)
             tile = self._frame(metrics_grid, bg="panel", padx=9, pady=7,
-                               highlightthickness=1, bd=0)
+                               highlightthickness=0, bd=0)
             tile.grid(row=row, column=column, sticky="nsew",
                       padx=(0 if column == 0 else 5, 5 if column < 2 else 0), pady=(0, 6))
-            title_label = self._label(tile, title, bg="panel", fg="muted", font=("Consolas", 7, "bold"))
+            title_label = self._label(tile, title, bg="panel", fg="muted", font=("Segoe UI", 8, "bold"))
             title_label.pack(anchor="w")
-            value_label = self._label(tile, initial, bg="panel", fg="text", font=("Consolas", 12, "bold"))
+            value_label = self._label(tile, initial, bg="panel", fg="text", font=("Segoe UI", 12, "bold"))
             value_label.pack(anchor="w", pady=(3, 0))
             self.regime_metric_tiles[key] = {"frame": tile, "title": title_label, "value": value_label}
 
         chart_panel = self._frame(self.regime_content, bg="panel", padx=11, pady=9)
         chart_panel.pack(fill="x", pady=(0, 9))
         self._label(chart_panel, "PRICE PATH WITH CAUSAL REGIME LABELS · MOST RECENT 250 BARS",
-                    bg="panel", fg="bright", font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
+                    bg="panel", fg="bright", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
         self.regime_chart_canvas = tk.Canvas(
-            chart_panel, height=245, highlightthickness=1, highlightbackground=THEMES[self.theme_name]["border"],
+            chart_panel, height=245, highlightthickness=0, highlightbackground=THEMES[self.theme_name]["panel"],
             bd=0,
         )
         self._register_theme(self.regime_chart_canvas, "panel")
@@ -2800,7 +2908,7 @@ class VeltrixTradingClock:
         distribution_panel = self._frame(tables, bg="panel", padx=10, pady=9)
         distribution_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         self._label(distribution_panel, "REGIME FREQUENCY & FORWARD OUTCOMES",
-                    bg="panel", fg="bright", font=("Consolas", 8, "bold")).pack(anchor="w", pady=(0, 5))
+                    bg="panel", fg="bright", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 5))
         distribution_columns = ("regime", "count", "frequency", "samples", "mean", "median", "positive")
         self.regime_distribution_tree = ttk.Treeview(
             distribution_panel, columns=distribution_columns, show="headings", height=6,
@@ -2820,7 +2928,7 @@ class VeltrixTradingClock:
         transition_panel = self._frame(tables, bg="panel", padx=10, pady=9)
         transition_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         self._label(transition_panel, "REGIME TRANSITION COUNTS",
-                    bg="panel", fg="bright", font=("Consolas", 8, "bold")).pack(anchor="w", pady=(0, 5))
+                    bg="panel", fg="bright", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 5))
         transition_columns = ("from", "range", "up", "down", "shock", "transition")
         self.regime_transition_tree = ttk.Treeview(
             transition_panel, columns=transition_columns, show="headings", height=6,
@@ -2839,7 +2947,7 @@ class VeltrixTradingClock:
         recent_panel = self._frame(self.regime_content, bg="panel", padx=11, pady=9)
         recent_panel.pack(fill="both", expand=True, pady=(0, 9))
         self._label(recent_panel, "RECENT CLASSIFICATIONS · LATEST 60",
-                    bg="panel", fg="bright", font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
+                    bg="panel", fg="bright", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
         recent_columns = ("timestamp", "close", "regime", "er", "slope", "atr_ratio", "tr_multiple", "forward")
         self.regime_recent_tree = ttk.Treeview(
             recent_panel, columns=recent_columns, show="headings", height=12,
@@ -2865,13 +2973,184 @@ class VeltrixTradingClock:
         self._label(
             methodology,
             "METHODOLOGY: Each bar is classified using only its own and earlier completed OHLC bars. Efficiency ratio measures net displacement / total path; trend slope is normalised by slow ATR; volatility shocks use fast/slow ATR and current true range versus prior slow ATR. Forward returns are calculated only after labels are fixed and are historical conditional outcomes, not predictions or trade signals. Thresholds are research parameters, not universal gold constants. Results depend on feed, symbol, bar construction, interval, missing data and transaction-cost assumptions.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=980,
+            bg="panel", fg="muted", font=("Segoe UI", 10), justify="left", wraplength=980,
         ).pack(fill="x")
         self._apply_regime_tree_theme()
 
+    def _start_regime_cache_load(self) -> None:
+        """Load the compact Regime dataset store, migrating compatible old OHLC caches once."""
+        def worker() -> None:
+            try:
+                payload = load_regime_datasets(REGIME_DATA_PATH, LEGACY_RESEARCH_CACHE_PATH)
+            except Exception:
+                payload = {"datasets": {}, "migrated_from_legacy": False, "skipped_tick_datasets": 0}
+            self.regime_cache_load_queue.put(payload)
+
+        threading.Thread(target=worker, name="VeltrixRegimeCacheLoader", daemon=True).start()
+
+    def _drain_regime_cache_load_results(self) -> None:
+        if self.is_closing:
+            return
+        try:
+            payload = self.regime_cache_load_queue.get_nowait()
+        except queue.Empty:
+            self.regime_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_cache_load_results)
+            return
+
+        self.regime_datasets = dict(payload.get("datasets", {}))
+        self.regime_cache_loading = False
+        self.regime_import_button.configure(state="normal")
+        self._refresh_regime_dataset_choices(
+            preferred_key=str(self.regime_settings.get("selected_asset") or "")
+        )
+        if payload.get("migrated_from_legacy"):
+            self._save_regime_cache()
+        count = len(self.regime_datasets)
+        skipped = int(payload.get("skipped_tick_datasets", 0) or 0)
+        if count:
+            note = f" · {skipped} LEGACY TICK-BAR DATASET(S) LEFT IN THE OLD CACHE" if skipped else ""
+            self.regime_status_label.configure(
+                text=f"LOCAL OHLC DATA READY · {count} DATASET(S) · IMPORTS STAY ON THIS DEVICE{note}",
+                fg=THEMES[self.theme_name]["success"],
+            )
+        else:
+            self.regime_status_label.configure(
+                text="NO LOCAL OHLC DATASET · IMPORT A COMPLETED OHLC CSV TO BEGIN",
+                fg=THEMES[self.theme_name]["warning"],
+            )
+
+    def _regime_cache_writer_loop(self) -> None:
+        """Serialise local Regime datasets away from the Tk event loop."""
+        while True:
+            payload = self.regime_cache_write_queue.get()
+            try:
+                if payload is None:
+                    return
+                save_regime_datasets(REGIME_DATA_PATH, payload)
+            except Exception as exc:
+                self.regime_import_result_queue.put({"error": f"Dataset save failed: {exc}"})
+            finally:
+                self.regime_cache_write_queue.task_done()
+
+    def _save_regime_cache(self) -> None:
+        snapshot = {key: dict(value) for key, value in self.regime_datasets.items()}
+        try:
+            self.regime_cache_write_queue.put_nowait(snapshot)
+        except queue.Full:
+            try:
+                self.regime_cache_write_queue.get_nowait()
+                self.regime_cache_write_queue.task_done()
+            except queue.Empty:
+                pass
+            self.regime_cache_write_queue.put_nowait(snapshot)
+
+    def _refresh_regime_dataset_choices(self, preferred_key: str | None = None) -> None:
+        labels: list[str] = []
+        mapping: dict[str, str] = {}
+        for key, dataset in self.regime_datasets.items():
+            if not isinstance(dataset, dict) or not dataset.get("bars"):
+                continue
+            name = str(dataset.get("name") or key).strip()
+            symbol = str(dataset.get("symbol") or "").strip()
+            source = str(dataset.get("source") or "Local CSV").strip()
+            label = f"{name} · {symbol} · {source}" if symbol else f"{name} · {source}"
+            if label in mapping:
+                label = f"{label} · {key}"
+            labels.append(label)
+            mapping[label] = str(key)
+        self.regime_dataset_label_to_key = mapping
+        if hasattr(self, "regime_asset_combo"):
+            self.regime_asset_combo.configure(values=labels)
+        requested = str(preferred_key if preferred_key is not None else self.regime_settings.get("selected_asset") or "")
+        target = next((label for label, key in mapping.items() if key == requested), "")
+        if not target and labels:
+            target = labels[0]
+        self.regime_asset_var.set(target)
+        self.regime_settings["selected_asset"] = mapping.get(target, "")
+        refresh_session_performance_dataset_choices(self)
+
+    def import_regime_csv(self) -> None:
+        if self.regime_cache_loading or self.regime_import_in_progress:
+            return
+        path = filedialog.askopenfilename(
+            parent=self.root, title="Import OHLC history for Regime Lab",
+            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+        )
+        if not path:
+            return
+        default_name = Path(path).stem.replace("_", " ").replace("-", " ").strip().title()
+        name = simpledialog.askstring(
+            "Name OHLC dataset", "Dataset / instrument name:",
+            initialvalue=default_name, parent=self.root,
+        )
+        if name is None or not name.strip():
+            return
+        name = name.strip()
+        asset_key = f"regime_{uuid4().hex[:12]}"
+        timezone_name = self.home_zone.key
+        self.regime_import_in_progress = True
+        self.regime_import_button.configure(state="disabled")
+        self.regime_status_label.configure(
+            text=f"IMPORTING {Path(path).name} · NAIVE CSV TIMES ASSUMED {timezone_name}",
+            fg=THEMES[self.theme_name]["warning"],
+        )
+
+        def worker() -> None:
+            try:
+                bars, import_meta = import_ohlc_csv(path, naive_timezone=timezone_name)
+                record = {
+                    "bars": [bar.to_dict() for bar in bars],
+                    "source": f"Local CSV · {Path(path).name}",
+                    "name": name,
+                    "symbol": "",
+                    "unit": "source price units",
+                    "bar_interval_minutes": infer_bar_interval_minutes(bars),
+                    "metadata": {**import_meta, "imported_for": "regime_lab"},
+                }
+                self.regime_import_result_queue.put({"asset_key": asset_key, "record": record, "error": None})
+            except Exception as exc:
+                self.regime_import_result_queue.put({"asset_key": asset_key, "record": None, "error": str(exc)})
+
+        threading.Thread(target=worker, name="VeltrixRegimeCSVImport", daemon=True).start()
+
+    def _drain_regime_import_results(self) -> None:
+        if self.is_closing:
+            return
+        try:
+            while True:
+                result = self.regime_import_result_queue.get_nowait()
+                if result.get("error"):
+                    self.regime_import_in_progress = False
+                    self.regime_import_button.configure(state="normal")
+                    self.regime_status_label.configure(
+                        text=f"REGIME DATA TASK FAILED · {result['error']}",
+                        fg=THEMES[self.theme_name]["error"],
+                    )
+                    continue
+                key = str(result["asset_key"])
+                record = result["record"]
+                if record is None:
+                    continue
+                self.regime_import_in_progress = False
+                self.regime_import_button.configure(state="normal")
+                self.regime_datasets[key] = record
+                self._refresh_regime_dataset_choices(preferred_key=key)
+                self._clear_regime_results()
+                self._save_regime_cache()
+                metadata = record.get("metadata", {})
+                self.regime_status_label.configure(
+                    text=f"OHLC DATASET IMPORTED · {record['name']} · {len(record['bars']):,} BARS · "
+                         f"{metadata.get('invalid_rows', 0)} INVALID ROWS SKIPPED · SAVED LOCALLY",
+                    fg=THEMES[self.theme_name]["success"],
+                )
+        except queue.Empty:
+            pass
+        if not self.is_closing:
+            self.regime_import_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_import_results)
+
     def _selected_regime_asset_key(self) -> str:
         label = self.regime_asset_var.get() if hasattr(self, "regime_asset_var") else ""
-        return self.research_label_to_key.get(label, str(self.regime_settings.get("selected_asset", "")))
+        return self.regime_dataset_label_to_key.get(label, str(self.regime_settings.get("selected_asset", "")))
 
     def _clear_regime_results(self) -> None:
         """Clear prior output so stale results can never be mistaken for a new run."""
@@ -2930,19 +3209,19 @@ class VeltrixTradingClock:
     def run_regime_analysis(self) -> None:
         if self.regime_in_progress:
             return
-        if self.research_cache_loading:
+        if self.regime_cache_loading:
             self.regime_status_label.configure(
-                text="RESEARCH CACHE IS STILL LOADING · TRY AGAIN WHEN THE RESEARCH LAB IS READY",
+                text="LOCAL OHLC DATASET LIBRARY IS STILL LOADING · PLEASE RETRY",
                 fg=THEMES[self.theme_name]["warning"],
             )
             return
         asset_key = self._selected_regime_asset_key()
-        dataset = self.research_asset_data.get(asset_key)
+        dataset = self.regime_datasets.get(asset_key)
         bars = list(dataset.get("bars", [])) if isinstance(dataset, dict) else []
         if not bars:
             messagebox.showwarning(
                 "No historical bars",
-                "Load or import OHLC history for this instrument in Research Lab before running regime analysis.",
+                "Import an OHLC CSV in Regime Lab before running regime analysis.",
                 parent=self.root,
             )
             return
@@ -3102,12 +3381,12 @@ class VeltrixTradingClock:
         canvas.create_rectangle(0, 0, width, height, fill=palette["panel"], outline="")
         if not self.regime_result:
             canvas.create_text(width / 2, height / 2, text="RUN REGIME ANALYSIS TO DISPLAY HISTORICAL CLASSIFICATIONS",
-                               fill=palette["muted"], font=("Consolas", 9, "bold"))
+                               fill=palette["muted"], font=("Segoe UI", 10, "bold"))
             return
         records = self.regime_result["records"][-250:]
         if len(records) < 2:
             canvas.create_text(width / 2, height / 2, text="INSUFFICIENT CLASSIFIED HISTORY",
-                               fill=palette["muted"], font=("Consolas", 9, "bold"))
+                               fill=palette["muted"], font=("Segoe UI", 10, "bold"))
             return
         prices = [float(item["close"]) for item in records]
         low, high = min(prices), max(prices)
@@ -3125,7 +3404,7 @@ class VeltrixTradingClock:
             price = high - (high - low) * grid_index / 4
             canvas.create_line(left, y, width - right, y, fill=palette["border"], dash=(2, 4))
             canvas.create_text(left - 8, y, text=f"{price:.2f}", fill=palette["muted"],
-                               anchor="e", font=("Consolas", 7))
+                               anchor="e", font=("Segoe UI", 8))
         points = []
         for index, record in enumerate(records):
             x = left + plot_width * index / (len(records) - 1)
@@ -3142,9 +3421,9 @@ class VeltrixTradingClock:
             canvas.create_rectangle(x0, band_y, x0 + max(1, band_width + 0.4), height - 5,
                                     fill=colors.get(record["regime"], palette["muted"]), outline="")
         canvas.create_text(left, height - 2, text="OLDER", fill=palette["muted"],
-                           anchor="sw", font=("Consolas", 7))
+                           anchor="sw", font=("Segoe UI", 8))
         canvas.create_text(width - right, height - 2, text="LATEST", fill=palette["muted"],
-                           anchor="se", font=("Consolas", 7))
+                           anchor="se", font=("Segoe UI", 8))
 
     def export_regime_results(self) -> None:
         if not self.regime_result:
@@ -3168,12 +3447,12 @@ class VeltrixTradingClock:
         style = ttk.Style(self.root)
         style.configure(
             "Veltrix.Regime.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
+            fieldbackground=palette["bg"], rowheight=29, bordercolor=palette["bg"],
+            font=("Segoe UI", 9),
         )
         style.configure(
             "Veltrix.Regime.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
+            relief="flat", font=("Segoe UI", 9, "bold"),
         )
         style.map("Veltrix.Regime.Treeview", background=[("selected", palette["button_active"])],
                   foreground=[("selected", palette["bright"])])
@@ -3183,7 +3462,7 @@ class VeltrixTradingClock:
         if hasattr(self, "regime_canvas"):
             self.regime_canvas.configure(bg=palette["bg"])
         if hasattr(self, "regime_chart_canvas"):
-            self.regime_chart_canvas.configure(bg=palette["panel"], highlightbackground=palette["border"])
+            self.regime_chart_canvas.configure(bg=palette["panel"], highlightthickness=0, bd=0)
         tags = {
             "range": palette["bright"], "trend_up": palette["success"],
             "trend_down": palette["error"], "volatility_shock": palette["warning"],
@@ -3194,1142 +3473,6 @@ class VeltrixTradingClock:
             if tree is not None:
                 for tag, colour in tags.items():
                     tree.tag_configure(tag, foreground=colour)
-
-    def _build_strategy_page(self) -> None:
-        """Build the Phase 7 rule-based strategy and backtesting workspace."""
-        self.strategy_canvas = tk.Canvas(self.strategy_view, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(self.strategy_view, orient="vertical", command=self.strategy_canvas.yview)
-        self.strategy_canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.strategy_canvas.pack(side="left", fill="both", expand=True)
-        self.strategy_content = self._frame(self.strategy_canvas)
-        self.strategy_content_window = self.strategy_canvas.create_window(
-            (0, 0), window=self.strategy_content, anchor="nw"
-        )
-        self.strategy_content.bind(
-            "<Configure>", lambda _event: self.strategy_canvas.configure(
-                scrollregion=self.strategy_canvas.bbox("all")
-            )
-        )
-        self.strategy_canvas.bind(
-            "<Configure>", lambda event: self.strategy_canvas.itemconfigure(
-                self.strategy_content_window, width=event.width
-            )
-        )
-
-        header = self._frame(self.strategy_content, bg="panel", padx=14, pady=11)
-        header.pack(fill="x", pady=(0, 9))
-        self._label(header, "STRATEGY RESEARCH & BACKTESTING LAB", bg="panel", fg="bright",
-                    font=("Consolas", 10, "bold")).pack(anchor="w")
-        self._label(
-            header,
-            "SMA CROSSOVER · NEXT-BAR EXECUTION · ATR RISK · COSTS · CHRONOLOGICAL HOLDOUT · WALK-FORWARD",
-            bg="panel", fg="muted", font=("Consolas", 7, "bold"),
-        ).pack(anchor="w", pady=(3, 6))
-        self.backtest_status_label = self._label(
-            header,
-            "LOAD OR IMPORT INTRADAY OHLC HISTORY IN RESEARCH LAB, THEN RUN A STRATEGY TEST",
-            bg="panel", fg="warning", font=("Consolas", 8, "bold"), anchor="w", justify="left", wraplength=980,
-        )
-        self.backtest_status_label.pack(fill="x")
-
-        controls = self._frame(self.strategy_content, bg="panel", padx=12, pady=10)
-        controls.pack(fill="x", pady=(0, 9))
-        controls.grid_columnconfigure(0, weight=1)
-        self._label(controls, "DATASET / INSTRUMENT", bg="panel", fg="muted",
-                    font=("Consolas", 7, "bold")).grid(row=0, column=0, sticky="w")
-        labels = list(self.research_label_to_key.keys())
-        self.strategy_asset_combo = ttk.Combobox(
-            controls, textvariable=self.backtest_asset_var, values=labels, state="readonly", width=54,
-            style="Veltrix.Strategy.TCombobox",
-        )
-        self.strategy_asset_combo.grid(row=1, column=0, sticky="ew", pady=(4, 9))
-        if labels:
-            selected = self.research_asset_var.get()
-            self.backtest_asset_var.set(selected if selected in labels else labels[0])
-        self.strategy_asset_combo.bind("<<ComboboxSelected>>", lambda _event: self._strategy_asset_changed())
-
-        field_specs = [
-            ("FAST SMA", "fast_period", "entry"),
-            ("SLOW SMA", "slow_period", "entry"),
-            ("ATR PERIOD", "atr_period", "entry"),
-            ("STOP · ATR MULTIPLE", "stop_atr_multiple", "entry"),
-            ("TARGET · R MULTIPLE", "target_r_multiple", "entry"),
-            ("DIRECTION", "direction", "direction"),
-            ("STARTING CAPITAL", "initial_capital", "entry"),
-            ("RISK PER TRADE %", "risk_per_trade_pct", "entry"),
-            ("COMMISSION · BPS / SIDE", "commission_bps", "entry"),
-            ("COMMISSION · PER UNIT / SIDE", "commission_per_unit", "entry"),
-            ("SLIPPAGE · BPS / SIDE", "slippage_bps", "entry"),
-            ("POINT / CONTRACT VALUE", "point_value", "entry"),
-            ("QUANTITY STEP", "quantity_step", "entry"),
-            ("MAX LEVERAGE", "max_leverage", "entry"),
-            ("HOLDOUT TRAIN %", "train_fraction_pct", "entry"),
-            ("WF INITIAL TRAIN %", "walk_forward_train_fraction_pct", "entry"),
-            ("WF FOLDS", "walk_forward_folds", "entry"),
-        ]
-        fields = self._frame(controls, bg="panel")
-        fields.grid(row=2, column=0, sticky="ew")
-        for column in range(4):
-            fields.grid_columnconfigure(column, weight=1, uniform="strategy_fields")
-        self.strategy_field_widgets: list[tk.Widget] = []
-        for index, (label, key, kind) in enumerate(field_specs):
-            row, column = divmod(index, 4)
-            cell = self._frame(fields, bg="panel")
-            cell.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 7, 7 if column < 3 else 0),
-                      pady=(0, 7))
-            self._label(cell, label, bg="panel", fg="muted", font=("Consolas", 7, "bold")).pack(anchor="w")
-            if kind == "direction":
-                widget = ttk.Combobox(
-                    cell, textvariable=self.backtest_vars[key], values=("both", "long_only", "short_only"),
-                    state="readonly", width=17, style="Veltrix.Strategy.TCombobox",
-                )
-            else:
-                widget = tk.Entry(
-                    cell, textvariable=self.backtest_vars[key], width=17, font=("Consolas", 9, "bold"),
-                    relief="flat", bd=0, highlightthickness=1,
-                )
-                self._register_theme(widget, "entry_bg", "entry_fg")
-            widget.pack(fill="x", pady=(3, 0), ipady=5)
-            self.strategy_field_widgets.append(widget)
-
-        actions = self._frame(controls, bg="panel")
-        actions.grid(row=3, column=0, sticky="ew", pady=(4, 0))
-        self.strategy_run_button = tk.Button(
-            actions, text="RUN BACKTEST + VALIDATION", command=self.run_strategy_backtest,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-        )
-        self.strategy_run_button.pack(side="left", padx=(0, 7))
-        self.strategy_export_csv_button = tk.Button(
-            actions, text="EXPORT OOS TRADES CSV", command=self.export_backtest_trades,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-            state="disabled",
-        )
-        self.strategy_export_csv_button.pack(side="left", padx=7)
-        self.strategy_export_html_button = tk.Button(
-            actions, text="EXPORT HTML REPORT", command=self.export_backtest_report,
-            font=("Consolas", 8, "bold"), relief="flat", bd=0, padx=12, pady=7, cursor="hand2",
-            state="disabled",
-        )
-        self.strategy_export_html_button.pack(side="left", padx=7)
-        self.strategy_all_buttons = [self.strategy_run_button, self.strategy_export_csv_button,
-                                     self.strategy_export_html_button]
-
-        metrics_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        metrics_panel.pack(fill="x", pady=(0, 9))
-        self._label(metrics_panel, "HOLDOUT · OUT-OF-SAMPLE PERFORMANCE", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 7))
-        metrics_grid = self._frame(metrics_panel, bg="panel")
-        metrics_grid.pack(fill="x")
-        for column in range(4):
-            metrics_grid.grid_columnconfigure(column, weight=1, uniform="strategy_metrics")
-        self.strategy_metric_tiles: dict[str, dict[str, tk.Widget]] = {}
-        metric_specs = [
-            ("trades", "TEST TRADES", "N/A"), ("net_pnl", "NET P&L", "N/A"),
-            ("return", "TOTAL RETURN", "N/A"), ("win_rate", "WIN RATE", "N/A"),
-            ("profit_factor", "PROFIT FACTOR", "N/A"), ("drawdown", "MAX DRAWDOWN", "N/A"),
-            ("sharpe", "DAILY SHARPE", "N/A"), ("expectancy_r", "EXPECTANCY · R", "N/A"),
-        ]
-        for index, (key, title, initial) in enumerate(metric_specs):
-            row, column = divmod(index, 4)
-            tile = self._frame(metrics_grid, bg="panel", padx=9, pady=7, highlightthickness=1, bd=0)
-            tile.grid(row=row, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < 3 else 0),
-                      pady=(0, 6))
-            title_label = self._label(tile, title, bg="panel", fg="muted", font=("Consolas", 7, "bold"))
-            title_label.pack(anchor="w")
-            value_label = self._label(tile, initial, bg="panel", fg="text", font=("Consolas", 12, "bold"))
-            value_label.pack(anchor="w", pady=(3, 0))
-            self.strategy_metric_tiles[key] = {"frame": tile, "title": title_label, "value": value_label}
-
-        split_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        split_panel.pack(fill="x", pady=(0, 9))
-        self._label(split_panel, "CHRONOLOGICAL TRAIN / HOLDOUT SPLIT", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w")
-        self.strategy_split_label = self._label(
-            split_panel, "TRAIN: N/A  ·  OUT-OF-SAMPLE: N/A", bg="panel", fg="text",
-            font=("Consolas", 8, "bold"), wraplength=980, justify="left", anchor="w",
-        )
-        self.strategy_split_label.pack(fill="x", pady=(5, 0))
-
-        walk_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        walk_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(walk_panel, "WALK-FORWARD TEST FOLDS · EXPANDING HISTORY / FIXED PARAMETERS", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
-        wf_columns = ("fold", "train", "test", "period", "trades", "pnl", "return", "dd", "sharpe", "pf")
-        self.strategy_wf_tree = ttk.Treeview(
-            walk_panel, columns=wf_columns, show="headings", height=4, style="Veltrix.Strategy.Treeview",
-        )
-        wf_headings = {
-            "fold": ("FOLD", 48), "train": ("TRAIN BARS", 80), "test": ("TEST BARS", 75),
-            "period": ("TEST PERIOD", 205), "trades": ("TRADES", 60), "pnl": ("NET P&L", 90),
-            "return": ("RETURN %", 80), "dd": ("MAX DD %", 80), "sharpe": ("DAILY SHARPE", 92),
-            "pf": ("PROFIT FACTOR", 95),
-        }
-        for key, (heading, width) in wf_headings.items():
-            self.strategy_wf_tree.heading(key, text=heading)
-            self.strategy_wf_tree.column(key, width=width, minwidth=48, anchor="center", stretch=(key == "period"))
-        self.strategy_wf_tree.pack(fill="x", expand=True)
-
-        trade_panel = self._frame(self.strategy_content, bg="panel", padx=11, pady=9)
-        trade_panel.pack(fill="both", expand=True, pady=(0, 9))
-        self._label(trade_panel, "OUT-OF-SAMPLE TRADE LOG", bg="panel", fg="bright",
-                    font=("Consolas", 9, "bold")).pack(anchor="w", pady=(0, 6))
-        trade_columns = ("side", "entry", "exit", "entry_price", "exit_price", "quantity", "net", "r", "reason")
-        self.strategy_trade_tree = ttk.Treeview(
-            trade_panel, columns=trade_columns, show="headings", height=8, style="Veltrix.Strategy.Treeview",
-        )
-        trade_headings = {
-            "side": ("SIDE", 60), "entry": ("ENTRY TIME", 155), "exit": ("EXIT TIME", 155),
-            "entry_price": ("ENTRY", 85), "exit_price": ("EXIT", 85), "quantity": ("QUANTITY", 85),
-            "net": ("NET P&L", 95), "r": ("R MULTIPLE", 85), "reason": ("EXIT REASON", 140),
-        }
-        for key, (heading, width) in trade_headings.items():
-            self.strategy_trade_tree.heading(key, text=heading)
-            self.strategy_trade_tree.column(key, width=width, minwidth=50, anchor="center", stretch=(key in {"entry", "exit"}))
-        trade_scroll = ttk.Scrollbar(trade_panel, orient="vertical", command=self.strategy_trade_tree.yview)
-        self.strategy_trade_tree.configure(yscrollcommand=trade_scroll.set)
-        self.strategy_trade_tree.pack(side="left", fill="both", expand=True)
-        trade_scroll.pack(side="right", fill="y")
-
-        methodology = self._frame(self.strategy_content, bg="panel", padx=12, pady=9)
-        methodology.pack(fill="x", pady=(0, 8))
-        self._label(
-            methodology,
-            "EXECUTION MODEL: SMA crossover is detected only after a bar closes and enters at the next bar open. ATR is calculated with Wilder smoothing. Stops and targets are evaluated against OHLC; when both are touched in one bar, stop-first is assumed. Tick-derived bars retain OHLC extremes, but this is not tick-by-tick order replay and cannot recover the exact stop/target path inside each bar. Gaps fill at the open. Commission and slippage apply on both sides. One position at a time; no pyramiding. Holdout and walk-forward tests use fixed parameters and reset flat at each test boundary. No parameter optimisation, order-book modelling, broker spread replay, exchange fee schedules, funding, borrow costs or partial fills are included. Daily Sharpe uses observed UTC daily equity returns and √252 annualisation. Match point value, quantity step, commission and slippage to your broker before interpreting results.",
-            bg="panel", fg="muted", font=("Segoe UI", 8), justify="left", wraplength=980,
-        ).pack(fill="x")
-        self._apply_strategy_tree_theme()
-        for variable in self.backtest_vars.values():
-            variable.trace_add("write", self._invalidate_backtest_result)
-        self._strategy_asset_changed()
-
-    def _invalidate_backtest_result(self, *_args) -> None:
-        if self.backtest_result is not None:
-            self.backtest_result = None
-            for button in (self.strategy_export_csv_button, self.strategy_export_html_button):
-                button.configure(state="disabled")
-            if not self.backtest_in_progress:
-                self.backtest_status_label.configure(
-                    text="STRATEGY SETTINGS CHANGED · RUN THE BACKTEST AGAIN BEFORE EXPORTING",
-                    fg=THEMES[self.theme_name]["warning"],
-                )
-
-    def _apply_strategy_tree_theme(self) -> None:
-        palette = THEMES[self.theme_name]
-        style = ttk.Style(self.root)
-        style.configure(
-            "Veltrix.Strategy.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
-        )
-        style.configure(
-            "Veltrix.Strategy.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
-        )
-        style.map("Veltrix.Strategy.Treeview", background=[("selected", palette["button_active"])],
-                  foreground=[("selected", palette["bright"])])
-        style.configure(
-            "Veltrix.Strategy.TCombobox", fieldbackground=palette["entry_bg"],
-            background=palette["button_bg"], foreground=palette["entry_fg"], arrowcolor=palette["bright"],
-        )
-        if hasattr(self, "strategy_canvas"):
-            self.strategy_canvas.configure(bg=palette["bg"])
-
-    def _selected_backtest_asset_key(self) -> str:
-        label = self.backtest_asset_var.get()
-        return self.research_label_to_key.get(label, str(self.backtest_settings.get("selected_asset", "")))
-
-    def _strategy_asset_changed(self) -> None:
-        key = self._selected_backtest_asset_key()
-        instrument = next((item for item in self.market_instruments if str(item.get("key")) == key), None)
-        if instrument is not None:
-            self.backtest_vars["point_value"].set(str(instrument.get("point_value", 1.0)))
-            self.backtest_vars["quantity_step"].set(str(instrument.get("quantity_step", 0.01)))
-        else:
-            dataset = self.research_asset_data.get(key, {})
-            metadata = dataset.get("metadata", {}) if isinstance(dataset, dict) else {}
-            self.backtest_vars["point_value"].set(str(metadata.get("point_value", 1.0)))
-            self.backtest_vars["quantity_step"].set(str(metadata.get("quantity_step", 0.01)))
-            if hasattr(self, "backtest_status_label") and dataset:
-                self.backtest_status_label.configure(
-                    text="BROKER CSV DATASET SELECTED · VERIFY POINT VALUE, QUANTITY STEP, CONTRACT SIZE AND COSTS BEFORE BACKTESTING",
-                    fg=THEMES[self.theme_name]["warning"],
-                )
-        self.backtest_result = None
-        for button in (getattr(self, "strategy_export_csv_button", None), getattr(self, "strategy_export_html_button", None)):
-            if button is not None:
-                button.configure(state="disabled")
-
-    def _collect_backtest_config(self) -> tuple[BacktestConfig, float, float, int]:
-        values = self.backtest_vars
-        try:
-            mapping = {
-                "fast_period": int(values["fast_period"].get()),
-                "slow_period": int(values["slow_period"].get()),
-                "atr_period": int(values["atr_period"].get()),
-                "stop_atr_multiple": float(values["stop_atr_multiple"].get()),
-                "target_r_multiple": float(values["target_r_multiple"].get()),
-                "direction": values["direction"].get().strip(),
-                "initial_capital": float(values["initial_capital"].get()),
-                "risk_per_trade_pct": float(values["risk_per_trade_pct"].get()),
-                "commission_bps": float(values["commission_bps"].get()),
-                "commission_per_unit": float(values["commission_per_unit"].get()),
-                "slippage_bps": float(values["slippage_bps"].get()),
-                "point_value": float(values["point_value"].get()),
-                "quantity_step": float(values["quantity_step"].get()),
-                "max_leverage": float(values["max_leverage"].get()),
-            }
-            train_fraction = int(values["train_fraction_pct"].get()) / 100.0
-            wf_train_fraction = int(values["walk_forward_train_fraction_pct"].get()) / 100.0
-            folds = int(values["walk_forward_folds"].get())
-        except (ValueError, tk.TclError) as exc:
-            raise ValueError("Check the strategy inputs. Numeric fields must contain valid numbers.") from exc
-        config = BacktestConfig.from_mapping(mapping)
-        if not 50 <= train_fraction * 100 <= 85:
-            raise ValueError("Holdout training percentage must be between 50 and 85.")
-        if not 40 <= wf_train_fraction * 100 <= 80:
-            raise ValueError("Walk-forward initial training percentage must be between 40 and 80.")
-        if not 2 <= folds <= 10:
-            raise ValueError("Walk-forward folds must be between 2 and 10.")
-        return config, train_fraction, wf_train_fraction, folds
-
-    def save_backtest_preferences(self) -> None:
-        for key, variable in self.backtest_vars.items():
-            raw = variable.get().strip()
-            if key in {"direction"}:
-                self.backtest_settings[key] = raw
-            else:
-                try:
-                    self.backtest_settings[key] = float(raw) if "." in raw else int(raw)
-                except ValueError:
-                    continue
-        self.backtest_settings["selected_asset"] = self._selected_backtest_asset_key()
-        self.config["backtest"] = dict(self.backtest_settings)
-        self._save_config()
-
-    def run_strategy_backtest(self) -> None:
-        if self.backtest_in_progress:
-            return
-        asset_key = self._selected_backtest_asset_key()
-        dataset = self.research_asset_data.get(asset_key)
-        if not dataset or not dataset.get("bars"):
-            messagebox.showinfo(
-                "Historical data required",
-                "No historical bars are loaded for this instrument. Open RESEARCH LAB and fetch provider history or import broker OHLC data first.",
-                parent=self.root,
-            )
-            return
-        try:
-            config, train_fraction, wf_train_fraction, folds = self._collect_backtest_config()
-        except ValueError as exc:
-            messagebox.showerror("Invalid strategy settings", str(exc), parent=self.root)
-            return
-        bars = list(dataset["bars"])
-        metadata = {
-            "asset_key": asset_key,
-            "asset_name": str(dataset.get("name", asset_key)),
-            "symbol": str(dataset.get("symbol", "")),
-            "source": str(dataset.get("source", "Unknown source")),
-            "bar_interval_minutes": float(dataset.get("bar_interval_minutes") or 0.0),
-            "bar_construction_label": str((dataset.get("metadata") or {}).get("bar_construction_label") or "Time-based OHLC bars"),
-            "variable_interval_bars": bool((dataset.get("metadata") or {}).get("variable_interval_bars", False)),
-        }
-        self.backtest_settings.update(config.__dict__)
-        self.backtest_settings.update({
-            "train_fraction_pct": round(train_fraction * 100),
-            "walk_forward_train_fraction_pct": round(wf_train_fraction * 100),
-            "walk_forward_folds": folds,
-            "selected_asset": asset_key,
-        })
-        self.config["backtest"] = dict(self.backtest_settings)
-        self._save_config()
-        self.backtest_in_progress = True
-        self.backtest_result = None
-        self.strategy_export_csv_button.configure(state="disabled")
-        self.strategy_export_html_button.configure(state="disabled")
-        self.strategy_run_button.configure(state="disabled")
-        self.backtest_status_label.configure(
-            text=f"RUNNING BACKTEST · {metadata['asset_name']} · {len(bars):,} BARS · {metadata['bar_construction_label']} · {metadata['source']}",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-
-        def worker():
-            try:
-                holdout = run_out_of_sample(bars, config, train_fraction=train_fraction)
-                walk = run_walk_forward(bars, config, train_fraction=wf_train_fraction, folds=folds)
-                self.backtest_result_queue.put(({
-                    "holdout": holdout, "walk_forward": walk, "metadata": metadata, "config": config,
-                }, None))
-            except Exception as exc:
-                self.backtest_result_queue.put((None, str(exc)))
-
-        threading.Thread(target=worker, name="VeltrixStrategyBacktest", daemon=True).start()
-
-    def _drain_backtest_results(self) -> None:
-        try:
-            while True:
-                result, error = self.backtest_result_queue.get_nowait()
-                self.backtest_in_progress = False
-                self.strategy_run_button.configure(state="normal")
-                if error:
-                    self.backtest_status_label.configure(
-                        text=f"BACKTEST NOT COMPLETED · {error}", fg=THEMES[self.theme_name]["error"]
-                    )
-                    continue
-                if result is None:
-                    continue
-                self.backtest_result = result
-                self._render_backtest_result()
-                self.strategy_export_csv_button.configure(state="normal")
-                self.strategy_export_html_button.configure(state="normal")
-        except queue.Empty:
-            pass
-        if not self.is_closing:
-            self.backtest_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_backtest_results)
-
-    def _render_backtest_result(self) -> None:
-        if not self.backtest_result:
-            return
-        result = self.backtest_result
-        holdout, walk = result["holdout"], result["walk_forward"]
-        train_metrics = holdout["train"]["metrics"]
-        test_metrics = holdout["test"]["metrics"]
-        fmt = lambda value, digits=2: "N/A" if value is None else f"{float(value):,.{digits}f}"
-        metrics_map = {
-            "trades": str(test_metrics["trade_count"]),
-            "net_pnl": fmt(test_metrics["net_pnl"]),
-            "return": f"{fmt(test_metrics['total_return_pct'])}%",
-            "win_rate": f"{fmt(test_metrics['win_rate_pct'])}%",
-            "profit_factor": fmt(test_metrics["profit_factor"]),
-            "drawdown": f"{fmt(test_metrics['max_drawdown_pct'])}%",
-            "sharpe": fmt(test_metrics["sharpe_daily_annualised"]),
-            "expectancy_r": f"{fmt(test_metrics['expectancy_r'])}R",
-        }
-        for key, value in metrics_map.items():
-            self.strategy_metric_tiles[key]["value"].configure(text=value)
-        self.strategy_split_label.configure(
-            text=(
-                f"IN-SAMPLE: {holdout['train']['start_timestamp'][:10]} → {holdout['train']['end_timestamp'][:10]} "
-                f"· {holdout['train']['bars_tested']:,} BARS · {train_metrics['trade_count']} TRADES · "
-                f"NET {fmt(train_metrics['net_pnl'])} ({fmt(train_metrics['total_return_pct'])}%)\n"
-                f"OUT-OF-SAMPLE: {holdout['test']['start_timestamp'][:10]} → {holdout['test']['end_timestamp'][:10]} "
-                f"· {holdout['test']['bars_tested']:,} BARS · {test_metrics['trade_count']} TRADES · "
-                f"NET {fmt(test_metrics['net_pnl'])} ({fmt(test_metrics['total_return_pct'])}%)"
-            )
-        )
-        for item in self.strategy_wf_tree.get_children():
-            self.strategy_wf_tree.delete(item)
-        for fold in walk["folds"]:
-            self.strategy_wf_tree.insert("", "end", values=(
-                fold["fold"], fold["training_bars"], fold["test_bars"],
-                f"{fold['test_start'][:10]} → {fold['test_end'][:10]}", fold["trade_count"],
-                fmt(fold["net_pnl"]), fmt(fold["total_return_pct"]) + "%",
-                fmt(fold["max_drawdown_pct"]) + "%", fmt(fold["sharpe_daily_annualised"]),
-                fmt(fold["profit_factor"]),
-            ))
-        for item in self.strategy_trade_tree.get_children():
-            self.strategy_trade_tree.delete(item)
-        trades = holdout["test"]["trades"]
-        for trade in reversed(trades[-150:]):
-            self.strategy_trade_tree.insert("", "end", values=(
-                trade["side"], trade["entry_time"][:19].replace("T", " "),
-                trade["exit_time"][:19].replace("T", " "), fmt(trade["entry_price"], 4),
-                fmt(trade["exit_price"], 4), fmt(trade["quantity"], 4), fmt(trade["net_pnl"]),
-                fmt(trade["r_multiple"], 2), trade["exit_reason"],
-            ))
-        metadata = result["metadata"]
-        config = result["config"]
-        self.backtest_status_label.configure(
-            text=(
-                f"VALIDATION COMPLETE · {metadata['asset_name']} ({metadata['symbol']}) · "
-                f"{metadata['source']} · {metadata['bar_construction_label']} · "
-                f"MEDIAN {metadata['bar_interval_minutes']:.2f} MIN ELAPSED · "
-                f"POINT VALUE {config.point_value:g} · QUANTITY STEP {config.quantity_step:g} · "
-                f"{len(trades)} HOLDOUT TRADES · FIXED PARAMETERS / NO OPTIMISATION"
-            ),
-            fg=THEMES[self.theme_name]["success"],
-        )
-
-    def export_backtest_trades(self) -> None:
-        if not self.backtest_result:
-            return
-        path = filedialog.asksaveasfilename(
-            parent=self.root, title="Export out-of-sample trade log", defaultextension=".csv",
-            initialfile="veltrix_oos_trades.csv", filetypes=(("CSV files", "*.csv"),),
-        )
-        if path:
-            try:
-                export_trades_csv(path, self.backtest_result["holdout"]["test"]["trades"])
-                self.backtest_status_label.configure(
-                    text=f"OUT-OF-SAMPLE TRADES EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"]
-                )
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def export_backtest_report(self) -> None:
-        if not self.backtest_result:
-            return
-        path = filedialog.asksaveasfilename(
-            parent=self.root, title="Export strategy validation report", defaultextension=".html",
-            initialfile="veltrix_strategy_backtest.html", filetypes=(("HTML reports", "*.html"),),
-        )
-        if path:
-            try:
-                metadata = self.backtest_result["metadata"]
-                export_backtest_html(
-                    path, asset_name=metadata["asset_name"], source=metadata["source"],
-                    interval_minutes=metadata["bar_interval_minutes"],
-                    sampling_label=metadata.get("bar_construction_label", "Time-based OHLC bars"),
-                    config=self.backtest_result["config"],
-                    oos=self.backtest_result["holdout"], walk_forward=self.backtest_result["walk_forward"],
-                )
-                self.backtest_status_label.configure(
-                    text=f"STRATEGY REPORT EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"]
-                )
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def _selected_research_asset_key(self) -> str:
-        label = self.research_asset_var.get()
-        return self.research_label_to_key.get(label, str(self.research_settings.get("selected_asset", "")))
-
-    def _refresh_research_instrument_choices(self, preferred_key: str | None = None) -> None:
-        """Expose broker-imported datasets as first-class Research/Strategy instruments."""
-        requested_key = str(preferred_key) if preferred_key is not None else self._selected_research_asset_key()
-        labels, mapping = build_research_instrument_choices(self.market_instruments, self.research_asset_data)
-        self.research_label_to_key = mapping
-        if hasattr(self, "research_asset_combo"):
-            self.research_asset_combo.configure(values=labels)
-        target_label = next((label for label, key in mapping.items() if key == requested_key), "")
-        if not target_label and labels:
-            target_label = labels[0]
-        if hasattr(self, "research_asset_var") and target_label:
-            self.research_asset_var.set(target_label)
-            # A saved custom key may not be in the selector until its large cache
-            # finishes loading. Do not overwrite that preference with the first
-            # built-in instrument during initial interface construction.
-            if requested_key in mapping or not requested_key:
-                self.research_settings["selected_asset"] = mapping[target_label]
-
-        if hasattr(self, "strategy_asset_combo"):
-            previous_strategy_key = requested_key or self._selected_backtest_asset_key()
-            self.strategy_asset_combo.configure(values=labels)
-            strategy_label = next((label for label, key in mapping.items() if key == previous_strategy_key), target_label)
-            if strategy_label:
-                self.backtest_asset_var.set(strategy_label)
-                self._strategy_asset_changed()
-
-        if hasattr(self, "regime_asset_combo"):
-            previous_regime_key = str(self.regime_settings.get("selected_asset") or requested_key)
-            self.regime_asset_combo.configure(values=labels)
-            regime_label = next((label for label, key in mapping.items() if key == previous_regime_key), target_label)
-            if regime_label:
-                self.regime_asset_var.set(regime_label)
-                self.regime_settings["selected_asset"] = mapping[regime_label]
-
-    def _set_research_export_state(self, state: str) -> None:
-        for button_name in ("research_csv_button", "research_detail_csv_button", "research_html_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state=state)
-
-    def _start_research_cache_load(self) -> None:
-        """Read the potentially large JSON research cache away from the Tk thread."""
-        def worker() -> None:
-            try:
-                payload = load_research_cache(RESEARCH_CACHE_PATH)
-            except Exception:
-                payload = None
-            self.research_cache_load_queue.put(payload)
-
-        threading.Thread(target=worker, name="VeltrixResearchCacheLoader", daemon=True).start()
-
-    def _drain_research_cache_load_results(self) -> None:
-        if self.is_closing:
-            return
-        try:
-            payload = self.research_cache_load_queue.get_nowait()
-        except queue.Empty:
-            self.research_cache_load_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_cache_load_results)
-            return
-
-        self.research_cache = payload or {"assets": {}, "provider_assets": {}}
-        self.research_asset_data = dict(self.research_cache.get("assets", {}))
-        self.research_provider_assets = dict(self.research_cache.get("provider_assets", {}))
-        self.research_tick_sources = dict(self.research_cache.get("tick_sources", {}))
-        for cached_key, cached_asset in self.market_snapshot.get("assets", {}).items():
-            if cached_key not in self.research_asset_data and cached_asset.get("intraday_bars"):
-                self.research_asset_data[cached_key] = {
-                    "bars": list(cached_asset.get("intraday_bars", [])),
-                    "source": "Yahoo Finance · existing 5m cache",
-                    "name": cached_asset.get("name", cached_key),
-                    "symbol": cached_asset.get("symbol", ""), "unit": cached_asset.get("unit", ""),
-                    "bar_interval_minutes": 5,
-                    "metadata": {"inherited_from_market_cache": True},
-                }
-        self.research_cache_loading = False
-        self.research_data_revision += 1
-        self._refresh_research_instrument_choices(
-            preferred_key=str(self.research_settings.get("selected_asset", ""))
-        )
-        self._refresh_tick_source_choices()
-        self._refresh_data_center_registry()
-        for button_name in ("research_fetch_button", "research_import_button", "research_custom_import_button", "research_restore_button", "tick_import_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="normal")
-        self._render_research_page()
-
-    def _mark_research_data_changed(self) -> None:
-        self.research_data_revision += 1
-        self.research_analysis_failed_revision = -1
-
-    def _research_cache_writer_loop(self) -> None:
-        """Serialise cache writes off the UI thread, coalescing obsolete pending snapshots."""
-        while True:
-            payload = self.research_cache_write_queue.get()
-            try:
-                if payload is None:
-                    return
-                save_research_cache(RESEARCH_CACHE_PATH, payload)
-            except Exception as exc:
-                self.research_cache_error_queue.put(str(exc))
-            finally:
-                self.research_cache_write_queue.task_done()
-
-    def _render_research_page(self) -> None:
-        if not hasattr(self, "research_summary_tree"):
-            return
-        if self.research_cache_loading:
-            self.research_status_label.configure(
-                text="LOADING HISTORICAL CACHE IN BACKGROUND · THE REST OF VELTRIX REMAINS AVAILABLE",
-                fg=THEMES[self.theme_name]["warning"],
-            )
-            for button_name in ("research_fetch_button", "research_import_button", "research_restore_button"):
-                button = getattr(self, button_name, None)
-                if button is not None:
-                    button.configure(state="disabled")
-            self._set_research_export_state("disabled")
-            return
-
-        total_bars = sum(len(item.get("bars", [])) for item in self.research_asset_data.values())
-        if total_bars <= 0:
-            self.research_rows = []
-            self.research_observations = {}
-            self.research_metadata_cache = {}
-            self.research_analysis_revision = self.research_data_revision
-            for tree in (self.research_summary_tree, self.research_detail_tree):
-                for item in tree.get_children():
-                    tree.delete(item)
-            self.research_status_label.configure(
-                text="NO HISTORICAL RESEARCH DATA · FETCH PROVIDER HISTORY OR IMPORT A BROKER CSV",
-                fg=THEMES[self.theme_name]["warning"],
-            )
-            self._set_research_export_state("disabled")
-            return
-
-        if self.research_analysis_revision == self.research_data_revision:
-            self._display_research_results()
-            return
-
-        if self.research_analysis_failed_revision == self.research_data_revision:
-            self.research_status_label.configure(
-                text="RESEARCH ANALYSIS FAILED · CHECK THE ERROR ABOVE OR CHANGE DATA, THEN RETRY",
-                fg=THEMES[self.theme_name]["error"],
-            )
-            return
-        if self.research_analysis_in_progress:
-            return
-
-        # Shallow-copy each record. Bar lists are immutable after a dataset is installed;
-        # later imports replace the record, so this snapshot is safe for the worker.
-        snapshot = {key: dict(value) for key, value in self.research_asset_data.items()}
-        sessions = tuple(self.sessions)
-        revision = self.research_data_revision
-        self.research_analysis_in_progress = True
-        self._set_research_export_state("disabled")
-        self.research_status_label.configure(
-            text=f"ANALYSING {total_bars:,} HISTORICAL BARS IN BACKGROUND · UI REMAINS RESPONSIVE",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-
-        def worker() -> None:
-            try:
-                rows, observations, metadata = analyse_research_assets(
-                    snapshot, list(sessions), windows=(30, 60, 90)
-                )
-                self.research_analysis_result_queue.put((revision, rows, observations, metadata, None))
-            except Exception as exc:
-                self.research_analysis_result_queue.put((revision, None, None, None, str(exc)))
-
-        threading.Thread(target=worker, name="VeltrixResearchAnalysis", daemon=True).start()
-
-    def _display_research_results(self) -> None:
-        for tree in (self.research_summary_tree, self.research_detail_tree):
-            for item in tree.get_children():
-                tree.delete(item)
-        metadata = self.research_metadata_cache
-        if not metadata:
-            self.research_status_label.configure(
-                text="NO VALID OHLC DATA · CHECK THE IMPORTED FILE OR PROVIDER DATASET",
-                fg=THEMES[self.theme_name]["warning"],
-            )
-            self._set_research_export_state("disabled")
-            return
-
-        asset_key = self._selected_research_asset_key()
-        if asset_key not in metadata:
-            asset_key = next(iter(metadata))
-            label = next((label for label, key in self.research_label_to_key.items() if key == asset_key), "")
-            if label:
-                self.research_asset_var.set(label)
-        try:
-            window_days = int(self.research_window_var.get())
-        except (ValueError, tk.TclError):
-            window_days = 90
-            self.research_window_var.set("90")
-        selected_rows = [row for row in self.research_rows
-                         if row["asset_key"] == asset_key and row["window_days"] == window_days]
-
-        def fmt(value, digits=3):
-            return "N/A" if value is None else f"{float(value):.{digits}f}"
-
-        for row in selected_rows:
-            self.research_summary_tree.insert("", "end", values=(
-                row["session_name"], row["sample_count"], fmt(row["mean_rv_pct"]),
-                fmt(row["median_rv_pct"]), fmt(row["p75_rv_pct"]), fmt(row["p90_rv_pct"]),
-                fmt(row["latest_rv_pct"]), fmt(row["latest_percentile"], 1),
-                fmt(row["median_range_pct"]), fmt(row["win_rate_pct"], 1),
-            ))
-        observations = self.research_observations.get(asset_key, [])
-        for row in sorted(observations, key=lambda item: (item["date"], item["session_key"]), reverse=True)[:30]:
-            self.research_detail_tree.insert("", "end", values=(
-                row["date"], row["session_name"], fmt(row["realised_vol_pct"]),
-                fmt(row["range_pct"]), fmt(row["session_return_pct"]),
-                f"{row['bars']} / {row['returns']}", f"{row['bar_interval_minutes']:.1f}",
-                "PARTIAL · EXCLUDED" if row.get("is_partial") else "COMPLETE / HISTORY",
-            ))
-        asset_meta = metadata[asset_key]
-        valid_observations = [row for row in observations if row["valid"]]
-        coverage = (
-            f"{min(row['date'] for row in valid_observations)} → {max(row['date'] for row in valid_observations)}"
-            if valid_observations else "NO VALID SESSION OBSERVATIONS"
-        )
-        self.research_status_label.configure(
-            text=f"{asset_meta['name']} · {asset_meta['bar_count']:,} BARS · {coverage} · "
-                 f"{asset_meta['bar_interval_minutes']:.1f} MIN BARS · SOURCE: {asset_meta['source']} · {window_days}D WINDOW",
-            fg=THEMES[self.theme_name]["success"],
-        )
-        self._set_research_export_state("normal")
-
-    def _drain_research_analysis_results(self) -> None:
-        if self.is_closing:
-            return
-        received = False
-        while True:
-            try:
-                revision, rows, observations, metadata, error = self.research_analysis_result_queue.get_nowait()
-            except queue.Empty:
-                break
-            received = True
-            self.research_analysis_in_progress = False
-            if revision != self.research_data_revision:
-                continue  # A newer import/fetch arrived while this snapshot was being analysed.
-            if error:
-                self.research_analysis_failed_revision = revision
-                self.research_status_label.configure(
-                    text=f"RESEARCH ANALYSIS FAILED · {error}", fg=THEMES[self.theme_name]["error"]
-                )
-                self._set_research_export_state("disabled")
-                continue
-            self.research_rows = rows or []
-            self.research_observations = observations or {}
-            self.research_metadata_cache = metadata or {}
-            self.research_analysis_revision = revision
-            self.research_analysis_failed_revision = -1
-            self._display_research_results()
-
-        if not self.research_analysis_in_progress and self.research_analysis_revision != self.research_data_revision:
-            if self.research_analysis_failed_revision != self.research_data_revision:
-                self._render_research_page()
-        if not self.is_closing:
-            self.research_analysis_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_analysis_results)
-
-    def _save_research_cache(self) -> None:
-        """Queue a shallow, immutable dataset snapshot for background JSON persistence."""
-        payload = {
-            "assets": {key: dict(value) for key, value in self.research_asset_data.items()},
-            "provider_assets": {key: dict(value) for key, value in self.research_provider_assets.items()},
-            "tick_sources": {key: dict(value) for key, value in self.research_tick_sources.items()},
-            "saved_at": datetime.now(timezone.utc).isoformat(),
-        }
-        self.research_cache = payload
-        try:
-            self.research_cache_write_queue.put_nowait(payload)
-        except queue.Full:
-            # Keep only the newest not-yet-written snapshot; an active write is never interrupted.
-            try:
-                self.research_cache_write_queue.get_nowait()
-                self.research_cache_write_queue.task_done()
-            except queue.Empty:
-                pass
-            self.research_cache_write_queue.put_nowait(payload)
-
-    def fetch_research_history(self) -> None:
-        if self.research_fetch_in_progress:
-            return
-        self.research_fetch_in_progress = True
-        self.research_fetch_button.configure(state="disabled")
-        self.research_import_button.configure(state="disabled")
-        self.research_status_label.configure(
-            text="FETCHING HISTORICAL 1H BARS · REQUESTING UP TO 3 MONTHS FROM YAHOO FINANCE...",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-        instruments = [dict(item) for item in self.market_instruments]
-
-        def worker():
-            fetched: dict[str, dict] = {}
-            errors: list[str] = []
-            def fetch_one(instrument: dict) -> tuple[str, dict | None, str | None]:
-                key = str(instrument["key"])
-                symbol = str(instrument["symbol"])
-                try:
-                    bars, meta = fetch_chart(symbol, interval="1h", range_="3mo")
-                    interval = 60.0
-                    range_label = "3mo"
-                except Exception as first_error:
-                    try:
-                        bars, meta = fetch_chart(symbol, interval="1h", range_="1mo")
-                        interval = 60.0
-                        range_label = "1mo fallback"
-                    except Exception as second_error:
-                        return key, None, f"{symbol}: {second_error} (3mo attempt: {first_error})"
-                record = {
-                    "bars": [bar.to_dict() for bar in bars], "source": "Yahoo Finance public chart · 1h",
-                    "name": instrument.get("name", key), "symbol": symbol,
-                    "unit": instrument.get("unit", ""), "bar_interval_minutes": interval,
-                    "metadata": {**meta, "requested_range": range_label, "requested_interval": "1h"},
-                }
-                return key, record, None
-            with ThreadPoolExecutor(max_workers=min(3, max(1, len(instruments)))) as pool:
-                futures = [pool.submit(fetch_one, item) for item in instruments]
-                for future in as_completed(futures):
-                    try:
-                        key, record, error = future.result()
-                        if record:
-                            fetched[key] = record
-                        if error:
-                            errors.append(error)
-                    except Exception as exc:
-                        errors.append(str(exc))
-            self.research_result_queue.put(({"kind": "provider", "assets": fetched, "errors": errors}, None))
-
-        threading.Thread(target=worker, name="VeltrixResearchFetch", daemon=True).start()
-
-    def import_research_csv(self) -> None:
-        """Replace the selected instrument's dataset with a broker CSV."""
-        asset_key = self._selected_research_asset_key()
-        instrument = next((item for item in self.market_instruments if str(item["key"]) == asset_key), None)
-        if instrument is None:
-            dataset = self.research_asset_data.get(asset_key, {})
-            if dataset:
-                instrument = {
-                    "key": asset_key, "name": dataset.get("name", asset_key),
-                    "symbol": dataset.get("symbol", ""), "unit": dataset.get("unit", "broker price units"),
-                }
-        if instrument is None:
-            messagebox.showerror("Choose an instrument", "Select an instrument or use IMPORT AS NEW INSTRUMENT.", parent=self.root)
-            return
-        path = filedialog.askopenfilename(
-            parent=self.root, title="Import broker OHLC CSV for selected instrument",
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
-        )
-        if not path:
-            return
-        self._start_research_csv_import(
-            path, asset_key=asset_key, instrument_name=str(instrument.get("name", asset_key)),
-            symbol=str(instrument.get("symbol", "")), unit=str(instrument.get("unit", "broker price units")),
-            custom_instrument=False,
-        )
-
-    def import_research_csv_as_new_instrument(self) -> None:
-        """Import a CSV first, then register its dataset as a selectable instrument."""
-        path = filedialog.askopenfilename(
-            parent=self.root, title="Import CSV as a new research instrument",
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
-        )
-        if not path:
-            return
-        default_name = Path(path).stem.replace("_", " ").replace("-", " ").strip().title()
-        name = simpledialog.askstring(
-            "Name new instrument", "Instrument name (e.g. Spot Gold · Broker A):",
-            initialvalue=default_name, parent=self.root,
-        )
-        if name is None or not name.strip():
-            return
-        name = name.strip()
-        try:
-            asset_key = custom_research_asset_key(name)
-        except ValueError as exc:
-            messagebox.showerror("Invalid instrument name", str(exc), parent=self.root)
-            return
-        self._start_research_csv_import(
-            path, asset_key=asset_key, instrument_name=name, symbol="",
-            unit="broker price units", custom_instrument=True,
-        )
-
-    def _start_research_csv_import(
-        self, path: str, *, asset_key: str, instrument_name: str,
-        symbol: str = "", unit: str = "broker price units", custom_instrument: bool = False,
-    ) -> None:
-        zone = self.research_timezone_var.get().strip() or "UTC"
-        self.research_fetch_in_progress = True
-        for button_name in ("research_import_button", "research_custom_import_button", "research_fetch_button"):
-            button = getattr(self, button_name, None)
-            if button is not None:
-                button.configure(state="disabled")
-        action = "REGISTERING NEW INSTRUMENT" if custom_instrument else "IMPORTING SELECTED INSTRUMENT"
-        self.research_status_label.configure(
-            text=f"{action} · {Path(path).name} · {zone} FOR NAIVE TIMESTAMPS...",
-            fg=THEMES[self.theme_name]["warning"],
-        )
-
-        def worker():
-            try:
-                bars, import_meta = import_ohlc_csv(path, naive_timezone=zone)
-                record = {
-                    "bars": [bar.to_dict() for bar in bars],
-                    "source": f"Broker CSV · {Path(path).name}",
-                    "name": instrument_name, "symbol": symbol, "unit": unit,
-                    "bar_interval_minutes": infer_bar_interval_minutes(bars),
-                    "metadata": {**import_meta, "custom_instrument": custom_instrument,
-                                 "point_value": 1.0, "quantity_step": 0.01},
-                }
-                result, error = {
-                    "kind": "import", "asset_key": asset_key,
-                    "record": record, "custom_instrument": custom_instrument,
-                }, None
-            except Exception as exc:
-                result, error = None, str(exc)
-            self.research_result_queue.put((result, error))
-
-        threading.Thread(target=worker, name="VeltrixCSVImport", daemon=True).start()
-
-    def restore_provider_research_data(self) -> None:
-        asset_key = self._selected_research_asset_key()
-        provider = self.research_provider_assets.get(asset_key)
-        if provider:
-            self.research_asset_data[asset_key] = dict(provider)
-        else:
-            market_asset = self.market_snapshot.get("assets", {}).get(asset_key, {})
-            bars = market_asset.get("intraday_bars", [])
-            if not bars:
-                messagebox.showinfo("No provider dataset", "No provider dataset is cached for this instrument. Fetch historical history first.", parent=self.root)
-                return
-            instrument = next((item for item in self.market_instruments if str(item["key"]) == asset_key), {})
-            self.research_asset_data[asset_key] = {
-                "bars": list(bars), "source": "Yahoo Finance · existing market cache",
-                "name": instrument.get("name", asset_key), "symbol": instrument.get("symbol", ""),
-                "unit": instrument.get("unit", ""), "bar_interval_minutes": 5,
-                "metadata": {"inherited_from_market_cache": True},
-            }
-        self._mark_research_data_changed()
-        self._save_research_cache()
-        self._render_research_page()
-
-    def _drain_research_results(self) -> None:
-        try:
-            while True:
-                cache_error = self.research_cache_error_queue.get_nowait()
-                self.research_status_label.configure(
-                    text=f"RESEARCH CACHE SAVE FAILED · {cache_error}", fg=THEMES[self.theme_name]["error"]
-                )
-        except queue.Empty:
-            pass
-        try:
-            while True:
-                result, error = self.research_result_queue.get_nowait()
-                self.research_fetch_in_progress = False
-                for button_name in ("research_fetch_button", "research_import_button", "research_custom_import_button", "tick_import_button", "tick_build_button"):
-                    button = getattr(self, button_name, None)
-                    if button is not None:
-                        button.configure(state="normal")
-                if error:
-                    self.research_status_label.configure(text=f"RESEARCH TASK FAILED · {error}", fg=THEMES[self.theme_name]["error"])
-                    continue
-                if not result:
-                    continue
-                if result.get("kind") == "provider":
-                    updated = result.get("assets", {})
-                    for key, record in updated.items():
-                        self.research_provider_assets[key] = record
-                        current = self.research_asset_data.get(key)
-                        if not current or not str(current.get("source", "")).lower().startswith("broker csv"):
-                            self.research_asset_data[key] = record
-                    if updated:
-                        self._mark_research_data_changed()
-                    self._save_research_cache()
-                    errors = result.get("errors", [])
-                    if updated:
-                        status = f"HISTORICAL DATA UPDATED · {len(updated)} INSTRUMENT(S) · 1H BARS"
-                        if errors:
-                            status += f" · {len(errors)} PARTIAL ERROR(S)"
-                        self.research_status_label.configure(text=status, fg=THEMES[self.theme_name]["warning"] if errors else THEMES[self.theme_name]["success"])
-                    else:
-                        self.research_status_label.configure(text="HISTORICAL FETCH FAILED · " + " | ".join(errors),
-                                                             fg=THEMES[self.theme_name]["error"])
-                elif result.get("kind") == "import":
-                    key = result["asset_key"]
-                    self.research_asset_data[key] = result["record"]
-                    self._mark_research_data_changed()
-                    if result.get("custom_instrument"):
-                        self._refresh_research_instrument_choices(preferred_key=key)
-                        self.save_research_preferences()
-                        custom_label = "NEW INSTRUMENT REGISTERED"
-                    else:
-                        custom_label = "SELECTED INSTRUMENT UPDATED"
-                    self._save_research_cache()
-                    meta = result["record"].get("metadata", {})
-                    self.research_status_label.configure(
-                        text=f"{custom_label} · {result['record'].get('name', key)} · "
-                             f"{meta.get('valid_bars', len(result['record']['bars'])):,} VALID BARS · "
-                             f"{meta.get('invalid_rows', 0)} INVALID ROWS SKIPPED",
-                        fg=THEMES[self.theme_name]["success"],
-                    )
-                elif result.get("kind") == "tick_import":
-                    key = result["source_key"]
-                    self.research_tick_sources[key] = result["record"]
-                    self._refresh_tick_source_choices(preferred_key=key)
-                    self._save_research_cache()
-                    meta = result["record"].get("metadata", {})
-                    price_label = "LAST PRICE / TICK RULE" if meta.get("price_source") == "last_price_tick_rule" else "BID/ASK MIDQUOTE PROXY"
-                    self.research_status_label.configure(
-                        text=f"RAW TICK SOURCE REGISTERED · {result['record'].get('name', key)} · "
-                             f"{meta.get('valid_ticks', 0):,} TICKS · {price_label} · "
-                             f"{meta.get('invalid_rows', 0)} INVALID ROWS SKIPPED",
-                        fg=THEMES[self.theme_name]["success"],
-                    )
-                elif result.get("kind") == "tick_bars":
-                    key = result["asset_key"]
-                    self.research_asset_data[key] = result["record"]
-                    self._mark_research_data_changed()
-                    self._refresh_research_instrument_choices(preferred_key=key)
-                    self.save_research_preferences()
-                    self._save_research_cache()
-                    meta = result["record"].get("metadata", {})
-                    warning = " · QUOTE MIDPOINT PROXY, NOT TRADE ORDER FLOW" if meta.get("price_source") == "bid_ask_midquote_proxy" else ""
-                    self.research_status_label.configure(
-                        text=f"NEW {meta.get('bar_construction_label', 'TICK BAR')} DATASET REGISTERED · "
-                             f"{result['record'].get('name', key)} · {len(result['record']['bars']):,} BARS · "
-                             f"{meta.get('trailing_ticks_discarded', 0):,} TRAILING TICKS DISCARDED{warning}",
-                        fg=THEMES[self.theme_name]["success"],
-                    )
-                self._render_research_page()
-        except queue.Empty:
-            pass
-        if not self.is_closing:
-            self.research_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_research_results)
-
-    def _all_research_outputs(self) -> tuple[list[dict], dict[str, list[dict]]]:
-        if self.research_analysis_revision != self.research_data_revision:
-            return [], {}
-        return self.research_rows, self.research_observations
-
-    def _research_exports_ready(self) -> bool:
-        if self.research_analysis_revision == self.research_data_revision:
-            return True
-        message = "Research analysis is still running. Exports will be enabled when it finishes."
-        if self.research_cache_loading:
-            message = "The historical research cache is still loading in the background."
-        elif self.research_analysis_failed_revision == self.research_data_revision:
-            message = "Research analysis failed. Check the status message and reload or replace the dataset."
-        messagebox.showinfo("Research is busy", message, parent=self.root)
-        return False
-
-    def export_research_summary(self) -> None:
-        if not self._research_exports_ready():
-            return
-        rows, _observations = self._all_research_outputs()
-        if not rows:
-            messagebox.showinfo("No research data", "Fetch historical data or import a broker CSV before exporting.", parent=self.root)
-            return
-        path = filedialog.asksaveasfilename(parent=self.root, title="Export research summary CSV",
-                                            defaultextension=".csv", initialfile="veltrix_research_summary.csv",
-                                            filetypes=(("CSV files", "*.csv"),))
-        if path:
-            try:
-                export_summary_csv(path, rows)
-                self.research_status_label.configure(text=f"SUMMARY EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"])
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def export_research_daily(self) -> None:
-        if not self._research_exports_ready():
-            return
-        _rows, observations = self._all_research_outputs()
-        if not any(observations.values()):
-            messagebox.showinfo("No research data", "No daily observations are available to export.", parent=self.root)
-            return
-        path = filedialog.asksaveasfilename(parent=self.root, title="Export daily observations CSV",
-                                            defaultextension=".csv", initialfile="veltrix_daily_observations.csv",
-                                            filetypes=(("CSV files", "*.csv"),))
-        if path:
-            try:
-                export_daily_observations_csv(path, observations)
-                self.research_status_label.configure(text=f"DAILY OBSERVATIONS EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"])
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def export_research_html(self) -> None:
-        if not self._research_exports_ready():
-            return
-        rows, observations = self._all_research_outputs()
-        if not rows:
-            messagebox.showinfo("No research data", "Fetch historical data or import a broker CSV before exporting.", parent=self.root)
-            return
-        path = filedialog.asksaveasfilename(parent=self.root, title="Export historical research HTML report",
-                                            defaultextension=".html", initialfile="veltrix_historical_research.html",
-                                            filetypes=(("HTML reports", "*.html"),))
-        if path:
-            try:
-                export_html_report(path, rows, observations)
-                self.research_status_label.configure(text=f"HTML REPORT EXPORTED · {Path(path).name}", fg=THEMES[self.theme_name]["success"])
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self.root)
-
-    def _apply_research_tree_theme(self) -> None:
-        palette = THEMES[self.theme_name]
-        style = ttk.Style(self.root)
-        style.configure(
-            "Veltrix.Research.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
-        )
-        style.configure(
-            "Veltrix.Research.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
-        )
-        style.map("Veltrix.Research.Treeview", background=[("selected", palette["button_active"])],
-                  foreground=[("selected", palette["bright"])])
-        style.configure("Veltrix.Research.TCombobox", fieldbackground=palette["entry_bg"],
-                        background=palette["button_bg"], foreground=palette["entry_fg"],
-                        arrowcolor=palette["bright"])
-        if hasattr(self, "research_canvas"):
-            self.research_canvas.configure(bg=palette["bg"])
-
-    def _research_preferences_changed(self) -> None:
-        self.save_research_preferences()
-        self._render_research_page()
-
-    def save_research_preferences(self) -> None:
-        try:
-            self.research_settings["window_days"] = int(self.research_window_var.get())
-        except (ValueError, tk.TclError):
-            self.research_settings["window_days"] = 90
-        self.research_settings["csv_timezone"] = self.research_timezone_var.get()
-        self.research_settings["selected_asset"] = self._selected_research_asset_key()
-        self.config["research"] = dict(self.research_settings)
-        self._save_config()
 
     def save_market_preferences(self) -> None:
         try:
@@ -4535,6 +3678,7 @@ class VeltrixTradingClock:
         elif not self.market_is_fresh:
             self.market_status_label.configure(text="CACHED MARKET SNAPSHOT · LIVE DATA NOT VERIFIED THIS RUN",
                                                fg=THEMES[self.theme_name]["warning"])
+        refresh_market_intelligence_page(self)
 
     def _emit_market_regime_alerts(self) -> None:
         if not self.market_is_fresh or not bool(self.market_settings.get("regime_alerts_enabled", True)):
@@ -4567,20 +3711,23 @@ class VeltrixTradingClock:
 
     def show_page(self, page: str) -> None:
         page_map = {
+            "command_center": (self.command_center_view, self.command_center_nav_button),
             "sessions": (self.sessions_view, self.sessions_nav_button),
+            "session_performance": (self.session_performance_view, self.session_performance_nav_button),
             "alerts": (self.alerts_view, self.alerts_nav_button),
             "calendar": (self.calendar_view, self.calendar_nav_button),
             "volatility": (self.volatility_view, self.volatility_nav_button),
-            "research": (self.research_view, self.research_nav_button),
             "regime": (self.regime_view, self.regime_nav_button),
-            "strategy": (self.strategy_view, self.strategy_nav_button),
-            "data_center": (self.data_center_view, self.data_center_nav_button),
+            "market_intelligence": (self.market_intelligence_view, self.market_intelligence_nav_button),
             "focus": (self.focus_view, self.focus_nav_button),
         }
         if page not in page_map:
-            page = "sessions"
-        for view in (self.sessions_view, self.alerts_view, self.calendar_view, self.volatility_view,
-                     self.research_view, self.regime_view, self.strategy_view, self.data_center_view, self.focus_view):
+            page = "command_center"
+        for view in (
+            self.command_center_view, self.sessions_view, self.session_performance_view, self.alerts_view,
+            self.calendar_view, self.volatility_view, self.regime_view,
+            self.market_intelligence_view, self.focus_view,
+        ):
             view.pack_forget()
         active_view, active_button = page_map[page]
         active_view.pack(fill="both", expand=True)
@@ -4593,17 +3740,14 @@ class VeltrixTradingClock:
         self.current_page = page
         if page == "volatility" and hasattr(self, "volatility_canvas"):
             self.volatility_canvas.yview_moveto(0.0)
-        if page == "research" and hasattr(self, "research_canvas"):
-            self.research_canvas.yview_moveto(0.0)
-            self._render_research_page()
         if page == "regime" and hasattr(self, "regime_canvas"):
             self.regime_canvas.yview_moveto(0.0)
             self._draw_regime_chart()
-        if page == "strategy" and hasattr(self, "strategy_canvas"):
-            self.strategy_canvas.yview_moveto(0.0)
-        if page == "data_center" and hasattr(self, "data_center_canvas"):
-            self.data_center_canvas.yview_moveto(0.0)
-            self._refresh_data_center_registry()
+        if page == "market_intelligence" and hasattr(self, "market_intelligence_canvas"):
+            self.market_intelligence_canvas.yview_moveto(0.0)
+            refresh_market_intelligence_page(self)
+        if page == "session_performance" and hasattr(self, "session_performance_canvas"):
+            self.session_performance_canvas.yview_moveto(0.0)
         if page == "focus" and hasattr(self, "focus_canvas"):
             self.focus_canvas.yview_moveto(0.0)
             self._refresh_focus_workspace()
@@ -4862,7 +4006,9 @@ class VeltrixTradingClock:
             self._emit_alert(
                 f"HIGH-IMPACT RELEASE APPROACHING · {str(event.get('title', 'EVENT')).upper()}",
                 f"{event.get('currency', '')} · {event_time.strftime('%d %b %Y %H:%M %Z')}{confidence_note}.",
-                "event",
+                "event", alert_id=f"calendar:{event['reminder_key']}",
+                source="Economic calendar", market=str(event.get("currency", "GLOBAL")),
+                impact=str(event.get("impact", "HIGH")),
             )
 
     def save_alert_settings(self) -> None:
@@ -4874,9 +4020,33 @@ class VeltrixTradingClock:
         except (ValueError, tk.TclError):
             messagebox.showerror("Invalid alert lead time", "Enter whole minutes between 1 and 180.", parent=self.root)
             return
+        session_overrides = {}
+        try:
+            for key, variables in self.session_lead_vars.items():
+                session_overrides[key] = {
+                    "pre_open_minutes": max(1, min(180, int(variables["pre_open"].get()))),
+                    "pre_close_minutes": max(1, min(180, int(variables["pre_close"].get()))),
+                }
+            self.alert_settings["session_lead_overrides"] = session_overrides
+            self.session_risk_settings.update({
+                "enabled": bool(self.risk_enabled_var.get()),
+                "notifications_enabled": bool(self.risk_notifications_var.get()),
+                "holiday_liquidity_flags": bool(self.holiday_liquidity_var.get()),
+                "opening_window_minutes": max(0, min(180, int(self.risk_opening_window_var.get()))),
+                "closing_window_minutes": max(0, min(180, int(self.risk_closing_window_var.get()))),
+                "pre_open_window_minutes": max(0, min(180, int(self.risk_pre_open_window_var.get()))),
+            })
+        except (ValueError, tk.TclError):
+            messagebox.showerror(
+                "Invalid session risk settings",
+                "Session reminders must be whole minutes from 1–180. Risk windows must be 0–180.",
+                parent=self.root,
+            )
+            return
         self.config["alerts"] = dict(self.alert_settings)
+        self.config["session_risk"] = dict(self.session_risk_settings)
         self._save_config()
-        self._set_alert_banner("ALERT SETTINGS SAVED", "success")
+        self._set_alert_banner("ALERT AND SESSION RISK SETTINGS SAVED", "success")
 
     def add_economic_event(self) -> None:
         name = self.event_name_var.get().strip()
@@ -4977,23 +4147,76 @@ class VeltrixTradingClock:
                 self._emit_alert(
                     f"ECONOMIC EVENT APPROACHING  ·  {str(event.get('name', 'EVENT')).upper()}",
                     f"Scheduled for {event_time.strftime('%d %b %Y at %H:%M %Z')}.",
-                    "event",
+                    "event", alert_id=f"manual:{event_id}", source="Manual reminder",
+                    market="CUSTOM", impact="MEDIUM",
                 )
 
     def _poll_market_alerts(self, now_utc: datetime, open_states: list) -> None:
-        alerts = due_session_alerts(self.sessions, now_utc, self.alert_settings, self.alerted_session_keys)
+        alerts = due_session_alerts(
+            self.sessions, now_utc, self.alert_settings, self.alerted_session_keys,
+            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        )
         for alert in alerts:
-            self._emit_alert(alert.title, alert.message, alert.category)
+            self._emit_alert(
+                alert.title, alert.message, alert.category,
+                alert_id=f"session:{alert.key}", source="Session scheduler",
+                market=alert.key.split(":", 1)[0].upper(), impact="MEDIUM",
+            )
 
         overlap_active = len(open_states) >= 2
         if (self.alert_settings.get("notify_overlap", True)
                 and self.previous_overlap_active is False and overlap_active):
             names = " + ".join(state.definition.name for state in open_states)
-            self._emit_alert("TRADING SESSION OVERLAP STARTED", f"Currently scheduled open: {names}.", "overlap")
+            overlap_keys = "-".join(sorted(state.definition.key for state in open_states))
+            overlap_id = f"overlap:{overlap_keys}:{now_utc.strftime('%Y%m%dT%H%M')}"
+            self._emit_alert(
+                "TRADING SESSION OVERLAP STARTED", f"Currently scheduled open: {names}.",
+                "overlap", alert_id=overlap_id, source="Session overlap",
+                market="GLOBAL", impact="MEDIUM",
+            )
         self.previous_overlap_active = overlap_active
 
-    def _emit_alert(self, title: str, message: str, category: str = "info") -> None:
-        timestamp = datetime.now(self.home_zone).strftime("%H:%M:%S")
+    def _poll_session_risk_alerts(self, now_utc: datetime, states: list) -> None:
+        alerts = due_session_risk_alerts(
+            self.sessions, states, now_utc, self.session_risk_settings,
+            self.risk_alerted_keys,
+            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        )
+        for alert in alerts:
+            self._emit_alert(
+                alert.title, alert.message, "warning" if alert.severity != "INFO" else "info",
+                alert_id=alert.key, source="Session risk",
+                market=alert.key.split(":")[1].upper() if ":" in alert.key else "GLOBAL",
+                impact=alert.severity,
+            )
+
+    def _emit_alert(
+        self, title: str, message: str, category: str = "info", *,
+        alert_id: str | None = None, source: str = "Veltrix",
+        market: str = "GLOBAL", impact: str | None = None,
+    ) -> None:
+        now_utc = datetime.now(timezone.utc)
+        resolved_impact = impact or {
+            "warning": "HIGH", "event": "HIGH", "transition": "MEDIUM",
+            "overlap": "MEDIUM", "info": "INFO",
+        }.get(str(category).lower(), "INFO")
+        record_category = {
+            "Session risk": "risk",
+            "Session scheduler": "session",
+            "Session overlap": "overlap",
+            "Manual reminder": "economic",
+            "Economic calendar": "economic",
+        }.get(source, category)
+        record = self.alert_center.record_triggered(
+            alert_id=alert_id, title=title, message=message, category=record_category,
+            source=source, market=market, impact=resolved_impact, now=now_utc,
+        )
+        # Stable IDs make notifications idempotent across refreshes and app restarts.
+        if record is None:
+            return
+        self.config["alert_center"] = self.alert_center.export_state()
+        self._save_config()
+        timestamp = now_utc.astimezone(self.home_zone).strftime("%H:%M:%S")
         line = f"{timestamp}  |  {title}  |  {message}"
         self.alert_log_lines.insert(0, line)
         self.alert_log_lines = self.alert_log_lines[:50]
@@ -5001,6 +4224,7 @@ class VeltrixTradingClock:
             self.alert_listbox.delete(0, tk.END)
             for entry in self.alert_log_lines:
                 self.alert_listbox.insert(tk.END, entry)
+        update_recent_alerts(self)
         self._set_alert_banner(title, "warning" if category in ("warning", "transition", "overlap", "event") else "success")
         if self.alert_settings.get("sound_enabled", True):
             try:
@@ -5039,43 +4263,346 @@ class VeltrixTradingClock:
             messagebox.showerror("Could not save settings", str(exc), parent=self.root)
 
     def _summary_tile(self, parent: tk.Widget, column: int, title: str, value: str) -> dict[str, tk.Widget]:
-        frame = self._frame(parent, bg="panel", padx=12, pady=8, highlightthickness=1)
+        frame = self._frame(parent, bg="panel", padx=12, pady=8, highlightthickness=0)
         frame.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < 2 else 0))
-        title_label = self._label(frame, title, bg="panel", fg="muted", font=("Consolas", 7, "bold"))
+        title_label = self._label(frame, title, bg="panel", fg="muted", font=("Segoe UI", 8, "bold"))
         title_label.pack(anchor="w")
-        value_label = self._label(frame, value, bg="panel", fg="text", font=("Consolas", 11, "bold"))
+        value_label = self._label(frame, value, bg="panel", fg="text", font=("Segoe UI", 12, "bold"))
         value_label.pack(anchor="w", pady=(3, 0))
         return {"frame": frame, "title": title_label, "value": value_label}
 
     def _build_session_card(self, session, row: int, column: int) -> None:
-        card = self._frame(self.session_grid, bg="card", padx=14, pady=10, highlightthickness=1, bd=0)
+        card = self._frame(self.session_grid, bg="card", padx=14, pady=10, highlightthickness=0, bd=0)
         card.grid(row=row, column=column, sticky="nsew", padx=(0 if column == 0 else 7, 7 if column == 0 else 0), pady=(0, 10))
         card.grid_columnconfigure(0, weight=1)
         top = self._frame(card, bg="card")
         top.grid(row=0, column=0, sticky="ew")
-        name = self._label(top, session.name, bg="card", fg="text", font=("Consolas", 11, "bold"))
+        name = self._label(top, session.name, bg="card", fg="text", font=("Segoe UI", 12, "bold"))
         name.pack(side="left")
-        country = self._label(top, session.flag, bg="raised", fg="bright", font=("Consolas", 8, "bold"), padx=6, pady=2)
+        country = self._label(top, session.flag, bg="raised", fg="bright", font=("Segoe UI", 9, "bold"), padx=6, pady=2)
         country.pack(side="left", padx=(8, 0))
-        status = self._label(top, "CHECKING", bg="raised", fg="muted", font=("Consolas", 8, "bold"), padx=8, pady=3)
+        status = self._label(top, "CHECKING", bg="raised", fg="muted", font=("Segoe UI", 9, "bold"), padx=8, pady=3)
         status.pack(side="right")
-        city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 8))
+        city = self._label(card, session.city, bg="card", fg="muted", font=("Segoe UI", 10))
         city.grid(row=1, column=0, sticky="w", pady=(3, 1))
-        local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 25, "bold"))
-        local_time.grid(row=2, column=0, sticky="w")
-        zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Consolas", 8))
-        zone.grid(row=3, column=0, sticky="w", pady=(0, 6))
+        analog_canvas = tk.Canvas(
+            card, width=240, height=240, bg=THEMES[self.theme_name]["panel"],
+            highlightthickness=0, bd=0,
+        )
+        analog_canvas.grid(row=2, column=0, sticky="n", pady=(4, 0))
+        analog_clock = {"canvas": analog_canvas, "signature": None, "hands": {}}
+        local_time = self._label(card, "--:--:--", bg="card", fg="bright", font=("Consolas", 15, "bold"))
+        local_time.grid(row=3, column=0, sticky="n", pady=(0, 2))
+        zone = self._label(card, session.timezone_name, bg="card", fg="muted", font=("Segoe UI", 9))
+        zone.grid(row=4, column=0, sticky="n", pady=(0, 2))
+        session_progress_label = self._label(
+            card, "DAY CYCLE · SESSION WINDOW", bg="card", fg="muted",
+            font=("Segoe UI", 9, "bold"),
+        )
+        session_progress_label.grid(row=5, column=0, sticky="n", pady=(0, 6))
         divider = self._frame(card, bg="border", height=1)
-        divider.grid(row=4, column=0, sticky="ew", pady=(0, 6))
-        transition = self._label(card, "Calculating next transition...", bg="card", fg="text", font=("Consolas", 9, "bold"))
-        transition.grid(row=5, column=0, sticky="w")
-        transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 8))
-        transition_at.grid(row=6, column=0, sticky="w", pady=(2, 0))
+        divider.grid(row=6, column=0, sticky="ew", pady=(0, 6))
+        transition = self._label(card, "Calculating next transition...", bg="card", fg="text", font=("Segoe UI", 10, "bold"))
+        transition.grid(row=7, column=0, sticky="w")
+        transition_at = self._label(card, "", bg="card", fg="muted", font=("Segoe UI", 10))
+        transition_at.grid(row=8, column=0, sticky="w", pady=(2, 0))
+        risk = self._label(
+            card, "SESSION RISK · NORMAL", bg="card", fg="muted",
+            font=("Segoe UI", 9, "bold"), anchor="w", justify="left", wraplength=500,
+        )
+        risk.grid(row=9, column=0, sticky="ew", pady=(5, 0))
         self.cards[session.key] = {
             "card": card, "top": top, "name": name, "country": country, "status": status,
-            "city": city, "time": local_time, "zone": zone, "divider": divider,
-            "transition": transition, "transition_at": transition_at,
+            "city": city, "time": local_time, "analog": analog_canvas, "analog_clock": analog_clock,
+            "zone": zone, "session_progress": session_progress_label, "divider": divider,
+            "transition": transition, "transition_at": transition_at, "risk": risk,
         }
+
+    def _draw_session_analog_clock(
+        self, clock_state: dict, local_now: datetime, session=None, state=None
+    ):
+        """Render a detailed instrument dial with a live 24-hour session-window ring."""
+        canvas: tk.Canvas = clock_state["canvas"]
+        palette = THEMES[self.theme_name]
+        width = max(150, canvas.winfo_width())
+        height = max(150, canvas.winfo_height())
+        schedule_signature = (
+            session.key, session.opens, session.closes, session.weekdays
+        ) if session is not None else None
+        signature = (width, height, self.theme_name, schedule_signature)
+
+        if clock_state.get("signature") != signature:
+            canvas.delete("all")
+            canvas.configure(bg=palette["panel"])
+            size = min(width, height) - 14
+            cx, cy = width / 2, height / 2
+            radius = size / 2
+            face = palette["bg"]
+            accent = palette["error"]
+
+            # Layered case and glass rings give the dial depth without raster assets.
+            canvas.create_oval(
+                cx-radius, cy-radius, cx+radius, cy+radius,
+                fill=palette["dim"], outline=palette["border"], width=3, tags="clock-face",
+            )
+            canvas.create_oval(
+                cx-radius+4, cy-radius+4, cx+radius-4, cy+radius-4,
+                fill=face, outline=palette["muted"], width=1, tags="clock-face",
+            )
+            canvas.create_oval(
+                cx-radius+9, cy-radius+9, cx+radius-9, cy+radius-9,
+                outline=palette["dim"], width=1, tags="clock-face",
+            )
+            canvas.create_oval(
+                cx-radius*0.93, cy-radius*0.93, cx+radius*0.93, cy+radius*0.93,
+                outline=palette["border"], width=1, tags="clock-face",
+            )
+            canvas.create_oval(
+                cx-radius*0.55, cy-radius*0.55, cx+radius*0.55, cy+radius*0.55,
+                outline=palette["dim"], width=1, tags="clock-face",
+            )
+
+            # The 24-hour ring maps the configured local session window onto the dial.
+            ring_radius = radius * 0.79
+            ring_box = (cx-ring_radius, cy-ring_radius, cx+ring_radius, cy+ring_radius)
+            session_ring = {}
+            if session is not None:
+                session_ring["schedule"] = canvas.create_arc(
+                    *ring_box, start=0, extent=0, style=tk.ARC,
+                    outline=palette["dim"], width=3, tags="clock-face",
+                )
+                session_ring["progress"] = canvas.create_arc(
+                    *ring_box, start=0, extent=0, style=tk.ARC,
+                    outline=palette["success"], width=4, tags="clock-hands",
+                )
+                for marker_name, colour in (("open", palette["success"]), ("close", palette["warning"])):
+                    session_ring[marker_name] = canvas.create_oval(
+                        cx-2.7, cy-2.7, cx+2.7, cy+2.7,
+                        fill=colour, outline=palette["bg"], width=1, tags="clock-face",
+                    )
+
+            # Sixty graduation marks: five-minute marks are longer and brighter.
+            for tick in range(60):
+                angle = math.radians(tick * 6 - 90)
+                cardinal = tick % 15 == 0
+                major = tick % 5 == 0
+                outer = radius * 0.89
+                inner = outer - (radius * 0.105 if cardinal else radius * 0.080 if major else radius * 0.038)
+                x1, y1 = cx + math.cos(angle) * inner, cy + math.sin(angle) * inner
+                x2, y2 = cx + math.cos(angle) * outer, cy + math.sin(angle) * outer
+                colour = palette["bright"] if cardinal else palette["muted"] if major else palette["dim"]
+                canvas.create_line(
+                    x1, y1, x2, y2, fill=colour,
+                    width=2.2 if cardinal else 1.55 if major else 0.8,
+                    capstyle=tk.ROUND, tags="clock-face",
+                )
+
+            # Readable hour numerals sit inside the minute track.
+            number_radius = radius * 0.69
+            for hour in range(1, 13):
+                angle = math.radians(hour * 30 - 90)
+                x = cx + math.cos(angle) * number_radius
+                y = cy + math.sin(angle) * number_radius
+                cardinal = hour in (12, 3, 6, 9)
+                canvas.create_text(
+                    x, y, text=str(hour),
+                    fill=palette["bright"] if cardinal else palette["text"],
+                    font=("Segoe UI", 11 if cardinal else 9, "bold"),
+                    tags="clock-face",
+                )
+
+            # Small dial signatures add instrument character without competing
+            # with the live hands or the local digital readout below the dial.
+            canvas.create_text(
+                cx, cy - radius * 0.30, text="VELTRIX",
+                fill=palette["muted"], font=("Segoe UI", 9, "bold"),
+                tags="clock-face",
+            )
+            canvas.create_text(
+                cx, cy - radius * 0.20, text="WORLD TIME",
+                fill=palette["dim"], font=("Segoe UI", 7, "bold"),
+                tags="clock-face",
+            )
+
+            # Four recessed bezel fasteners at diagonal positions.
+            for degrees in (45, 135, 225, 315):
+                angle = math.radians(degrees - 90)
+                sx = cx + math.cos(angle) * radius * 0.95
+                sy = cy + math.sin(angle) * radius * 0.95
+                screw_r = max(2.0, radius * 0.022)
+                canvas.create_oval(
+                    sx-screw_r, sy-screw_r, sx+screw_r, sy+screw_r,
+                    fill=palette["panel"], outline=palette["muted"], width=1,
+                    tags="clock-face",
+                )
+                canvas.create_line(
+                    sx-screw_r*0.55, sy, sx+screw_r*0.55, sy,
+                    fill=palette["dim"], width=1, tags="clock-face",
+                )
+
+            # Tapered, bevel-edged hands create a more realistic instrument dial.
+            # Their Canvas items are retained and only their coordinates are changed.
+            hands = {
+                "hour_shadow": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["dim"], outline=palette["dim"], width=1,
+                    tags="clock-hands",
+                ),
+                "minute_shadow": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["border"], outline=palette["border"], width=1,
+                    tags="clock-hands",
+                ),
+                "hour": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["bright"], outline=palette["bright_edge"], width=0.8,
+                    tags="clock-hands",
+                ),
+                "minute": canvas.create_polygon(
+                    cx, cy, cx, cy, cx, cy,
+                    fill=palette["bright_edge"], outline=palette["muted"], width=0.65,
+                    tags="clock-hands",
+                ),
+                "second": canvas.create_line(
+                    cx, cy, cx, cy, fill=accent, width=1.25,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "second_tail": canvas.create_line(
+                    cx, cy, cx, cy, fill=accent, width=2.4,
+                    capstyle=tk.ROUND, tags="clock-hands",
+                ),
+                "second_counterweight": canvas.create_oval(
+                    cx-2, cy-2, cx+2, cy+2, fill=accent,
+                    outline=accent, tags="clock-hands",
+                ),
+            }
+            canvas.create_oval(
+                cx-6, cy-6, cx+6, cy+6, fill=palette["panel"],
+                outline=accent, width=1.5, tags="clock-hands",
+            )
+            canvas.create_oval(
+                cx-2.6, cy-2.6, cx+2.6, cy+2.6,
+                fill=palette["bright"], outline=palette["bright"],
+                tags="clock-hands",
+            )
+            clock_state.update({
+                "signature": signature, "hands": hands, "session_ring": session_ring,
+                "center_x": cx, "center_y": cy, "radius": radius,
+                "last_ring_refresh": 0.0,
+            })
+
+        endpoints = session_clock_hand_endpoints(
+            local_now,
+            center_x=clock_state["center_x"],
+            center_y=clock_state["center_y"],
+            radius=clock_state["radius"],
+        )
+        cx, cy = clock_state["center_x"], clock_state["center_y"]
+        radius = clock_state["radius"]
+        for hand_name, (x, y) in endpoints.items():
+            if hand_name in ("hour", "minute"):
+                half_width = radius * (0.026 if hand_name == "hour" else 0.017)
+                points = session_clock_hand_polygon_coordinates(
+                    cx, cy, x, y, half_width=half_width,
+                )
+                shadow_points = session_clock_hand_polygon_coordinates(
+                    cx, cy, x, y, half_width=half_width,
+                    offset_x=1.1, offset_y=1.35,
+                )
+                canvas.coords(clock_state["hands"][hand_name], *points)
+                canvas.coords(clock_state["hands"][f"{hand_name}_shadow"], *shadow_points)
+            else:
+                canvas.coords(clock_state["hands"][hand_name], cx, cy, x, y)
+
+        # The seconds hand has a short rear counterweight, like a mechanical dial.
+        second_x, second_y = endpoints["second"]
+        tail_x = cx - (second_x - cx) * 0.18
+        tail_y = cy - (second_y - cy) * 0.18
+        canvas.coords(clock_state["hands"]["second_tail"], tail_x, tail_y, cx, cy)
+        counterweight_radius = max(1.8, clock_state["radius"] * 0.022)
+        canvas.coords(
+            clock_state["hands"]["second_counterweight"],
+            tail_x-counterweight_radius, tail_y-counterweight_radius,
+            tail_x+counterweight_radius, tail_y+counterweight_radius,
+        )
+
+        progress = None
+        if session is not None:
+            effective_close = session_calendar_close_override(session, local_now, state)
+            progress = session_window_progress(session, local_now, close_at=effective_close)
+            arc_close = progress.closes_at or datetime.combine(
+                local_now.date(), session.closes, tzinfo=session.tz
+            )
+            arc_start, arc_extent = session_window_arc_angles(session, close_at=arc_close)
+            ring = clock_state.get("session_ring", {})
+            ring_refresh_due = (
+                time.perf_counter() - clock_state.get("last_ring_refresh", 0.0)
+                >= SESSION_CLOCK_RING_REFRESH_SECONDS
+            )
+            if ring and ring_refresh_due:
+                canvas.itemconfigure(
+                    ring["schedule"], start=arc_start, extent=arc_extent, outline=palette["dim"],
+                )
+                fraction = progress.fraction
+                if state is not None and state.calendar_status == "EXCHANGE_HOLIDAY":
+                    fraction = 0.0
+                canvas.itemconfigure(
+                    ring["progress"], start=arc_start, extent=arc_extent*fraction,
+                    outline=palette["success"] if progress.status == "ACTIVE" else palette["bright"],
+                )
+                open_minutes = session.opens.hour * 60 + session.opens.minute
+                close_time = arc_close.astimezone(session.tz).time()
+                close_minutes = close_time.hour * 60 + close_time.minute
+                open_angle = math.radians(open_minutes * 0.25 - 90)
+                close_angle = math.radians(close_minutes * 0.25 - 90)
+                marker_radius = clock_state["radius"] * 0.79
+                marker_size = max(2.0, clock_state["radius"] * 0.022)
+                open_x = cx + math.cos(open_angle) * marker_radius
+                open_y = cy + math.sin(open_angle) * marker_radius
+                close_x = cx + math.cos(close_angle) * marker_radius
+                close_y = cy + math.sin(close_angle) * marker_radius
+                canvas.coords(
+                    ring["open"], open_x-marker_size, open_y-marker_size,
+                    open_x+marker_size, open_y+marker_size,
+                )
+                canvas.coords(
+                    ring["close"], close_x-marker_size, close_y-marker_size,
+                    close_x+marker_size, close_y+marker_size,
+                )
+                clock_state["last_ring_refresh"] = time.perf_counter()
+        return progress
+
+    def _session_progress_text(self, state, progress) -> str:
+        phase = local_day_phase(state.local_now)
+        if state.calendar_status == "EXCHANGE_HOLIDAY":
+            return f"{phase} CYCLE · EXCHANGE HOLIDAY"
+        if state.calendar_status == "EARLY_CLOSE_PASSED":
+            return f"{phase} CYCLE · EARLY CLOSE PASSED"
+        if progress.status == "ACTIVE":
+            return f"{phase} CYCLE · {progress.fraction:.0%} SESSION ELAPSED"
+        if progress.status == "UPCOMING":
+            return f"{phase} CYCLE · OPENS IN {format_countdown(progress.until_open_seconds)}"
+        if progress.status == "OFF DAY":
+            return f"{phase} CYCLE · NO SESSION TODAY"
+        return f"{phase} CYCLE · SESSION COMPLETE"
+
+    def _animate_session_clocks(self) -> None:
+        """Sweep all four session dials independently of the slower status poll."""
+        if self.is_closing:
+            return
+        now_utc = datetime.now(timezone.utc)
+        states_by_key = {state.definition.key: state for state in self.latest_session_states}
+        for session in self.sessions:
+            widgets = self.cards.get(session.key)
+            if widgets is None:
+                continue
+            local_now = now_utc.astimezone(ZoneInfo(session.timezone_name))
+            self._draw_session_analog_clock(
+                widgets["analog_clock"], local_now, session, states_by_key.get(session.key)
+            )
+        self.session_animation_job = self.root.after(
+            SESSION_CLOCK_FRAME_MS, self._animate_session_clocks
+        )
 
     # ------------------------------------------------------------------
     # Theme and visual clock
@@ -5109,16 +4636,39 @@ class VeltrixTradingClock:
         )
 
         self.digital_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "command_center_canvas"):
+            self.command_center_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "sessions_canvas"):
+            self.sessions_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "alerts_canvas"):
+            self.alerts_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "alerts_session_canvas"):
+            self.alerts_session_canvas.configure(bg=palette["bg"])
+            self.alerts_session_timeline_signature = None
+        if hasattr(self, "session_timeline_canvas"):
+            self.session_timeline_canvas.configure(bg=palette["panel"])
+            self.session_timeline_signature = None
+        if hasattr(self, "world_dial_canvas"):
+            self.world_dial_canvas.configure(bg=palette["panel"])
+            self.world_dial_signature = None
+        if hasattr(self, "session_performance_canvas"):
+            self.session_performance_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "market_intelligence_canvas"):
+            self.market_intelligence_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "session_performance_chart_canvas"):
+            self.session_performance_chart_canvas.configure(bg=palette["panel"])
         for tile in (self.summary_open, self.summary_overlap, self.summary_next):
-            tile["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            tile["frame"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
             tile["title"].configure(bg=palette["panel"], fg=palette["muted"])
             tile["value"].configure(bg=palette["panel"], fg=palette["text"])
         for widgets in self.cards.values():
-            widgets["card"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            widgets["card"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
             widgets["top"].configure(bg=palette["panel"])
-            for key in ("name", "city", "time", "zone", "transition", "transition_at"):
+            widgets["analog"].configure(bg=palette["panel"])
+            for key in ("name", "city", "time", "zone", "session_progress", "transition", "transition_at", "risk"):
                 widgets[key].configure(bg=palette["panel"])
             widgets["name"].configure(fg=palette["text"])
+            widgets["risk"].configure(fg=palette["muted"])
             widgets["city"].configure(fg=palette["muted"])
             widgets["time"].configure(fg=palette["bright"])
             widgets["zone"].configure(fg=palette["muted"])
@@ -5129,41 +4679,62 @@ class VeltrixTradingClock:
             widgets["divider"].configure(bg=palette["border"])
 
         for card in self.market_asset_cards.values():
-            card["frame"].configure(bg=palette["panel"], highlightbackground=palette["border"])
+            card["frame"].configure(bg=palette["panel"], highlightthickness=0, bd=0)
 
         for widget in (self.hour_spin, self.minute_spin, self.period_spin):
             widget.configure(
                 bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
-                buttonbackground=palette["button_bg"], highlightbackground=palette["border"],
+                buttonbackground=palette["button_bg"], highlightbackground=palette["entry_bg"],
                 highlightcolor=palette["bright"], disabledbackground=palette["entry_bg"],
                 disabledforeground=palette["muted"],
             )
         for button in (self.set_button, self.cancel_button):
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
-        for button in (self.sessions_nav_button, self.alerts_nav_button, self.calendar_nav_button,
-                       self.volatility_nav_button, self.research_nav_button, self.regime_nav_button, self.strategy_nav_button,
-                       self.data_center_nav_button,
-                       self.save_alert_button, self.test_alert_button,
-                       self.add_event_button, self.remove_event_button, self.refresh_calendar_button,
-                       self.save_calendar_preferences_button, self.refresh_market_button,
-                       self.save_market_settings_button, self.research_fetch_button,
-                       self.research_import_button, self.research_restore_button,
-                       self.research_csv_button, self.research_detail_csv_button, self.research_html_button,
-                       self.regime_run_button, self.regime_export_button, self.regime_save_button,
-                       *self.strategy_all_buttons, self.data_test_massive_button,
-                       self.data_test_twelve_button, self.data_fetch_button,
-                       self.data_audit_button, self.data_compare_button):
+        for button in (
+            self.command_center_nav_button, self.sessions_nav_button, self.session_performance_nav_button,
+            self.alerts_nav_button, self.calendar_nav_button,
+            self.volatility_nav_button, self.regime_nav_button, self.market_intelligence_nav_button,
+            self.focus_nav_button,
+            self.session_performance_import_button, self.session_performance_run_button,
+            self.session_performance_export_button,
+            self.alerts_search_button, self.alerts_clear_button, self.alerts_sort_up_button,
+            self.alerts_sort_down_button, self.alert_config_toggle,
+            self.alerts_news_previous_button, self.alerts_news_today_button,
+            self.alerts_news_next_button,
+            self.save_alert_button, self.test_alert_button, self.add_event_button,
+            self.remove_event_button, self.refresh_calendar_button,
+            self.save_calendar_preferences_button, self.refresh_market_button,
+            self.save_market_settings_button, self.market_intelligence_refresh_button,
+            self.regime_import_button,
+            self.regime_run_button, self.regime_export_button, self.regime_save_button,
+            self.apply_session_profile_button, self.edit_custom_session_profile_button,
+        ):
             button.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                              activebackground=palette["button_active"], activeforeground=palette["bright"])
-        for check in self.alert_checkbuttons:
+        self.exchange_calendar_toggle.configure(
+            bg=palette["panel"], fg=palette["text"], selectcolor=palette["dim"],
+            activebackground=palette["panel"], activeforeground=palette["bright"],
+        )
+        for check in (*self.alert_checkbuttons, *self.risk_checkbuttons):
             check.configure(bg=palette["panel"], fg=palette["text"], selectcolor=palette["dim"],
                             activebackground=palette["panel"], activeforeground=palette["bright"])
-        for spin in (self.pre_open_spin, self.pre_close_spin, self.event_lead_spin,
-                     self.calendar_reminder_spin, self.market_expansion_spin, self.market_contraction_spin):
+        for spin in (
+            self.pre_open_spin, self.pre_close_spin, self.event_lead_spin,
+            self.calendar_reminder_spin, self.market_expansion_spin, self.market_contraction_spin,
+            self.risk_opening_window_spin, self.risk_closing_window_spin,
+            self.risk_pre_open_window_spin, *self.session_lead_spins,
+            self.session_performance_min_bars_spin, self.session_performance_min_coverage_spin,
+            self.session_performance_rolling_window_spin,
+            self.session_performance_ranking_min_samples_spin,
+            self.session_performance_min_regime_coverage_spin,
+        ):
             spin.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"],
-                           buttonbackground=palette["button_bg"], highlightbackground=palette["border"])
-        for entry in (self.event_name_entry, self.event_datetime_entry, self.calendar_search_entry):
+                           buttonbackground=palette["button_bg"], highlightbackground=palette["entry_bg"])
+        for entry in (
+            self.event_name_entry, self.event_datetime_entry, self.calendar_search_entry,
+            self.alerts_market_watch_entry,
+        ):
             entry.configure(bg=palette["entry_bg"], fg=palette["entry_fg"], insertbackground=palette["bright"])
         for check in (self.calendar_reminder_check, self.market_regime_check):
             check.configure(
@@ -5172,28 +4743,29 @@ class VeltrixTradingClock:
             )
         self._apply_calendar_tree_theme()
         self._apply_market_tree_theme()
-        self._apply_research_tree_theme()
+        apply_alerts_tree_theme(self)
+        apply_alert_center_theme(self)
         self._apply_regime_tree_theme()
-        self._apply_strategy_tree_theme()
-        self._apply_data_center_tree_theme()
+        apply_session_performance_theme(self)
+        apply_command_center_theme(self)
+        apply_market_intelligence_theme(self)
         # Apply shared ttk styles globally: standard controls, all Treeviews,
         # tabs, headers, scrollbars, progress bars and every named selector.
         apply_veltrix_ttk_palette(self.ttk_style, palette, self.root)
-        for entry in self.data_center_entries:
-            entry.configure(bg=palette["entry_bg"], fg=palette["entry_fg"],
-                            insertbackground=palette["bright"], highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"])
-        for listbox in (self.event_listbox, self.alert_listbox, self.market_alert_listbox):
+        for listbox in (
+            self.event_listbox, self.alert_listbox, self.market_alert_listbox,
+            self.alerts_recent_listbox,
+        ):
             listbox.configure(bg=palette["bg"], fg=palette["text"], selectbackground=palette["button_active"],
-                              selectforeground=palette["bright"], highlightthickness=1,
-                              highlightbackground=palette["border"])
+                              selectforeground=palette["bright"], highlightthickness=0,
+                              highlightbackground=palette["entry_bg"])
         self.show_page(getattr(self, "current_page", "sessions"))
         self.theme_selector.configure(bg=palette["button_bg"], fg=palette["button_fg"],
                                        activebackground=palette["button_active"], activeforeground=palette["bright"])
         try:
             menu = self.theme_selector["menu"]
             menu.configure(bg=palette["panel"], fg=palette["button_fg"], activebackground=palette["button_active"],
-                           activeforeground=palette["bright"], font=("Consolas", 9, "bold"), bd=1, relief="solid")
+                           activeforeground=palette["bright"], font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
         except tk.TclError:
             pass
         if self.alarm_window is not None:
@@ -5205,12 +4777,12 @@ class VeltrixTradingClock:
         style = ttk.Style(self.root)
         style.configure(
             "Veltrix.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=27, bordercolor=palette["border"],
-            font=("Consolas", 8),
+            fieldbackground=palette["bg"], rowheight=29, bordercolor=palette["bg"],
+            font=("Segoe UI", 9),
         )
         style.configure(
             "Veltrix.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
+            relief="flat", font=("Segoe UI", 9, "bold"),
         )
         style.map(
             "Veltrix.Treeview", background=[("selected", palette["button_active"])],
@@ -5225,12 +4797,12 @@ class VeltrixTradingClock:
         style = ttk.Style(self.root)
         style.configure(
             "Veltrix.Market.Treeview", background=palette["bg"], foreground=palette["text"],
-            fieldbackground=palette["bg"], rowheight=25, bordercolor=palette["border"],
-            font=("Consolas", 8),
+            fieldbackground=palette["bg"], rowheight=29, bordercolor=palette["bg"],
+            font=("Segoe UI", 9),
         )
         style.configure(
             "Veltrix.Market.Treeview.Heading", background=palette["panel"], foreground=palette["bright"],
-            relief="flat", font=("Consolas", 8, "bold"),
+            relief="flat", font=("Segoe UI", 9, "bold"),
         )
         style.map("Veltrix.Market.Treeview", background=[("selected", palette["button_active"])],
                   foreground=[("selected", palette["bright"])])
@@ -5318,9 +4890,9 @@ class VeltrixTradingClock:
 
         period = now.strftime("%p")
         canvas.create_text(width - 18, 17, text=period, anchor="ne", fill=palette["muted"],
-                           font=("Consolas", 10, "bold"), tags="clock-dynamic")
+                           font=("Segoe UI", 10, "bold"), tags="clock-dynamic")
         canvas.create_text(18, height - 15, text="SYSTEM LOCAL TIME", anchor="sw", fill=palette["muted"],
-                           font=("Consolas", 7, "bold"), tags="clock-dynamic")
+                           font=("Segoe UI", 9, "bold"), tags="clock-dynamic")
 
     # ------------------------------------------------------------------
     # Global market session updates
@@ -5332,11 +4904,21 @@ class VeltrixTradingClock:
         self.home_date_label.configure(text=home_now.strftime("%A  ·  %d %B %Y  ·  %Z"))
         self._draw_digital_clock(home_now)
 
-        states = [get_session_state(session, now_utc) for session in self.sessions]
+        exchange_calendar_enabled = self.exchange_calendar_enabled_var.get()
+        states = [
+            get_exchange_aware_session_state(
+                session, now_utc, enabled=exchange_calendar_enabled
+            )
+            for session in self.sessions
+        ]
+        self.latest_session_states = states
         open_states = [state for state in states if state.is_open]
+        refresh_alerts_dashboard(self, now_utc, states)
         self._poll_market_alerts(now_utc, open_states)
+        self._poll_session_risk_alerts(now_utc, states)
         self._poll_economic_events(home_now)
         self._poll_live_calendar_events(home_now)
+        refresh_alert_center(self, now_utc, states, self.calendar_events, self.economic_events)
         self.summary_open["value"].configure(text=f"{len(open_states)} / {len(states)}")
         transitions = sorted(states, key=lambda item: item.seconds_to_transition)
         if transitions:
@@ -5346,12 +4928,58 @@ class VeltrixTradingClock:
 
         overlaps = self._find_overlaps(open_states)
         self.summary_overlap["value"].configure(text=overlaps if overlaps else "NONE")
+        self._draw_session_timeline(now_utc, states)
+        self._refresh_session_intelligence(now_utc)
+        self._update_exchange_calendar_summary(now_utc, states)
         palette = THEMES[self.theme_name]
         for state in states:
             widgets = self.cards[state.definition.key]
             widgets["time"].configure(text=state.local_now.strftime("%H:%M:%S"))
-            widgets["zone"].configure(text=f"{state.definition.timezone_name}  ·  {state.timezone_label}")
-            if state.is_open:
+            progress = self._draw_session_analog_clock(
+                widgets["analog_clock"], state.local_now, state.definition, state
+            )
+            widgets["zone"].configure(
+                text=(
+                    f"{state.definition.timezone_name}  ·  {state.timezone_label}"
+                    f"  ·  {utc_offset_label(state.local_now)}"
+                )
+            )
+            widgets["session_progress"].configure(
+                text=self._session_progress_text(state, progress)
+            )
+            widgets["card"].configure(
+                highlightbackground=palette["success"] if state.is_open else palette["border"]
+            )
+            if state.calendar_status == "EXCHANGE_HOLIDAY":
+                widgets["status"].configure(text="● HOLIDAY", fg=palette["error"])
+                transition_text = f"EXCHANGE CLOSED · OPENS IN {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status in {"OUT_OF_RANGE", "NO_VENUE_MAPPING"}:
+                widgets["status"].configure(text="● SCHEDULE ONLY", fg=palette["warning"])
+                transition_text = (
+                    f"BASE SCHEDULE CLOSE IN  {format_countdown(state.seconds_to_transition)}"
+                    if state.is_open
+                    else f"BASE SCHEDULE OPEN IN  {format_countdown(state.seconds_to_transition)}"
+                )
+            elif state.calendar_status == "CLOSING_PROCESS" and state.transition_kind == "CLOSE_PROCESS":
+                widgets["status"].configure(text="● CLOSING PROCESS", fg=palette["warning"])
+                transition_text = f"PROCESS STARTS IN  {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status == "CLOSING_PROCESS" and not state.is_open:
+                widgets["status"].configure(text="● EARLY CLOSE DAY", fg=palette["warning"])
+                transition_text = f"OPENS IN  {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status == "CLOSING_PROCESS_PASSED" and state.is_open:
+                widgets["status"].configure(text="● OPEN", fg=palette["success"])
+                transition_text = f"CLOSES IN  {format_countdown(state.seconds_to_transition)}"
+            elif state.calendar_status in {"EARLY_CLOSE", "EARLY_CLOSE_PASSED"}:
+                if state.is_open:
+                    widgets["status"].configure(text="● EARLY CLOSE", fg=palette["warning"])
+                    transition_text = f"EARLY CLOSE IN  {format_countdown(state.seconds_to_transition)}"
+                elif state.calendar_status == "EARLY_CLOSE":
+                    widgets["status"].configure(text="● EARLY CLOSE DAY", fg=palette["warning"])
+                    transition_text = f"OPENS IN  {format_countdown(state.seconds_to_transition)}"
+                else:
+                    widgets["status"].configure(text="● CLOSED", fg=palette["error"])
+                    transition_text = f"EARLY CLOSE PASSED · OPENS IN {format_countdown(state.seconds_to_transition)}"
+            elif state.is_open:
                 widgets["status"].configure(text="● OPEN", fg=palette["success"])
                 transition_text = f"CLOSES IN  {format_countdown(state.seconds_to_transition)}"
             else:
@@ -5359,9 +4987,27 @@ class VeltrixTradingClock:
                 transition_text = f"OPENS IN  {format_countdown(state.seconds_to_transition)}"
             widgets["transition"].configure(text=transition_text)
             widgets["transition_at"].configure(
-                text=f"{state.transition_kind.title()} at {state.transition_at.strftime('%H:%M')} "
-                     f"{state.transition_at.tzname()}  ·  {state.transition_at.strftime('%a, %d %b')}"
+                text=(
+                    f"{'CLOSING PROCESS START' if state.transition_kind == 'CLOSE_PROCESS' else state.transition_kind.title()} "
+                    f"at {state.transition_at.strftime('%H:%M')} {state.transition_at.tzname()}  ·  "
+                    f"{state.transition_at.strftime('%a, %d %b')}"
+                    + (f"  ·  {state.calendar_event}" if state.calendar_event else "")
+                )
             )
+            assessment = assess_session_risk(
+                state.definition, state, now_utc, self.session_risk_settings,
+                apply_exchange_calendar=exchange_calendar_enabled,
+            )
+            if assessment.level == "HIGH":
+                risk_colour = palette["error"]
+            elif assessment.level == "CAUTION":
+                risk_colour = palette["warning"]
+            else:
+                risk_colour = palette["muted"]
+            risk_text = f"SESSION RISK · {assessment.level}"
+            if assessment.flags and self.session_risk_settings.get("enabled", True):
+                risk_text += "  |  " + assessment.summary
+            widgets["risk"].configure(text=risk_text, fg=risk_colour)
 
         if len(open_states) >= 2:
             names = " + ".join(state.definition.name for state in open_states)
@@ -5379,6 +5025,7 @@ class VeltrixTradingClock:
             text="AUDIO // MP3 READY" if self.audio_available and ALARM_SOUND_FILE.is_file() else "AUDIO: SYSTEM BELL"
         )
         self._update_next_alarm_display()
+        refresh_command_center(self, now_utc)
         self.clock_job = self.root.after(self.refresh_ms, self.update_clock)
 
     @staticmethod
@@ -5519,19 +5166,19 @@ class VeltrixTradingClock:
         self.popup_label = tk.Label(
             self.alarm_window,
             text="ALARM SIGNAL ACTIVE\n" + (self.ringing_time.strftime("%I:%M %p") if self.ringing_time else ""),
-            font=("Consolas", 15, "bold"), justify="center", bd=0,
+            font=("Segoe UI", 15, "bold"), justify="center", bd=0,
         )
         self.popup_label.pack(pady=(27, 18))
         self.popup_frame = tk.Frame(self.alarm_window, bd=0)
         self.popup_frame.pack()
         self.snooze_button = tk.Button(
             self.popup_frame, text=f"SNOOZE {SNOOZE_MINUTES}M", command=self.snooze_alarm,
-            font=("Consolas", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
+            font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
         )
         self.snooze_button.grid(row=0, column=0, padx=6)
         self.dismiss_button = tk.Button(
             self.popup_frame, text="DISMISS", command=self.dismiss_alarm,
-            font=("Consolas", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
+            font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=11, pady=8, cursor="hand2",
         )
         self.dismiss_button.grid(row=0, column=1, padx=6)
         self._apply_popup_theme()
@@ -5605,12 +5252,13 @@ class VeltrixTradingClock:
 
     def on_close(self) -> None:
         self.is_closing = True
-        for job in (self.clock_job, self.alarm_job, self.bell_job, self.calendar_auto_refresh_job,
-                    self.calendar_startup_fetch_job, self.calendar_queue_job,
-                    self.market_auto_refresh_job, self.market_startup_fetch_job, self.market_queue_job,
-                    self.research_queue_job, self.research_analysis_queue_job,
-                    self.research_cache_load_job, self.backtest_queue_job, self.regime_queue_job,
-                    self.data_center_queue_job, self.focus_tick_job):
+        for job in (
+            self.clock_job, self.session_animation_job, self.alarm_job, self.bell_job,
+            self.calendar_auto_refresh_job, self.calendar_startup_fetch_job, self.calendar_queue_job,
+            self.market_auto_refresh_job, self.market_startup_fetch_job, self.market_queue_job,
+            self.regime_queue_job, self.regime_cache_load_job, self.regime_import_queue_job,
+            self.focus_tick_job,
+        ):
             if job is not None:
                 try:
                     self.root.after_cancel(job)
@@ -5620,37 +5268,26 @@ class VeltrixTradingClock:
         self._close_alarm_popup()
         self.config["theme"] = self.theme_name
         self.config["alerts"] = dict(self.alert_settings)
+        self.config["alert_center"] = self.alert_center.export_state()
         self.config["economic_events"] = self.economic_events
         self.config["calendar"] = dict(self.calendar_settings)
         self.config["market_data"] = dict(self.market_settings)
         self.config["market_instruments"] = list(self.market_instruments)
-        try:
-            self.research_settings["window_days"] = int(self.research_window_var.get())
-            self.research_settings["csv_timezone"] = self.research_timezone_var.get()
-            self.research_settings["selected_asset"] = self._selected_research_asset_key()
-        except (AttributeError, ValueError, tk.TclError):
-            pass
-        self.config["research"] = dict(self.research_settings)
+        self.config["session_profiles"] = {
+            "selected": self.active_session_profile,
+            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
+            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
+        self.config["exchange_calendar"] = {
+            "enabled": bool(self.exchange_calendar_enabled_var.get())
+        }
+        self.config["session_risk"] = dict(self.session_risk_settings)
         try:
             self.regime_settings.update(asdict(self._collect_regime_config()))
             self.regime_settings["selected_asset"] = self._selected_regime_asset_key()
         except (AttributeError, ValueError, tk.TclError):
             pass
         self.config["regime_lab"] = dict(self.regime_settings)
-        try:
-            for key, variable in self.backtest_vars.items():
-                raw = variable.get().strip()
-                if key == "direction":
-                    self.backtest_settings[key] = raw
-                elif key in {"fast_period", "slow_period", "atr_period", "train_fraction_pct",
-                             "walk_forward_train_fraction_pct", "walk_forward_folds"}:
-                    self.backtest_settings[key] = int(raw)
-                else:
-                    self.backtest_settings[key] = float(raw)
-            self.backtest_settings["selected_asset"] = self._selected_backtest_asset_key()
-        except (AttributeError, ValueError, tk.TclError):
-            pass
-        self.config["backtest"] = dict(self.backtest_settings)
         try:
             daily_target = max(0.5, min(24.0, float(self.focus_daily_target_var.get())))
         except (AttributeError, ValueError, tk.TclError):
@@ -5662,11 +5299,10 @@ class VeltrixTradingClock:
             pass
         self._persist_alarm_state()
         self._save_config()
-        if self.research_cache_writer_thread is not None and self.research_cache_writer_thread.is_alive():
-            if not self.research_cache_loading:
-                self._save_research_cache()
-            # Non-daemon writer drains the latest cache snapshot before process exit.
-            self.research_cache_write_queue.put(None)
+        if self.regime_cache_writer_thread is not None and self.regime_cache_writer_thread.is_alive():
+            if not self.regime_cache_loading:
+                self._save_regime_cache()
+            self.regime_cache_write_queue.put(None)
         self.focus_store.close()
         if self.audio_available:
             try:
@@ -5680,12 +5316,6 @@ def main() -> None:
     try:
         root = tk.Tk()
         VeltrixTradingClock(root)
-        if CREDENTIAL_LOAD_ERROR:
-            messagebox.showwarning(
-                "API credentials unavailable",
-                CREDENTIAL_LOAD_ERROR,
-                parent=root,
-            )
         root.mainloop()
     except Exception as exc:
         try:

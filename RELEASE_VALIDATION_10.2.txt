@@ -1,0 +1,36 @@
+VELTRIX TRADING CLOCK v10.2 — GLOBAL SESSION INTELLIGENCE VALIDATION
+
+Implemented
+- Four timezone-aware analog clocks and digital readouts remain in the Global Sessions page.
+- Added session_timeline.py as a pure UTC schedule/window and overlap engine.
+- Added a 24-hour map, four session lanes, overlap lane, current UTC marker and upcoming transition summaries.
+- The same configured session definitions and timezone rules are used by clock cards, alert status and timeline.
+- Made the sessions page vertically scrollable to accommodate its clocks and timeline on shorter screens.
+- Added tests for timeline bounds, overlap intervals, weekend schedules, London daylight-saving offsets, naive timestamp rejection and unsupported overnight schedules.
+- Extended Core Edition scope tests to assert that the new timeline is wired into the UI.
+- Updated README, desktop guide, quick start, changelog and Windows executable metadata.
+
+v10.2 GitHub Actions run 40 (completed successfully)
+- Python 3.10, 3.11 and 3.12 passed dependency installation, compileall and all 127 unit tests.
+- The Windows desktop package job completed successfully: hash-pinned build dependencies installed, PyInstaller built the one-folder desktop application, the executable existence check passed, and the v10.2 artifact uploaded successfully.
+- The v10.2 run is linked from the pull request and the repository Actions page.
+
+Previous release baseline
+- v10.1 completed GitHub Actions successfully: Python 3.10/3.11/3.12 unit tests and compile checks passed, and the Windows PyInstaller package job succeeded.
+
+Completed automatically
+1. Python 3.10, 3.11 and 3.12 compilation and all 127 unit tests passed.
+2. The Windows PyInstaller one-folder application was built and its executable verified.
+3. The Windows build artifact was uploaded as Veltrix-Trading-Clock-v10.2-Windows.
+
+Still required before a final production release
+1. Inspect all four analog clocks and the timeline at normal and minimum supported window sizes on Windows.
+2. Switch all six themes and verify the analog faces, time hands, timeline lanes, overlap lane, current marker and text recolour correctly.
+3. Verify the UTC marker, overlap intervals and next transitions against the session engine across London/Sydney daylight-saving changes.
+4. Confirm the scrollable Global Sessions page works with mouse wheel/scrollbar and leaves alarms and other workspace navigation usable.
+
+SCHEDULE LIMITATIONS
+- Timeline windows represent configured weekday schedules only. Official market holidays, emergency closures, broker hours, instrument-specific hours and overnight sessions are not modelled.
+- The timeline is not a live exchange-status feed.
+
+No trading profitability or live market availability claim is made.

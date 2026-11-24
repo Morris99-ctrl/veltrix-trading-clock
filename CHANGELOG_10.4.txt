@@ -1,0 +1,37 @@
+VELTRIX TRADING CLOCK — v10.4 / EXCHANGE CALENDAR INTELLIGENCE
+
+OFFICIAL CASH-EXCHANGE EXCEPTIONS
+- Added a bundled, source-attributed cash-market exception calendar for ASX, Tokyo Stock Exchange / JPX, London Stock Exchange and NYSE.
+- Added full-day closure handling for published exchange holidays.
+- Added actual early-close handling for ASX normal-trading cessation at 14:10 Sydney time and NYSE early closes at 13:00 Eastern time.
+- Added a distinct LSE CLOSING PROCESS marker for half-days where the exchange says the closing process commences at 12:30 London time; this marker does not falsely force the market to CLOSED at 12:30.
+- Added venue-specific publication coverage. Dates outside the source dataset are labelled OUT OF PUBLISHED RANGE.
+- Overlay is disabled by default and labelled for cash exchanges so generic forex schedules are not silently treated as cash-equity exchange sessions.
+- When enabled, the same overlay affects session cards, the 24-hour timeline, open/close alerts, weekly hours and 7/30/90-day overlap reconstruction.
+- Full-day exchange holidays suppress normal session open/close alerts. Early-close and closing-process times can trigger pre-close / process-start alerts.
+
+ENGINEERING AND TESTS
+- Added exchange_calendar.py with official source metadata, event lookup, coverage flags and exchange-aware session state.
+- Updated session_engine.py SessionState metadata.
+- Updated session_timeline.py to omit full holidays and clip actual early closes.
+- Updated alert_engine.py to suppress holiday alerts and schedule early-close / closing-process alerts.
+- Updated session_intelligence.py to apply the same optional exchange overlay to weekly and historical reports.
+- Added regression tests for ASX and JPX closures, NYSE early closes, LSE closing-process markers, timeline changes, alert handling and configuration persistence.
+- Added EXCHANGE_CALENDAR_SOURCES_10.4.md with venue scope, source URLs, bundled date coverage and known limitations.
+
+DOCUMENTATION AND RELEASE
+- Updated README, desktop installation guide and quick start to v10.4.
+- Updated Windows executable metadata and CI artifact name to v10.4.
+- Exchange data was checked on 23 November 2026. This is an offline snapshot, not an automatic exchange-calendar feed.
+
+SCOPE LIMITATIONS
+- ASX cash-market calendar only; ASX 24 derivatives calendar is separate.
+- JPX market-holiday list is used for the Tokyo Stock Exchange cash-market clock; the OSE/TOCOM derivatives holiday-trading programme is not included.
+- LSE data starts 31 August 2026 and covers the published on-exchange business-day exceptions; OTC/SI off-book reporting is not modelled.
+- NYSE cash-market holiday and early-close schedule only; extended sessions and product-specific calendars are not modelled.
+- Unknown emergency halts, unscheduled outages, broker-specific holidays and security-specific suspensions are not included.
+- FX spot is not an exchange-listed cash-equity session. The overlay is opt-in and must not be treated as a universal FX holiday schedule.
+
+VALIDATION
+- Final v10.4 GitHub Actions run 149 passed compileall and all 152 tests on Python 3.10, 3.11 and 3.12; Windows PyInstaller packaging, executable verification and artifact upload also succeeded. Dates outside a venue's published coverage are shown as SCHEDULE ONLY in the session cards.
+- Manual Windows testing must verify overlay toggle persistence, all six themes, holiday/early-close states, alerts, analytics, and the normal/minimum window layout.

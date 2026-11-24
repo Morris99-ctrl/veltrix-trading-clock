@@ -37,6 +37,9 @@ class SessionState:
     transition_at: datetime
     transition_kind: str  # "CLOSE" when open, "OPEN" when closed
     seconds_to_transition: int
+    calendar_status: str = "SCHEDULED"
+    calendar_event: str | None = None
+    calendar_close_time: time | None = None
 
     @property
     def timezone_label(self) -> str:

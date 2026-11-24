@@ -1,0 +1,19 @@
+VELTRIX TRADING CLOCK v10.13 — RELEASE VALIDATION
+
+Automated checks
+- Python 3.10, 3.11 and 3.12 unit tests: pending.
+- Python compileall check: pending.
+- Windows standalone package and executable verification: pending.
+
+Manual Windows GUI checklist
+- [ ] Open Global Sessions and compare second-hand motion with v10.12.
+- [ ] Confirm hour and minute hands glide smoothly and remain aligned with the
+      digital time readout.
+- [ ] Confirm the four dials remain responsive without excessive CPU use.
+- [ ] Confirm session rings, open/closed status and market-session transitions
+      continue to reflect the configured timezone and schedule.
+- [ ] Resize the window and change themes; confirm the hands redraw correctly.
+- [ ] Check Alerts, Market Watch, Session Performance and the other workspaces.
+
+Release gate
+- Keep the pull request in draft until the Windows visual review is complete.

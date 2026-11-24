@@ -1,135 +1,129 @@
-# Veltrix Trading Clock v9.6 — Windows Desktop Edition
+# Veltrix Trading Clock v10.10 — Core Edition
 
-This package adds Phase 12 Causal Market Regime Research to the v9.5 Windows desktop-builder
-application. It creates a standalone, windowed executable, installs it for the
-current Windows user, and creates Desktop and Start-menu shortcuts. Once built,
-Veltrix launches without opening VS Code and does not require a separate Python
-installation to run.
+The Core Edition is a smaller standalone desktop clock for Windows 10/11. Global Sessions includes four detailed timezone-aware instrument clocks, live session-progress rings, actual UTC-offset readouts, a concentric 24-hour World Session Dial and an interactive UTC session map with click-and-drag time probing. Alerts & Events now opens a Market Watch command centre with a 24-hour session map, current market status, a searchable FX reference watchlist and a filtered macro-news calendar. The new Session Performance workspace reuses Regime Lab's local OHLC datasets to measure per-session and pairwise-overlap behaviour. Existing alert rules remain available in an expandable settings area. The app retains selectable market-hours profiles, editable local schedules, weekly scheduled-hours summaries, historical overlap reconstruction, alarms, calendar, volatility monitoring, Regime Lab and Focus & Goals.
 
-## Important build note
+The Research Lab, Strategy Lab, Tick Research and Data Center workspaces are removed. No provider API keys, tick-bar construction, strategy backtesting, MT5 connection or order execution are required.
 
-PyInstaller cannot cross-compile a Windows executable from Linux. This package
-therefore contains the Windows packaging configuration and one-click builder,
-not a prebuilt `.exe`. Run `BUILD_AND_INSTALL.bat` on the target Windows 10/11
-PC; it builds the executable locally and installs it automatically. Package
-versions and hashes are pinned in the checked-in lock files.
+## Session Performance Intelligence (v10.10)
 
-## One-time installation
+1. Open **Regime Lab** and select **IMPORT OHLC CSV**.
+2. Import a fixed-interval OHLC CSV with timestamp (or date/time), open, high, low and close columns. Naive timestamps are interpreted in the selected home IANA timezone during import; timestamps containing UTC offsets are converted using those offsets.
+3. Open **SESSION PERFORMANCE** and select the imported dataset. No second import is needed.
+4. Confirm the active session profile. Set the minimum bars per session day and minimum estimated coverage (defaults: 3 bars and 50%). Set the rolling window (default: 20 qualifying session observations), minimum sample to rank (default: 10), and minimum regime coverage (default: 50%).
+5. Select **RUN SESSION STUDY**. The background worker computes session metrics and causal Regime Lab labels from the same OHLC history.
+6. Inspect the rolling ranking table for trailing mean return, positive-day rate, consistency score, compounded return and maximum drawdown. Ranks are withheld until the minimum sample has been met.
+7. Inspect **SESSION RESULTS BY DOMINANT CAUSAL MARKET REGIME**. Each session day is assigned to its most frequent classified bar regime; ties go to the latest classified bar. WARMUP or low-coverage days are excluded from this breakdown.
+8. Select **EXPORT DAILY CSV** to export session and overlap rows, including rolling fields, regime attribution, rejected rows and exclusion reasons.
 
-1. Extract the complete `veltrix_trading_clock_v9_6_regime_lab.zip` to a
-   normal folder, for example `Documents\Veltrix Desktop Builder`.
-2. Make sure 64-bit Python 3.10 or newer is installed. Python is needed only
-   for the one-time build step. VS Code is not required.
-3. Double-click `BUILD_AND_INSTALL.bat`. When prompted, enter the full path to
-   your existing v9.5 project folder (containing `main.py`) or installed AppData folder (containing `config.json`) so
-   your configuration, caches, `.env`, focus database, imported tick files and alarm
-   audio can be migrated. Close the old Veltrix instance before copying its
-   SQLite focus database. Press Enter only when there is no previous project data to
-   migrate.
-4. Allow the builder to finish. It creates an
-   isolated `.venv-build`, installs hash-verified build/runtime dependencies,
-   packages the app with PyInstaller, installs it under `%LOCALAPPDATA%\Programs`, and
-   creates a Desktop shortcut plus a Start-menu entry.
-5. Launch **Veltrix Trading Clock** from the Desktop or Start menu.
+Rolling statistics use only current and prior qualifying session observations. The consistency score is 50 + 50 × mean(return) / mean(abs(return)), bounded to 0–100. It is a signed directional-consistency measure, not a Sharpe ratio or risk-adjusted profitability score. Maximum drawdown is calculated from the compounded gross return path within the rolling window.
 
-The build needs an internet connection once to retrieve Python packages. It
-runs without administrator rights because it installs only for the current
-Windows user. Keep the builder folder until the build has completed.
+The classifier is the existing causal Regime Lab engine. Session Performance reads only its bar-level regime labels, whose indicators use current and previous completed OHLC bars. Its forward-return outcome field is ignored. The regime coverage threshold is the percentage of session-day bars with a classified regime label.
 
-## Where the app and user data live
+Session assignment uses bar-open timestamps against the active profile's local [open, close) schedule and weekday list. Returns are gross observed historical returns; range is observed high-low movement as a percentage of the first observed open; realised volatility is the root-sum-square of observed bar log returns and is not annualised. Pairwise overlap returns compound each selected OHLC bar's open-to-close return without stitching gaps.
 
-- Program files: `%LOCALAPPDATA%\Programs\Veltrix Trading Clock`
-- Writable application data: `%LOCALAPPDATA%\Veltrix Trading Clock`
-- API credentials: `%LOCALAPPDATA%\Veltrix Trading Clock\.env`
-- Configuration, `alarm_state.json`, caches and `focus_goals.sqlite3`: the same writable application data folder
-- Imported tick files: `%LOCALAPPDATA%\Veltrix Trading Clock\tick_data`
+If the dataset or profile changes, previously displayed results are cleared. The study does not apply a separate exchange-holiday calendar, model broker-specific trading hours or adjust returns for transaction costs. It is descriptive research, not a signal, forecast or profitability claim. Consider the source, interval, sample counts, score definition and limitations before comparing markets.
 
-The app-data directory is intentionally separate from the executable. This
-means that updating the program does not overwrite your settings, API keys,
-research history, calendar/market caches, imported ticks or alarm audio.
+## Market Watch & Alerts (v10.8)
 
-Scheduled and snoozed alarms persist in `alarm_state.json` across application
-restarts. Veltrix must be open to ring. If an alarm passes while the app is
-closed, the next launch reports it as missed rather than ringing late.
+The **Alerts & Events** tab now opens the Market Watch command centre. The upper section shows the local control clock, the four configured market-session lanes on a UTC 24-hour map, and current OPEN/CLOSED states. The lower left is a searchable, sortable reference FX watchlist. The lower right is the economic calendar with previous/today/next date controls and high/medium/all-impact filtering. The news ticker highlights the next loaded high- or medium-impact event. The recent alert activity feed remains visible.
 
-## Phase 11 — Focus & Goals Center (v9.5)
+The reference watchlist contains 28 standard major/cross FX pairs. It is a schedule reference, not a broker quote feed. Its weekly reference is Sunday 17:00 to Friday 17:00 New York time (America/New_York). The countdown follows New York daylight-saving rules and calculates real elapsed seconds. Broker-specific hours, daily rollover breaks, bank holidays and symbol availability are not represented. Do not interpret OPEN as a live broker quote or a guarantee that an instrument can be traded at a particular broker.
 
-The new **FOCUS & GOALS** workspace is a local-first personal productivity area:
+The news calendar reuses the existing ShowMyTrades client. A fresh successful fetch is labelled as live for the current app run; older disk-cache data is labelled cached and should be checked before trading. The public feed's successful-fetch cache floor remains 15 minutes.
 
-- Stopwatch and countdown timers with start, pause, resume and stop controls. Countdown durations range from one second to 24 hours.
-- The active timer is persisted in SQLite. A running stopwatch continues counting elapsed wall-clock time while the app is closed; a countdown expires at its stored deadline and is reconciled on the next launch. Paused time is excluded from focus totals.
-- Daily focus totals use the configured IANA home timezone. Focus intervals are split at local midnight for daily reporting, including daylight-saving transitions.
-- Goals support title, description, category, start date, deadline, status and manual progress. Each selected goal displays a live days/hours/minutes/seconds deadline countdown.
-- Milestones can be added, completed, reopened and removed. When a goal has milestones, its displayed progress is calculated from completed milestones; otherwise manual progress is used.
-- Recent focus sessions show their mode, label, duration and status.
-- Data is stored in `focus_goals.sqlite3` under the writable application-data directory and is not placed in the executable bundle.
+Expand **ALERT RULES / PREFERENCES** to edit session pre-open/pre-close alerts, notification channels, per-market lead times, session-risk settings and manual economic-event reminders. The previous alert rules and notification engine remain in place.
 
-Use ISO dates (`YYYY-MM-DD`) for goal dates. The daily focus target defaults to four hours and can be adjusted in the workspace.
+## Global Sessions Instrument Panels (v10.7)
 
-## Phase 12 — Causal Market Regime Research (v9.6)
+Each market clock has a 24-hour session-window ring. A subdued arc shows the configured local open-to-close window; the highlighted portion advances with elapsed session time. Opening and closing markers remain distinct from the traditional 12-hour hands. The card also shows the current IANA timezone, its actual UTC offset and a DAY/NIGHT CYCLE label. DAY is defined as 06:00–17:59 local time and NIGHT as 18:00–05:59; this is a display convention, not a sunrise/sunset calculation.
 
-The new **REGIME LAB** uses datasets already loaded into Research Lab. It does not trade. Each completed OHLC bar is classified using current and past data only; forward returns are calculated separately as historical outcome diagnostics. The workspace provides regime frequency, transition counts, price-path visualization, recent-bar diagnostics and CSV export. The new `regime_engine.py` module has no additional third-party runtime dependency.
+The World Session Dial uses concentric UTC tracks for Sydney, Tokyo, London and New York, with a live UTC pointer. The horizontal timeline uses the same session definitions. Click or drag across it to place a time probe; the line and text below the map identify which configured sessions are open at the selected UTC minute. The probe is temporary and clears when the UTC calendar day changes. The visualisations inherit the selected session profile and optional exchange-calendar overlay; they do not add a market-data feed or infer unlisted venue closures.
 
-The first-release thresholds are configurable research defaults, not an optimised strategy. Review feed semantics, interval, sample size and out-of-sample behaviour before interpreting results.
+## One-time Windows installation
 
-## API keys
+1. Extract the complete source package to a normal folder.
+2. Install 64-bit Python 3.10 or newer. Python is required only for the one-time build.
+3. Double-click BUILD_AND_INSTALL.bat.
+4. When prompted, enter the path to your previous Veltrix project folder or the existing %LOCALAPPDATA%\Veltrix Trading Clock data folder. The installer migrates settings, calendar/market caches, the legacy OHLC research cache (for Regime Lab migration), the Regime dataset file, alarm state, Focus & Goals database and alarm audio when the destination does not already exist.
+5. Launch **Veltrix Trading Clock** using the new Desktop or Start-menu shortcut.
 
-The installer copies a `.env` file from the existing project folder you
-selected during setup into the application data directory only if the
-destination does not already exist.
-If no `.env` was migrated, copy `.env.example` to `.env` in:
+The build creates a standalone one-folder executable under:
 
-`%LOCALAPPDATA%\Veltrix Trading Clock`
+    %LOCALAPPDATA%\Programs\Veltrix Trading Clock
 
-Then add your keys:
+No administrator rights, VS Code or separate Python installation are required to run the installed application.
 
-```ini
-MASSIVE_API_KEY=your_massive_key
-TWELVE_DATA_API_KEY=your_twelve_data_key
-```
+## User data and migration
 
-Never put real API keys in the build scripts, source files, ZIP package, or
-screenshots. Existing Windows user environment variables still take priority
-over `.env` values.
-On Windows, Veltrix protects a plaintext `.env` file with DPAPI for the current
-Windows user the first time it loads the file. To rotate keys, delete the
-protected `.env`, create a new text `.env`, and restart Veltrix; it will protect
-the replacement. Non-Windows source runs leave `.env` as plaintext.
+Writable application data is stored separately under:
+
+    %LOCALAPPDATA%\Veltrix Trading Clock
+
+The installer preserves existing destination files and copies legacy files only when the destination does not already exist. The main files include:
+
+- config.json
+- calendar_cache.json
+- market_cache.json
+- research_cache.json (read once to migrate compatible fixed-interval OHLC datasets)
+- regime_data.json
+- alarm_state.json
+- focus_goals.sqlite3
+- alarm.mp3 (when present)
+
+The migration does not delete the previous research_cache.json, raw tick-data folders or old source project. Tick-derived datasets are not imported into the Core Edition's Regime Lab library. Existing old .env files are not copied or read by the Core Edition; the app no longer needs provider API credentials.
+
+## Market Session Intelligence
+
+In **Global Sessions**, use the Profile selector and **APPLY** to choose one of the built-in schedule templates:
+
+- Current Configuration — the original session schedule saved as the baseline.
+- Forex Standard — a weekday monitoring template for the four centres.
+- Equities Cash — a cash-equity-hours template.
+- Extended Monitoring — a wider monitoring-hours template.
+- Custom — your own local open/close times and selected weekdays.
+
+Use **EDIT CUSTOM** to change each market's open time, close time and active weekdays. All times are entered in that market's own IANA timezone. The selected profile, custom schedules and original baseline are saved in config.json and restored on restart. The presets are editable schedule templates, not official exchange calendars.
+
+The Market Session Intelligence panel shows scheduled hours for each market's local Monday-Sunday week and a reconstructed overlap report for the prior 7, 30 or 90 days. The report is calculated from the currently selected profile and timezone rules. It does not know unconfigured public holidays, emergency closures or broker-specific hours, so it must not be interpreted as observed exchange history.
+
+## Exchange Calendar Intelligence
+
+The Global Sessions panel includes an optional **CASH EXCHANGE HOLIDAYS / EARLY CLOSES** switch. It applies the bundled published ASX cash-market, Tokyo Stock Exchange / JPX, London Stock Exchange and NYSE cash-market exceptions to the corresponding session cards, UTC timeline, alerts and session analytics.
+
+The overlay is disabled by default. Enable it only when you intend the clocks to reflect the tracked cash-exchange venues; it does not convert a generic forex schedule into an official cash-market session. The selected session profile still determines the configured opening/closing hours.
+
+The bundled data was checked on 23 November 2026. Coverage is venue-specific: ASX, JPX and NYSE have published 2026–2027 entries; the LSE entries begin on 31 August 2026 and run through 2027. Dates beyond the published coverage are labelled OUT OF PUBLISHED RANGE.
+
+NYSE and ASX actual early-close times shorten the session state. For the LSE dates marked as half-days, the exchange says the closing process commences from 12:30 London time; Veltrix displays this as a closing-process marker and does not force the market closed at 12:30.
+
+See [EXCHANGE_CALENDAR_SOURCES_10.4.md](EXCHANGE_CALENDAR_SOURCES_10.4.md) for source links, covered dates, product scope and limitations. The bundled snapshot is offline and does not receive automatic exchange amendments.
+
+## Session Risk Awareness
+
+Each of the four Global Sessions cards shows a session-risk label. NORMAL means no configured schedule risk flag is active. CAUTION may indicate an opening/closing window, a published early-close or closing-process event, a nearby holiday, or an unverified date outside calendar coverage. HIGH is used for a published full-day exchange holiday.
+
+Open **Alerts & Events** to set independent pre-open and pre-close reminder lead times for Sydney, Tokyo, London and New York. Adjust the global reminder defaults first, then tune each session's override row. The risk controls independently enable/disable card flags, risk notifications and holiday-liquidity cautions, and set the opening, closing and pre-open warning windows. Click SAVE ALERT SETTINGS to persist the controls.
+
+Holiday-liquidity messages are calendar-based cautions only. They do not measure actual volume, spread, order-book depth or market impact. Opening and closing warnings are time-window indicators, not forecasts of price volatility. Treat them as context for your own analysis, not trade instructions.
+
+## Regime Lab
+
+Open **REGIME LAB** and choose **IMPORT OHLC CSV**. Name the dataset when prompted. Naive timestamps are interpreted in the configured home timezone, Africa/Nairobi by default, then stored as UTC.
+
+Imported datasets are saved locally in regime_data.json. The first Core Edition launch can migrate compatible regular OHLC datasets from the previous research_cache.json. Tick-derived and variable-interval datasets are deliberately excluded.
+
+Regime labels are causal: each completed bar uses only current and previous data. Forward returns are separate historical outcome diagnostics, not forecasts or trading signals.
+
+## Market monitoring limitations
+
+The Volatility Lab retains the unofficial public Yahoo Finance chart integration. Data may be delayed, limited or unavailable. Confirm important market prices with your broker or a licensed data provider.
+
+Session hours are configurable weekday conventions, not complete exchange calendars. Verify important economic releases with official issuers.
 
 ## Upgrading
 
-Run `BUILD_AND_INSTALL.bat` from a newer source package. It replaces only the
-installed program files. Existing data in `%LOCALAPPDATA%\Veltrix Trading Clock`
-is preserved. The install script also migrates source-folder personal files on
-first install, and never overwrites a file already present in the app-data
-folder.
+Run BUILD_AND_INSTALL.bat from the newer source package. The installer replaces the program files while preserving existing application-data files. Your imported Regime datasets, settings, alarms and focus history remain outside the executable folder.
 
 ## Uninstalling
 
-Close Veltrix, delete the `Veltrix Trading Clock` folder under
-`%LOCALAPPDATA%\Programs`, and remove its Desktop/Start-menu shortcuts. Keep
-`%LOCALAPPDATA%\Veltrix Trading Clock` if you want to preserve your user data.
-Delete that data folder separately only when you deliberately want to remove
-settings, caches, imported ticks and the local `.env` file.
-
-## Security and Windows notices
-
-- The app runs as a normal user; it does not need administrator privileges.
-- The build does not embed `.env` or API credentials.
-- On Windows, API keys in `.env` are encrypted at rest with the current user's
-  DPAPI key. This does not protect against malware running as that user, and
-  non-Windows source runs keep `.env` as plaintext.
-- The executable is not code-signed. Windows SmartScreen or antivirus software
-  may show a first-run reputation warning. Verify that the executable came from
-  your own local build folder before allowing it.
-- No background auto-start is enabled. The Desktop/Start-menu shortcut is the
-  explicit launch mechanism; Windows login startup can be added separately if
-  requested later.
-
-## Packaging files
-
-- `veltrix_windows.spec` — PyInstaller one-folder build configuration.
-- `BUILD_AND_INSTALL.bat` — one-time Windows build and install launcher.
-- `installer/Install-Veltrix.ps1` — user-level installation and shortcut setup.
-- `assets/veltrix.ico` — multi-resolution Windows application icon.
-- `app_paths.py` — separation of bundled resources from writable user data.
+Close Veltrix, delete the Veltrix Trading Clock program folder under %LOCALAPPDATA%\Programs, and remove the Desktop/Start-menu shortcuts. Keep %LOCALAPPDATA%\Veltrix Trading Clock to preserve settings, Regime datasets, caches, alarms and focus history. Delete the data folder separately only when you deliberately want to remove that information.

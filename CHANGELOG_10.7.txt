@@ -1,0 +1,43 @@
+VELTRIX TRADING CLOCK v10.7 — ADVANCED GLOBAL SESSIONS
+Release date: 23 November 2026
+
+INSTRUMENT-STYLE SESSION PROGRESS
+- Added a 24-hour session-window ring to each Sydney, Tokyo, London and New York dial.
+- The ring marks configured local opening and closing times and fills as the
+  session advances. Published early-close/closing-process times are used when
+  the exchange overlay supplies a current-day close marker.
+- Added actual UTC-offset labels, including daylight-saving offset changes.
+- Added a DAY/NIGHT CYCLE display based on 06:00–18:00 local wall-clock time;
+  this is a presentation convention, not astronomical daylight data.
+- Preserved the existing 50 ms hands animation and IANA timezone conversion.
+
+WORLD SESSION DIAL
+- Added a concentric 24-hour UTC dial showing the configured Sydney, Tokyo,
+  London and New York windows on four colour-coded tracks.
+- Added a live UTC pointer and current UTC time/date at the centre.
+- Uses the same UTC session-timeline snapshot and optional exchange-calendar
+  overlay as the horizontal map.
+
+INTERACTIVE UTC SESSION MAP
+- Reworked the Global Sessions layout to place the world dial beside the map.
+- Added click-and-drag time probing on the 24-hour UTC lanes.
+- The probe snaps to a minute and displays active/closed tracked sessions.
+- The separate probe cursor does not obscure the live current-time marker.
+- The selected probe is temporary and clears when the UTC calendar day changes.
+
+ENGINEERING
+- Added session_visuals.py for deterministic session progress, local offset,
+  day/night-cycle, dial-arc and UTC timeline-probe calculations.
+- Added regression tests for daylight-saving offsets, progress and early-close
+  calculations, session arc geometry, probe mapping and invalid timestamps.
+- Updated Core Edition version metadata, Windows artifact name and guides.
+- No session timezone definitions or core UTC conversion logic were changed.
+
+SCOPE / VALIDATION
+- DAY/NIGHT CYCLE means 06:00–17:59 DAY and 18:00–05:59 NIGHT in local time.
+  It does not estimate sunrise, sunset or seasonal daylight length.
+- The World Session Dial and timeline show configured schedules, not observed
+  liquidity or a live exchange-status feed.
+- The click/drag probe reports schedule/calendar state only.
+- Automated CI and Windows packaging results are recorded in
+  RELEASE_VALIDATION_10.7.txt. Native GUI interaction still needs manual review.

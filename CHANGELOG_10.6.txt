@@ -1,0 +1,24 @@
+VELTRIX TRADING CLOCK v10.6 — GLOBAL SESSIONS CLOCK REDESIGN
+Release date: 23 November 2026
+
+GLOBAL SESSION DIALS
+- Reworked the four Sydney, Tokyo, London and New York analog faces into
+  detailed instrument-style dials.
+- Added layered bezel/glass rings, a recessed minute track, 60 graduated
+  minute marks, readable 1–12 hour numerals and four diagonal bezel fasteners.
+- Replaced plain hand lines with layered shadow/highlight hour and minute hands,
+  plus a sweeping seconds hand with a rear counterweight and polished centre hub.
+- Increased the dial canvas from 224 px to 240 px for improved legibility.
+- Preserved the existing six theme palettes and per-session timezone mapping.
+
+SMOOTH ANIMATION
+- Added an independent 50 ms animation loop for all four analog faces.
+- The seconds, minutes and hour hands use sub-second local time, so motion is
+  continuous rather than jumping once per full session-status refresh.
+- Session status, risk flags, alert scheduling, exchange-calendar overlays,
+  UTC timeline and overlap calculations remain on their existing update cycle.
+
+VALIDATION
+- Session-clock geometry and application wiring are covered by unit tests.
+- Automated cross-version tests and Windows packaging are run by GitHub Actions.
+- A manual interactive Windows GUI check remains recommended for visual review.

@@ -5,20 +5,47 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 
+UI_FONT_FAMILY = "Segoe UI"
+UI_FONT = (UI_FONT_FAMILY, 10)
+UI_FONT_BOLD = (UI_FONT_FAMILY, 10, "bold")
+TABLE_FONT = (UI_FONT_FAMILY, 9)
+TABLE_HEADING_FONT = (UI_FONT_FAMILY, 9, "bold")
+
+FONT_OPTIONS = {
+    "*Font": UI_FONT,
+    "*Label.font": UI_FONT,
+    "*Button.font": UI_FONT_BOLD,
+    "*Menubutton.font": UI_FONT_BOLD,
+    "*Entry.font": UI_FONT,
+    "*Spinbox.font": UI_FONT,
+    "*Text.font": UI_FONT,
+    "*Listbox.font": UI_FONT,
+    "*Checkbutton.font": (UI_FONT_FAMILY, 9),
+    "*Radiobutton.font": (UI_FONT_FAMILY, 9),
+    "*Menu.font": (UI_FONT_FAMILY, 9),
+}
+
+
+def apply_veltrix_font_defaults(root: Any) -> None:
+    """Set readable Segoe UI defaults for classic Tk controls."""
+    for option, font in FONT_OPTIONS.items():
+        try:
+            root.option_add(option, font)
+        except Exception:
+            # Fonts must never prevent the clock from starting.
+            pass
+
+
 COMBOBOX_STYLES = (
     "TCombobox",
-    "Veltrix.Research.TCombobox",
-    "Veltrix.Strategy.TCombobox",
-    "Veltrix.Data.TCombobox",
+    "Veltrix.Regime.TCombobox",
 )
 
 TREEVIEW_STYLES = (
     "Treeview",
     "Veltrix.Treeview",
     "Veltrix.Market.Treeview",
-    "Veltrix.Research.Treeview",
-    "Veltrix.Strategy.Treeview",
-    "Veltrix.Data.Treeview",
+    "Veltrix.Regime.Treeview",
 )
 
 
@@ -86,6 +113,8 @@ def apply_veltrix_classic_widget_palette(
                     options: dict[str, Any] = {}
                     if widget_class in {"Toplevel", "Frame", "Labelframe", "Canvas"}:
                         options["bg"] = parent_bg if widget_class != "Toplevel" else palette["bg"]
+                        if widget_class in {"Frame", "Labelframe", "Canvas"}:
+                            options.update(highlightthickness=0, bd=0, relief="flat")
                     elif widget_class == "Label":
                         options.update(bg=parent_bg, fg=palette["text"])
                     elif widget_class in {"Button", "Menubutton"}:
@@ -101,8 +130,8 @@ def apply_veltrix_classic_widget_palette(
                             insertbackground=palette["bright"],
                             selectbackground=palette["button_active"],
                             selectforeground=palette["bright"],
-                            highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"],
+                            highlightbackground=palette["panel"],
+                            highlightcolor=palette["panel"], highlightthickness=0,
                             disabledbackground=palette["panel"],
                             disabledforeground=palette["muted"],
                         )
@@ -124,8 +153,8 @@ def apply_veltrix_classic_widget_palette(
                             bg=parent_bg, fg=palette["text"],
                             selectbackground=palette["button_active"],
                             selectforeground=palette["bright"],
-                            highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"],
+                            highlightbackground=palette["panel"],
+                            highlightcolor=palette["panel"],
                         )
                     elif widget_class == "Text":
                         options.update(
@@ -133,8 +162,8 @@ def apply_veltrix_classic_widget_palette(
                             insertbackground=palette["bright"],
                             selectbackground=palette["button_active"],
                             selectforeground=palette["bright"],
-                            highlightbackground=palette["border"],
-                            highlightcolor=palette["bright"],
+                            highlightbackground=palette["panel"],
+                            highlightcolor=palette["panel"],
                         )
                     elif widget_class == "Menu":
                         options.update(
@@ -142,20 +171,20 @@ def apply_veltrix_classic_widget_palette(
                             activebackground=palette["button_active"],
                             activeforeground=palette["bright"],
                             disabledforeground=palette["muted"],
-                            bd=1, relief="solid",
+                            bd=0, relief="flat",
                         )
                     elif widget_class == "Scale":
                         options.update(
                             bg=parent_bg, fg=palette["text"],
                             troughcolor=palette["dim"],
                             activebackground=palette["bright"],
-                            highlightbackground=palette["border"],
+                            highlightbackground=palette["panel"],
                         )
                     elif widget_class == "Scrollbar":
                         options.update(
                             bg=palette["button_bg"], troughcolor=palette["bg"],
                             activebackground=palette["button_active"],
-                            highlightbackground=palette["border"],
+                            highlightbackground=palette["panel"],
                         )
                     if options:
                         try:
@@ -189,28 +218,28 @@ def apply_veltrix_ttk_palette(style: Any, palette: dict[str, str], root: Any = N
     # without a Veltrix-specific style name.
     try:
         style.configure(
-            ".", background=bg, foreground=text, bordercolor=border,
-            lightcolor=border, darkcolor=border, troughcolor=bg,
+            ".", background=bg, foreground=text, font=UI_FONT,
+            bordercolor=bg, lightcolor=bg, darkcolor=bg, troughcolor=bg,
             focuscolor=bright,
         )
     except Exception:
         pass
 
     style.configure("TFrame", background=bg)
-    style.configure("TLabel", background=bg, foreground=text)
+    style.configure("TLabel", background=bg, foreground=text, font=UI_FONT)
     style.configure("TButton", background=button_bg, foreground=palette["button_fg"],
-                    bordercolor=border, lightcolor=border, darkcolor=border,
-                    padding=(9, 5), relief="flat", focusthickness=1, focuscolor=bright)
+                    font=UI_FONT_BOLD, bordercolor=bg, lightcolor=bg, darkcolor=bg,
+                    padding=(12, 7), relief="flat", focusthickness=0, focuscolor=bright)
     style.map("TButton", background=[("disabled", panel), ("pressed", button_active),
                                       ("active", button_active)],
               foreground=[("disabled", muted), ("pressed", bright), ("active", bright)])
 
     entry_options = {
         "fieldbackground": entry_bg, "background": button_bg,
-        "foreground": entry_fg, "bordercolor": border,
+        "foreground": entry_fg, "font": UI_FONT, "bordercolor": border,
         "lightcolor": border, "darkcolor": border,
         "focuscolor": bright, "insertcolor": bright,
-        "padding": (7, 4), "relief": "flat",
+        "padding": (8, 6), "relief": "flat",
     }
     entry_map = {
         "fieldbackground": [("disabled", panel), ("readonly", entry_bg), ("!disabled", entry_bg)],
@@ -234,18 +263,18 @@ def apply_veltrix_ttk_palette(style: Any, palette: dict[str, str], root: Any = N
         style.configure(style_name, **combo_options)
         style.map(style_name, **combo_map)
 
-    style.configure("TCheckbutton", background=bg, foreground=text, indicatorcolor=palette["dim"],
-                    focuscolor=bright, padding=(3, 2))
+    style.configure("TCheckbutton", background=bg, foreground=text, font=UI_FONT,
+                    indicatorcolor=palette["dim"], focuscolor=bright, padding=(4, 3))
     style.map("TCheckbutton", background=[("active", panel)], foreground=[("disabled", muted),
                   ("active", bright)], indicatorcolor=[("selected", bright), ("disabled", panel)])
-    style.configure("TRadiobutton", background=bg, foreground=text, indicatorcolor=palette["dim"],
-                    focuscolor=bright, padding=(3, 2))
+    style.configure("TRadiobutton", background=bg, foreground=text, font=UI_FONT,
+                    indicatorcolor=palette["dim"], focuscolor=bright, padding=(4, 3))
     style.map("TRadiobutton", background=[("active", panel)], foreground=[("disabled", muted),
                   ("active", bright)], indicatorcolor=[("selected", bright), ("disabled", panel)])
 
-    style.configure("TLabelframe", background=bg, bordercolor=border, relief="solid")
+    style.configure("TLabelframe", background=bg, bordercolor=bg, relief="flat")
     style.configure("TLabelframe.Label", background=bg, foreground=bright)
-    style.configure("TNotebook", background=bg, bordercolor=border, tabmargins=(2, 2, 2, 0))
+    style.configure("TNotebook", background=bg, bordercolor=bg, tabmargins=(4, 4, 4, 0))
     style.configure("TNotebook.Tab", background=palette["dim"], foreground=text,
                     padding=(10, 5), bordercolor=border)
     style.map("TNotebook.Tab", background=[("selected", panel), ("active", button_active)],
@@ -256,17 +285,17 @@ def apply_veltrix_ttk_palette(style: Any, palette: dict[str, str], root: Any = N
                     bordercolor=border, lightcolor=border, darkcolor=border)
     style.map("TScale", background=[("active", panel)])
     style.configure("TScrollbar", background=button_bg, troughcolor=bg,
-                    arrowcolor=bright, bordercolor=border, lightcolor=border,
-                    darkcolor=border, gripcount=0)
+                    arrowcolor=bright, bordercolor=bg, lightcolor=bg,
+                    darkcolor=bg, gripcount=0)
     style.map("TScrollbar", background=[("active", button_active), ("pressed", bright)])
 
     # Every current and future Treeview uses a dark field and a visible header.
     # Named styles retain their own row heights/fonts configured by main.py.
     for style_name in TREEVIEW_STYLES:
         style.configure(style_name, background=bg, foreground=text,
-                        fieldbackground=bg, bordercolor=border)
+                        fieldbackground=bg, bordercolor=bg, font=TABLE_FONT, rowheight=29)
         style.configure(f"{style_name}.Heading", background=panel, foreground=bright,
-                        relief="flat", bordercolor=border)
+                        relief="flat", bordercolor=bg, font=TABLE_HEADING_FONT)
         style.map(style_name, background=[("selected", button_active)],
                   foreground=[("selected", bright)])
         style.map(f"{style_name}.Heading", background=[("active", button_active)],

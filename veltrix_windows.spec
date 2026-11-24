@@ -1,4 +1,4 @@
-# PyInstaller one-folder build for Windows 10/11.
+# PyInstaller one-folder build for Windows 10/11 Core Edition.
 # Run from the project directory: python -m PyInstaller --clean --noconfirm veltrix_windows.spec
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -8,7 +8,6 @@ ICON = ROOT / "assets" / "veltrix.ico"
 
 app_datas = [
     (str(ROOT / "config.json"), "."),
-    (str(ROOT / ".env.example"), "."),
     (str(ICON), "assets"),
 ]
 app_datas += collect_data_files("tzdata")
@@ -17,8 +16,7 @@ hidden_imports = []
 try:
     hidden_imports += collect_submodules("windows_toasts")
 except Exception:
-    # The adapter is optional on non-Windows development builds. The Windows
-    # builder installs the dependency through requirements.txt when applicable.
+    # The adapter is optional on non-Windows development builds.
     pass
 
 try:

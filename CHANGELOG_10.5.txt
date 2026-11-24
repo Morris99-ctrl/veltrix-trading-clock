@@ -1,0 +1,38 @@
+VELTRIX TRADING CLOCK — v10.5 / SESSION RISK AWARENESS
+
+SESSION-SPECIFIC RISK FLAGS
+- Added risk_engine.py with transparent per-session risk assessments.
+- Each Global Sessions card shows NORMAL, CAUTION or HIGH plus concise warning labels.
+- Added full exchange-holiday, early-close, closing-process and out-of-calendar-coverage flags.
+- Added pre-holiday and post-holiday liquidity cautions when the optional cash-exchange overlay is enabled.
+- Added configurable opening-window, near-close and pre-open schedule flags.
+- Risk flags use the selected session profile and the existing exchange-calendar overlay.
+- Risk warnings are schedule/calendar heuristics. They do not measure actual volume, bid/ask spread, order-book depth, slippage or volatility and do not forecast price direction.
+
+PER-SESSION REMINDERS
+- Added separate pre-open and pre-close reminder lead times for Sydney, Tokyo, London and New York.
+- Per-session lead times are independent and initially populated from the global defaults.
+- Added configurable risk notifications, holiday-liquidity cautions, opening/closing caution windows and pre-open flag window.
+- Alert settings and risk preferences persist in config.json.
+
+ENGINEERING AND TESTS
+- Added risk_engine.py for deterministic session-risk assessment and deduplicated notifications.
+- Updated alert_engine.py to apply per-session reminder overrides while retaining global defaults.
+- Updated main.py with risk badges on each session card, the Session Risk Awareness controls and risk notifications.
+- Updated config_store.py to validate session_risk preferences.
+- Added tests for pre/post-holiday cautions, exchange holiday severity, opening/closing windows, independent per-market reminder leads, risk-notification deduplication and persistence.
+
+DOCUMENTATION AND RELEASE
+- Updated README, desktop installation guide and quick start to v10.5.
+- Added CHANGELOG_10.5.txt and RELEASE_VALIDATION_10.5.txt.
+- Updated Windows executable metadata and CI artifact name to v10.5.
+
+SCOPE LIMITATIONS
+- Holiday-liquidity labels mean that liquidity may be thinner around an exchange holiday; they are cautionary heuristics, not observed liquidity conditions.
+- Opening/closing windows are based on configured schedule times, not measured volatility.
+- No market-depth, trade-volume, spread, execution-quality or broker-specific risk feed is added.
+- FX spot is decentralised and does not inherit a universal exchange holiday calendar. Exchange-specific holiday cautions require the optional v10.4 cash-exchange overlay.
+
+VALIDATION
+- Final v10.5 GitHub Actions run 190 passed compileall and all 165 tests on Python 3.10, 3.11 and 3.12. The Windows PyInstaller build, executable verification and artifact upload also succeeded.
+- Manual Windows review must verify card labels, all six themes, per-session reminder persistence, risk-setting persistence, notification deduplication and minimum-window layout.

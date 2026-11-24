@@ -39,6 +39,53 @@ class ConfigStoreTests(unittest.TestCase):
             self.assertEqual(load_config(path)["sessions"], config["sessions"])
             self.assertEqual(list(Path(temp).glob(".config.json.*.tmp")), [])
 
+    def test_session_profiles_must_be_a_mapping_and_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "config.json"
+            config = self.valid_config()
+            config["session_profiles"] = {
+                "selected": "Equities Cash",
+                "base_sessions": config["sessions"],
+                "custom": {},
+            }
+            save_config(path, config)
+            self.assertEqual(load_config(path)["session_profiles"]["selected"], "Equities Cash")
+
+            config["session_profiles"] = ["invalid"]
+            save_config(path, config)
+            with self.assertRaisesRegex(RuntimeError, "session_profiles.*JSON object"):
+                load_config(path)
+
+    def test_exchange_calendar_setting_must_be_a_mapping_and_round_trips(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "config.json"
+            config = self.valid_config()
+            config["exchange_calendar"] = {"enabled": False}
+            save_config(path, config)
+            self.assertFalse(load_config(path)["exchange_calendar"]["enabled"])
+
+            config["exchange_calendar"] = True
+            save_config(path, config)
+            with self.assertRaisesRegex(RuntimeError, "exchange_calendar.*JSON object"):
+                load_config(path)
+
+    def test_session_risk_preferences_must_be_a_mapping_and_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "config.json"
+            config = self.valid_config()
+            config["session_risk"] = {
+                "enabled": True,
+                "notifications_enabled": True,
+                "opening_window_minutes": 15,
+            }
+            save_config(path, config)
+            self.assertTrue(load_config(path)["session_risk"]["enabled"])
+
+            config["session_risk"] = False
+            save_config(path, config)
+            with self.assertRaisesRegex(RuntimeError, "session_risk.*JSON object"):
+                load_config(path)
+
     def test_failed_serialization_preserves_existing_file(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.json"

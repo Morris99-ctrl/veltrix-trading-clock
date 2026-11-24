@@ -1,0 +1,79 @@
+VELTRIX TRADING CLOCK v10.16 — RELEASE VALIDATION
+
+Release branch
+release/v10.16-market-intelligence
+
+Base
+release/v10.15-alert-intelligence-center
+
+Automated validation required
+- Python 3.10: compileall and full unittest discovery.
+- Python 3.11: compileall and full unittest discovery.
+- Python 3.12: compileall and full unittest discovery.
+- Windows runner: PyInstaller one-folder build.
+- Windows runner: verify dist/Veltrix Trading Clock/VeltrixTradingClock.exe exists.
+- Upload artifact named Veltrix-Trading-Clock-v10.16-Windows.
+
+Market Intelligence regression coverage
+- Cached observations remain labelled CACHED and are not represented as freshly updated.
+- Partial assets and missing observations have explicit status; absent values remain None/N/A, never zero.
+- Causal regime label at a timestamp is unchanged by appending later bars.
+- Trend labels expose their supporting efficiency-ratio and ATR-normalised slope evidence.
+- Annualised realised-volatility windows apply their sample gates.
+- ATR and expected-move metrics remain unavailable until their own sample requirements are satisfied.
+- Pearson correlations use aligned daily log-return dates and expose sample counts.
+- Correlation is unavailable for insufficient samples and zero-variance series.
+- Breadth is unavailable without a constituent universe and is calculated only from supplied constituent bars.
+- Naive snapshot-generation timestamps are rejected.
+
+Manual Windows GUI checklist
+1. Launch the standalone application and open MARKET INTEL.
+2. Confirm the current configured instruments appear and missing history is shown as N/A.
+3. Confirm latest regime labels and evidence values update after market refresh.
+4. Confirm annualised 10D / 20D / 60D volatility, volatility percentile, ATR(14) and expected move appear only with sufficient completed history.
+5. Confirm correlation pairs display 20D and 60D values only when sufficient aligned samples exist; sample counts are visible.
+6. Confirm MARKET BREADTH remains UNAVAILABLE without a constituent data source.
+7. Confirm the data feed status distinguishes UPDATED, PARTIAL, CACHED and NO DATA.
+8. Confirm cached observations are not described as live or updated.
+9. Switch through CYAN, AMBER, MATRIX, VIOLET, ICE and LIGHT and inspect card contrast, headings, labels and scrollbars.
+10. Refresh market data and confirm the interface remains responsive.
+11. Confirm v10.15 Alert Intelligence Center, v10.14 Command Center, all session clocks, alerts, calendar, Regime Lab, Volatility Lab, Session Performance, Focus & Goals and alarm functionality remain intact.
+
+Data and methodology checks
+- Regime labels use only completed current/past OHLC observations. Forward outcomes do not feed labels.
+- Realised volatility is annualised using the sqrt(252) trading-day convention.
+- Correlation is Pearson correlation of date-aligned daily log returns, not causal evidence.
+- Breadth requires real constituent-level observations; no proxy-derived breadth is allowed.
+- Existing Yahoo Finance chart data remains unofficial and indicative.
+- No broker integration, trade recommendation, order placement or automated trading is introduced.
+
+Automated validation
+
+Push validation
+- Run: 45298959859
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45298959859
+- Python 3.10: 257 tests passed.
+- Python 3.11: 257 tests passed.
+- Python 3.12: 257 tests passed.
+- Compileall passed on all three Python versions.
+- Windows standalone build, executable verification and artifact upload passed.
+
+Pull-request validation
+- Run: 45298994210
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45298994210
+- All three Python test jobs passed and the Windows desktop package job passed.
+- Both successful runs validated source commit 075ec0b24e9e29c761c15b289488e98590941428.
+
+Verified Windows artifact
+- Name: Veltrix-Trading-Clock-v10.16-Windows
+- Artifact ID: 14877233380
+- Size: 15,612,458 bytes
+- SHA-256: e09b2881d185dd0b55c59f03601f9e48ccedbc39f9e1735b97daa78ca4a6af7d
+- ZIP CRC/integrity test: passed; no archive errors.
+- Executable: VeltrixTradingClock.exe present.
+- Artifact expires: 22 February 2027.
+
+Manual Windows GUI review
+- User confirmed successful launch and review of the v10.16 Windows desktop build on 24 November 2026.
+- Automated checks and the user's desktop review are both complete.
+- PR #7 is ready for review but remains unmerged pending the normal release decision.

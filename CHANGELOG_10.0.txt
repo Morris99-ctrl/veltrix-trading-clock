@@ -1,0 +1,27 @@
+VELTRIX TRADING CLOCK — v10.0 / CORE EDITION
+
+SCOPE
+- Removed Research Lab from the desktop interface and startup workflow.
+- Removed Strategy Lab and its SMA/ATR backtesting interface and engine.
+- Removed Tick Research, raw-tick ingestion and Fixed Tick / Tick Imbalance Bar construction.
+- Removed Data Center, provider registry, Massive/Twelve Data adapters and API credential loading.
+- Retained Global Sessions, Alerts & Events, Economic Calendar, Volatility Lab, Regime Lab, Focus & Goals and the original alarm clock.
+
+REGIME LAB
+- Added a standalone IMPORT OHLC CSV workflow.
+- Added a local regime_data.json dataset library.
+- Added one-time migration of compatible regular OHLC datasets from an existing research_cache.json.
+- Tick-derived and variable-interval datasets are excluded from the Regime Lab migration.
+- Existing research_cache.json and raw tick files are not deleted.
+- Regime analysis remains causal; forward returns remain historical outcome diagnostics rather than forecasts.
+
+DEPLOYMENT
+- Updated application version and Windows executable metadata to 10.0.
+- Removed python-dotenv, provider credential templates and provider/tick-data migration from the Core Edition package.
+- Updated Windows installer and documentation.
+- Removed retired source modules and tests; added standalone regime-data and core-workspace-scope regression tests.
+
+PRESERVED
+- Existing settings, alarms, market/calendar caches and Focus & Goals history.
+- Existing local legacy OHLC cache and raw tick files are not automatically deleted.
+- All six colour themes and the Windows desktop packaging workflow.

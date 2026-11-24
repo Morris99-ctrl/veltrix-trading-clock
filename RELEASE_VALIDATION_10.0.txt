@@ -1,0 +1,32 @@
+VELTRIX TRADING CLOCK v10.0 — CORE EDITION VALIDATION STATUS
+
+Source-level review
+- Confirmed the active navigation contains only Global Sessions, Alerts & Events,
+  Economic Calendar, Volatility Lab, Regime Lab and Focus & Goals.
+- Confirmed Research Lab, Strategy Lab, Tick Research and Data Center page builders,
+  navigation controls and startup workers were removed from main.py.
+- Confirmed the old research, backtest, tick-bar and provider gateway modules are
+  no longer imported by the application and have been removed from the Core branch.
+- Confirmed Regime Lab now owns its OHLC CSV import and local persistence path.
+- Added regression tests for OHLC CSV parsing, timezone conversion, duplicate rows,
+  malformed data, legacy-cache migration, local persistence and Core workspace scope.
+- Updated the application configuration migration to discard retired research and
+  backtest preferences while preserving Regime Lab parameters.
+
+Not executed in this validation pass
+- The Python unit-test suite has not been run against the final branch.
+- Python compileall has not been run against the final branch.
+- The native Windows PyInstaller build and installer have not been run.
+- Interactive Windows GUI smoke testing has not been performed.
+
+Required before calling this a production release
+1. Run: python -m unittest discover -s tests -v
+2. Run: python -m compileall -q .
+3. Build with BUILD_AND_INSTALL.bat on Windows 10/11.
+4. Test first-install migration from a v9.6 user-data folder, including an old
+   research_cache.json, an existing regime_data.json, focus_goals.sqlite3, alarms
+   and caches. Confirm no legacy files are deleted or overwritten.
+5. Confirm the Regime Lab CSV import, analysis, save/restart and export workflow.
+6. Smoke-test all retained pages and six themes on the packaged Windows executable.
+
+No claim of live provider reliability or trading profitability is made.

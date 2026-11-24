@@ -1,0 +1,40 @@
+VELTRIX TRADING CLOCK v10.8 — RELEASE VALIDATION
+
+AUTOMATED VALIDATION
+- Compileall and the complete unittest suite run on Python 3.10, 3.11 and 3.12.
+- Tests include FX reference-week open/close boundaries, New York DST elapsed
+  countdowns, invalid naive timestamps, dashboard wiring and existing session,
+  exchange-calendar, alert and economic-calendar regression coverage.
+- The Windows job installs hash-pinned build dependencies, builds the PyInstaller
+  desktop app, verifies VeltrixTradingClock.exe and uploads the v10.8 artifact.
+
+MANUAL WINDOWS GUI CHECKLIST
+[ ] Open ALERTS & EVENTS and check the terminal-style layout at 1160x1020.
+[ ] Confirm the top session map aligns with Global Sessions UTC lanes.
+[ ] Confirm current OPEN/CLOSED states and overlap summary refresh.
+[ ] Search a symbol and an economic-event title; clear search.
+[ ] Verify UP/DOWN sort controls and watchlist row count.
+[ ] Check Friday 17:00, Sunday 17:00 and a New York DST weekend.
+[ ] Verify the reference-hours disclaimer is visible and readable.
+[ ] Navigate the news calendar dates and impact filters.
+[ ] Confirm a current-run feed is labelled live and a disk-cache-only feed cached.
+[ ] Inspect high/medium impact row colours and the next-news ticker.
+[ ] Open ALERT RULES / PREFERENCES and verify every previous alert control remains.
+[ ] Trigger TEST NOTIFICATION and confirm recent-alert activity updates.
+[ ] Switch all six themes and check Treeview, scrollbar, combo and entry contrast.
+[ ] Resize the window and scroll to the settings expander without clipping.
+
+DATA / SCHEDULE LIMITATIONS
+- The 28-pair watchlist is a generic FX trading-week reference only:
+  Sunday 17:00 to Friday 17:00 America/New_York.
+- It is not a quote feed, broker instrument catalogue, execution-status service,
+  or measure of liquidity. Broker-specific hours, rollover breaks, holidays,
+  symbol availability, spreads and market energy are not modelled.
+- Economic-news events come from the existing ShowMyTrades public feed. Cached
+  snapshots are not presented as fresh live data. Verify critical releases
+  against their official issuers.
+
+RELEASE STATUS
+- Automated test and Windows packaging results: latest v10.8 GitHub Actions run.
+- Manual Windows GUI verification: pending.
+- Keep this release in draft until the manual checklist is completed.

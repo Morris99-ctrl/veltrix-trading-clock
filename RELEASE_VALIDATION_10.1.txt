@@ -1,0 +1,40 @@
+VELTRIX TRADING CLOCK v10.1 — SESSION CLOCK 2.0 VALIDATION STATUS
+
+Source-level checks
+- Added GitHub Actions workflow for Python 3.10/3.11/3.12 compile and unit-test checks on pushes and pull requests.
+- Added a Windows PyInstaller package job and downloadable build artifact, gated on the test matrix.
+- Four individual analog canvas instances are created by the four-session card builder.
+- Each card has its own clock state, face signature and retained hand item IDs.
+- The analog dial is rebuilt only when its dimensions or theme changes.
+- Hour, minute and second hands are updated with canvas coordinate changes.
+- A mini digital local-time readout remains directly beneath each analog dial.
+- Session status, timezone label, transition countdown, overlap summary and alerts remain connected to the existing session engine.
+- Open cards receive a highlighted border using the active theme's success colour.
+- Added pure geometry tests and extended the Core Edition UI source regression test.
+- README, quick-start, installation guide, changelog and executable metadata now identify v10.1.
+
+Corrected GitHub Actions run (run 11)
+- Python 3.10, 3.11 and 3.12 all passed dependency installation, compileall and the
+  full 119-test suite.
+- The previous failing temporary-directory assertion was corrected in
+  tests/test_regime_data.py.
+- At the time this document was refreshed, the Windows desktop package job had
+  started but had not yet reported its final build/artifact result.
+
+Still not verified
+- Interactive native Windows GUI smoke testing has not been performed.
+- A successful build does not replace a manual test of the four clocks at normal
+  and minimum window sizes, all six themes and timezone/session transitions.
+
+Required before production release
+1. Run: python -m unittest discover -s tests -v
+2. Run: python -m compileall -q .
+3. Build with BUILD_AND_INSTALL.bat on Windows 10/11.
+4. Inspect all four clocks at normal and minimum supported window sizes.
+5. Change all six themes and confirm the dial, hands, text and active border update.
+6. Confirm the four digital readouts and analog hands match their respective local timezones.
+7. Confirm session open/closed status, transitions, alarms and overlap summary still update.
+8. Confirm first-install migration preserves the existing Regime dataset, focus database,
+   alarm state and market/calendar caches.
+
+No claim of live provider reliability or trading profitability is made.

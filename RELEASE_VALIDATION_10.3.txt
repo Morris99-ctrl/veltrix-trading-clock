@@ -1,0 +1,33 @@
+VELTRIX TRADING CLOCK v10.3 — MARKET SESSION INTELLIGENCE VALIDATION
+
+Implemented
+- Added selectable profiles: Current Configuration, Forex Standard, Equities Cash, Extended Monitoring and Custom.
+- Added a custom market schedule editor for local open/close times and Monday-Sunday active weekdays.
+- Selected profile, baseline schedule and custom profile overrides are persisted in config.json.
+- Added weekly scheduled-hours and active-day reports calculated in each market's local timezone/week.
+- Added reconstructed 7/30/90-day scheduled-overlap reports with total hours, average daily hours, busiest UTC day and pair breakdown.
+- Added tests for preset/custom profile validation, schedule metadata/timezone preservation, weekly scheduled hours, historical overlap totals/pairs, input validation and config persistence.
+- Updated README, desktop installation guide, quick-start, changelog and Windows version metadata.
+
+Important interpretation
+- Weekly hours are schedule calculations for each market's local Monday-Sunday week.
+- Historical overlap analytics reconstruct prior schedules using the currently selected profile and IANA timezone rules. They are not observed market history. Unknown public holidays, emergency closures, special sessions and broker-specific hours are not included.
+
+Completed automated checks (GitHub Actions run 92)
+1. Python 3.10, 3.11 and 3.12 compileall passed.
+2. All 138 unit tests passed on each Python version.
+3. Windows hash-pinned build dependencies installed successfully.
+4. PyInstaller built the Windows one-folder application.
+5. Executable existence verification passed.
+6. The Veltrix-Trading-Clock-v10.3-Windows artifact uploaded successfully.
+
+Required manual Windows checks
+1. Switch between all four built-in profiles and confirm the four clocks, open/closed states, timeline and transitions update together.
+2. Edit custom open/close times and weekdays; save, restart, and confirm the Custom profile and baseline schedule persist.
+3. Verify weekly scheduled hours around Sydney/London daylight-saving transitions.
+4. Verify 7/30/90-day overlap totals and pair breakdowns against known test schedules.
+5. Switch all six themes and confirm analytics labels, profile controls, custom editor and timeline remain legible.
+6. Test Global Sessions scrolling at normal and minimum supported window sizes.
+7. Confirm alerts continue using the selected profile's updated session definitions.
+
+No claim of actual historical exchange-open observations, live market status or trading profitability is made.

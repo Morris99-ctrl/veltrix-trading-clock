@@ -1,0 +1,28 @@
+VELTRIX TRADING CLOCK v10.12 — VISUAL REDESIGN
+Release date: 24 November 2026
+
+DESKTOP INTERFACE
+- Replaced terminal-heavy interface typography with Segoe UI across labels,
+  buttons, forms, menus, tables and dashboard annotations.
+- Increased minimum interface font sizes and table row heights so session data,
+  alerts and analytics are easier to scan.
+- Removed bright one-pixel outlines from card containers and inset panels.
+  Cards now rely on layered charcoal surfaces, spacing and restrained dividers.
+- Refined the default dark palette with brighter primary text, softer teal
+  accents, clearer secondary text and calmer status colours.
+- Preserved the alternate LIGHT, AMBER, MATRIX, VIOLET and ICE themes with
+  coordinated neutral surfaces and accent colours.
+- Increased the default desktop workspace width and improved padding for
+  controls and data tables.
+
+PRESERVED BEHAVIOUR
+- Global session schedules, clocks, session animations, alert rules, economic
+  calendar, market monitoring, volatility and regime analytics, focus timers,
+  goals, alarms and v10.11 chronological validation remain unchanged.
+- No market-data calculations, session definitions, alerts or research
+  methodology were modified in this visual-only release.
+
+VALIDATION
+- Shared visual-theme tests cover Segoe UI defaults and borderless ttk styling.
+- The full Python test matrix and Windows package are validated by GitHub Actions.
+- Manual Windows GUI review remains required before release approval.

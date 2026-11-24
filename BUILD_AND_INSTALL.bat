@@ -39,7 +39,7 @@ if not exist ".venv-build\Scripts\python.exe" (
 set "BUILD_PY=%CD%\.venv-build\Scripts\python.exe"
 echo.
 echo If you have an existing Veltrix project or AppData folder, enter its full path now.
-echo This lets the installer migrate your config, caches, .env, focus database, tick_data and alarm.mp3.
+echo This lets the installer migrate your settings, market/calendar caches, old OHLC cache, Regime datasets, focus history and alarm audio.
 set "MIGRATION_SOURCE="
 set /p "MIGRATION_SOURCE=Existing Veltrix project/AppData folder (press Enter to skip): "
 if not defined MIGRATION_SOURCE set "MIGRATION_SOURCE=%CD%"

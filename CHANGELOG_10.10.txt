@@ -1,0 +1,59 @@
+VELTRIX TRADING CLOCK v10.10 — SESSION RANKING & REGIME INTELLIGENCE
+Release date: 24 November 2026
+
+ROLLING SESSION PERFORMANCE
+- Added trailing metrics for each accepted session day and pairwise overlap:
+  mean return, median return, sample standard deviation, positive-day rate,
+  compounded return, maximum drawdown and consistency score.
+- Rolling windows count qualifying session observations (not calendar days);
+  default window is 20.
+- Added sample-gated session rankings; default minimum sample is 10.
+- Ranking score is a signed directional-consistency measure:
+  50 + 50 * mean(return) / mean(abs(return)), bounded to 0..100.
+- Scores above 50 indicate positive mean return; 50 is neutral; below 50
+  indicates negative mean return. The score is not a Sharpe ratio, risk-adjusted
+  return, forecast or profitability probability.
+- Rankings show sample count, trailing mean return, positive rate, compounded
+  return and maximum drawdown. Rank is withheld until the minimum sample passes.
+
+CAUSAL REGIME BREAKDOWN
+- Session Performance now runs the existing Regime Lab causal OHLC classifier
+  on the same imported dataset and joins its bar-level labels by UTC timestamp.
+- Each session day is grouped by its most frequently observed classified regime.
+  Ties are assigned to the latest classified bar's regime.
+- Added a minimum regime-label coverage threshold; default is 50% of the
+  session day's bars. WARMUP and insufficient-coverage observations do not
+  enter the regime breakdown, but remain in the daily session export.
+- Regime Lab's forward-return outcome field is explicitly ignored; only causal
+  bar regime labels are used for attribution.
+- Added a session-by-dominant-regime summary table.
+
+UI / EXPORT
+- Added controls for rolling window, minimum ranking sample and minimum regime
+  coverage.
+- Added rolling session ranking and regime breakdown tables and snapshot tiles.
+- Extended CSV export with rolling metrics and dominant regime / regime coverage.
+- Existing background worker remains in use; profile/dataset changes invalidate
+  old results.
+- Updated application and Windows file version to 10.10.0.
+
+METHODOLOGY / LIMITATIONS
+- Rolling calculations use only current and earlier accepted session-day rows.
+- Compounded return is gross of transaction costs. Maximum drawdown is the
+  largest peak-to-trough decline in the compounded return path.
+- Consistency score is transparent and signed but does not adjust for volatility,
+  drawdown, costs, serial dependence or trade implementation.
+- Regime breakdown is a dominant-label attribution for each session day, not a
+  claim that every bar in the day had that regime.
+- Session windows follow the active configured profile; exchange holidays,
+  early closes, broker-specific hours and maintenance breaks are not separately
+  modelled by this study.
+- This remains descriptive historical research, not a forecast or trade signal.
+
+VALIDATION
+- Automated tests cover trailing-only calculations, compounding, max drawdown,
+  rank eligibility, dominant-regime allocation, tie-breaking and warm-up /
+  insufficient-coverage handling.
+- **214 tests passed** on Python 3.10, 3.11 and 3.12; Windows PyInstaller build,
+  executable verification and artifact upload succeeded in CI.
+- Manual Windows GUI review remains required.

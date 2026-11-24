@@ -1,23 +1,93 @@
-VELTRIX TRADING CLOCK v9.6 — WINDOWS DESKTOP SETUP
+MARKET INTELLIGENCE ENGINE (v10.16)
+Open MARKET INTEL for causal per-instrument regime context, annualised 10/20/60-day
+realised volatility, ATR, historical expected move and aligned 20/60-day
+cross-asset correlations. Each instrument includes the evidence behind its
+regime label and the freshness of its underlying observations. Cached values
+are labelled as cached. Market breadth remains unavailable until real
+constituent-level data is configured; Veltrix does not infer it from proxies.
+The workspace reuses the existing market-data feed and does not execute trades.
+
+ALERT INTELLIGENCE CENTER (v10.15)
+Alerts & Events now begins with a dedicated alert terminal. It separates ACTIVE
+session context, UPCOMING session/calendar reminders, TRIGGERED notifications
+and ACKNOWLEDGED history. Filter by status, market/currency, impact or search
+text. Select an item to inspect its source and details, then acknowledge it.
+Triggered and acknowledged history is saved locally. Stable alert IDs prevent
+repeat notifications when the app refreshes or restarts. Upcoming rows are
+informational and do not override existing reminder lead times or alert rules.
+The original Market Watch, 28-pair FX reference watchlist, news calendar,
+individual session lead times, sound and Windows notification settings remain.
+
+TRADING COMMAND CENTER (v10.14)
+The Command Center is the default landing page. It brings together the four
+market-session states, next transitions, upcoming economic releases, indicative
+market/ATR/expected-move snapshots, schedule/volatility cautions and a daily
+pre-market checklist. Quick links open the original detailed workspaces.
+The checklist is saved locally for each home-timezone date.
+
+VELTRIX TRADING CLOCK v10.16 — CORE EDITION
 
 1. Extract this ZIP into a normal folder.
 2. Double-click BUILD_AND_INSTALL.bat.
 3. When prompted for an existing Veltrix project/AppData folder, enter:
    %LOCALAPPDATA%\Veltrix Trading Clock
-   This migrates your existing configuration, API credentials, research caches,
-   focus database, imported tick files and alarm audio where present. If your
-   current data lives in a source project folder instead, select that folder.
+   This migrates retained settings, market/calendar caches, your legacy OHLC
+   research cache for the standalone Regime Lab, the Regime dataset file,
+   Focus & Goals database and alarm audio where present.
 4. Close the old Veltrix instance before copying its SQLite focus database.
 5. When setup finishes, launch Veltrix from its Desktop or Start-menu icon.
+
+SESSION PERFORMANCE INTELLIGENCE (v10.10)
+Import OHLC CSV once in REGIME LAB, then select the same local dataset in
+SESSION PERFORMANCE. v10.10 adds trailing rolling returns, compounded return,
+maximum drawdown, a signed consistency score and sample-gated session rankings.
+It also groups session-day results by the dominant causal Regime Lab label.
+The ranking score is descriptive, not risk-adjusted and not a forecast.
+See RELEASE_VALIDATION_10.10.txt for the manual desktop checklist.
+
+MARKET WATCH & ALERTS (v10.8)
+Alerts & Events now opens a terminal-style Market Watch dashboard with the
+UTC session-hours map, current session status, searchable 28-pair FX reference
+watchlist and a date/impact-filtered economic news calendar. The FX table uses
+a generic New York Sunday 17:00–Friday 17:00 reference week, not broker quotes
+or execution hours. New York DST is accounted for in the countdown.
+Older calendar snapshots are labelled cached, not live. Open ALERT RULES /
+PREFERENCES to reach the original session alerts, lead times, risk settings
+and manual event reminders.
+
+SESSION RISK AWARENESS
+Each global session card shows NORMAL, CAUTION or HIGH schedule-risk flags.
+Open Alerts & Events to configure separate pre-open/pre-close reminders for each
+market and the opening/closing caution windows. Holiday-liquidity flags are
+calendar heuristics only, not live volume/spread/order-book measurements.
+Use SAVE ALERT SETTINGS to persist your choices.
 
 VS Code is NOT required. Python 3.10+ (64-bit) is needed only for this
 one-time local build. The installed app includes its Python runtime.
 
-Phase 12 adds REGIME LAB for causal market-regime research. Load/import
-historical OHLC data in Research Lab before running it. It classifies bars
-using only current and prior data; forward returns are separate historical
-outcomes, not forecasts or trading signals.
+The Core Edition retains Global Sessions, Alerts & Events, Economic Calendar,
+Volatility Lab, Regime Lab, Focus & Goals and the original alarm clock.
+Global Sessions has four timezone-aware instrument clocks with numbered hour
+markers, 60 graduated minute marks, layered hands and smooth second-hand sweeps.
+Each dial includes a live 24-hour session-progress ring, opening/closing markers,
+UTC-offset and DAY/NIGHT-cycle readouts. The World Session Dial shows all four
+markets on concentric UTC tracks. Click or drag the UTC timeline to inspect which
+sessions are scheduled open at a selected minute.
+An optional cash-exchange calendar overlay applies published ASX, Tokyo, LSE
+and NYSE closures/early closes to clocks, timeline and alerts. It is OFF by
+default; see EXCHANGE_CALENDAR_SOURCES_10.4.md for date coverage and limitations.
+Choose Current Configuration, Forex Standard, Equities Cash or Extended Monitoring,
+or edit a Custom profile with local open/close times and active weekdays. The
+dashboard also shows weekly scheduled hours and reconstructed 7/30/90-day
+scheduled-overlap summaries. These are configured schedule estimates, not
+observed exchange history or official holiday-aware market hours.
+Research Lab, Strategy Lab, Tick Research and Data Center are removed.
 
-Do not place real API keys in the release ZIP or share your .env file. The
-installer migrates .env into the per-user AppData folder. See
-DESKTOP_INSTALL_GUIDE.md for complete instructions and data locations.
+Regime Lab has its own IMPORT OHLC CSV workflow. Existing regular OHLC
+datasets can be migrated from the old research_cache.json. Tick-derived
+datasets are left in the old cache and are not imported into Regime Lab.
+The old research cache and raw tick-data folder are not deleted.
+
+Provider API keys are no longer required by the Core Edition. The installer
+does not copy .env files or raw tick-data folders. See
+DESKTOP_INSTALL_GUIDE.md for complete migration and data-location details.
