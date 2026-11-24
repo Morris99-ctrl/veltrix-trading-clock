@@ -179,7 +179,10 @@ class AlertCenterStore:
         status: str = "ALL",
         market: str = "ALL",
         impact: str = "ALL",
+        category: str = "ALL",
+        timeframe: str = "ALL",
         query: str = "",
+        now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         saved_by_id = {str(item["id"]): item for item in self.records}
         combined: dict[str, dict[str, Any]] = {}
@@ -198,15 +201,43 @@ class AlertCenterStore:
         status_filter = str(status or "ALL").upper()
         market_filter = str(market or "ALL").upper()
         impact_filter = str(impact or "ALL").upper()
+        category_filter = str(category or "ALL").upper()
+        timeframe_filter = str(timeframe or "ALL").upper()
+        now_utc = _aware_utc(now or datetime.now(timezone.utc))
+        timeframe_bounds = {
+            "NEXT 1H": (0, 60 * 60),
+            "NEXT 4H": (0, 4 * 60 * 60),
+            "NEXT 24H": (0, 24 * 60 * 60),
+            "LAST 24H": (-24 * 60 * 60, 0),
+            "LAST 7D": (-7 * 24 * 60 * 60, 0),
+        }
+        if timeframe_filter not in {"ALL", *timeframe_bounds}:
+            raise ValueError(f"Unsupported alert timeframe: {timeframe!r}")
         terms = str(query or "").strip().casefold()
         rows = []
         for record in combined.values():
-            if status_filter != "ALL" and record.get("status") != status_filter:
+            record_status = str(record.get("status", "")).upper()
+            if status_filter != "ALL" and record_status != status_filter:
                 continue
             if market_filter != "ALL" and str(record.get("market", "")).upper() != market_filter:
                 continue
             if impact_filter != "ALL" and str(record.get("impact", "")).upper() != impact_filter:
                 continue
+            if category_filter != "ALL" and str(record.get("category", "")).upper() != category_filter:
+                continue
+            if timeframe_filter != "ALL":
+                if record_status == "ACKNOWLEDGED":
+                    event_time = _parse_iso(record.get("acknowledged_at")) or _parse_iso(record.get("created_at"))
+                elif record_status in {"ACTIVE", "UPCOMING"}:
+                    event_time = _parse_iso(record.get("scheduled_at")) or _parse_iso(record.get("created_at"))
+                else:
+                    event_time = _parse_iso(record.get("created_at")) or _parse_iso(record.get("scheduled_at"))
+                if event_time is None:
+                    continue
+                delta_seconds = (event_time - now_utc).total_seconds()
+                lower, upper = timeframe_bounds[timeframe_filter]
+                if not lower <= delta_seconds <= upper:
+                    continue
             if terms:
                 haystack = " ".join(
                     str(record.get(key, "")) for key in ("title", "message", "market", "source", "category")
