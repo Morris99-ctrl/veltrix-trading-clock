@@ -32,7 +32,7 @@ Manual Windows GUI checklist
 2. Confirm the Alert Intelligence Center appears above the existing Market Watch.
 3. Confirm ACTIVE rows and current upcoming session transitions are labelled correctly.
 4. Confirm scheduled/moved calendar events inside the next 24 hours appear as UPCOMING context.
-5. Confirm changing status, market, impact and search filters updates the rows and counters.
+5. Confirm status, market, impact, category and timeframe filters plus search update the rows and counters.
 6. Select an alert and confirm source/category/detail text is readable.
 7. Acknowledge one triggered alert. Confirm it moves to ACKNOWLEDGED.
 8. Restart the application and confirm acknowledged history remains.
