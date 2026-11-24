@@ -120,6 +120,39 @@ class AlertCenterStoreTests(unittest.TestCase):
         )
         self.assertEqual([row["id"] for row in rows], ["cpi"])
 
+    def test_category_and_timeframe_filters_are_applied(self):
+        store = AlertCenterStore()
+        store.record_triggered(
+            alert_id="risk-recent", title="LONDON SESSION RISK", message="Calendar caution.",
+            category="risk", source="Session risk", market="LONDON", impact="MEDIUM",
+            now=self.now - timedelta(minutes=30),
+        )
+        store.record_triggered(
+            alert_id="session-old", title="TOKYO SESSION CLOSE", message="Old transition.",
+            category="session", source="Session scheduler", market="TOKYO", impact="MEDIUM",
+            now=self.now - timedelta(days=2),
+        )
+        upcoming = {
+            "id": "calendar:usd-cpi",
+            "status": "UPCOMING",
+            "scheduled_at": (self.now + timedelta(minutes=30)).isoformat(),
+            "created_at": "",
+            "title": "US CPI",
+            "message": "Inflation release.",
+            "category": "economic",
+            "source": "Economic calendar",
+            "market": "USD",
+            "impact": "HIGH",
+        }
+        recent_risk = store.snapshot(
+            [upcoming], category="RISK", timeframe="LAST 24H", now=self.now
+        )
+        next_economic = store.snapshot(
+            [upcoming], category="ECONOMIC", timeframe="NEXT 1H", now=self.now
+        )
+        self.assertEqual([row["id"] for row in recent_risk], ["risk-recent"])
+        self.assertEqual([row["id"] for row in next_economic], ["calendar:usd-cpi"])
+
     def test_risk_caution_maps_to_medium_impact(self):
         store = AlertCenterStore()
         record = store.record_triggered(
