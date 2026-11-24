@@ -40,7 +40,7 @@ def build_alert_center(app, parent: tk.Widget) -> None:
         tile.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 5 if column < 3 else 0))
         metrics.grid_columnconfigure(column, weight=1, uniform="alert_metrics")
         app._label(tile, label, bg="bg", fg="muted", font=("Segoe UI", 8, "bold")).pack(anchor="w")
-        value = app._label(tile, "0", bg="bg", fg=palette[colour], font=("Segoe UI", 16, "bold"))
+        value = app._label(tile, "0", bg="bg", fg=colour, font=("Segoe UI", 16, "bold"))
         value.pack(anchor="w", pady=(2, 0))
         app.alert_center_metric_labels[key] = value
 
