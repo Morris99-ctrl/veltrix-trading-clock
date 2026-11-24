@@ -49,6 +49,8 @@ def build_alert_center(app, parent: tk.Widget) -> None:
     app.alert_center_status_var = tk.StringVar(value="ALL")
     app.alert_center_market_var = tk.StringVar(value="ALL")
     app.alert_center_impact_var = tk.StringVar(value="ALL")
+    app.alert_center_category_var = tk.StringVar(value="ALL")
+    app.alert_center_timeframe_var = tk.StringVar(value="ALL")
     app.alert_center_search_var = tk.StringVar(value="")
 
     def changed(*_args) -> None:
@@ -84,8 +86,26 @@ def build_alert_center(app, parent: tk.Widget) -> None:
     app.alert_center_impact_combo.pack(side="left", padx=(0, 9))
     app.alert_center_impact_combo.bind("<<ComboboxSelected>>", changed)
 
+    app._label(controls, "CATEGORY", bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 4))
+    app.alert_center_category_combo = ttk.Combobox(
+        controls, textvariable=app.alert_center_category_var,
+        values=("ALL", "SESSION", "RISK", "ECONOMIC", "OVERLAP", "WARNING", "TRANSITION", "INFO"),
+        state="readonly", width=10, style="Veltrix.AlertCenter.TCombobox",
+    )
+    app.alert_center_category_combo.pack(side="left", padx=(0, 8))
+    app.alert_center_category_combo.bind("<<ComboboxSelected>>", changed)
+
+    app._label(controls, "TIME", bg="panel", fg="muted", font=("Segoe UI", 8, "bold")).pack(side="left", padx=(0, 4))
+    app.alert_center_timeframe_combo = ttk.Combobox(
+        controls, textvariable=app.alert_center_timeframe_var,
+        values=("ALL", "NEXT 1H", "NEXT 4H", "NEXT 24H", "LAST 24H", "LAST 7D"),
+        state="readonly", width=10, style="Veltrix.AlertCenter.TCombobox",
+    )
+    app.alert_center_timeframe_combo.pack(side="left", padx=(0, 8))
+    app.alert_center_timeframe_combo.bind("<<ComboboxSelected>>", changed)
+
     app.alert_center_search_entry = tk.Entry(
-        controls, textvariable=app.alert_center_search_var, width=19,
+        controls, textvariable=app.alert_center_search_var, width=15,
         font=("Segoe UI", 9), relief="flat", bd=0,
     )
     app.alert_center_search_entry.pack(side="left", padx=(0, 5), ipady=5)
@@ -205,8 +225,18 @@ def refresh_alert_center(
     counts = app.alert_center.counts(app.alert_center_candidates)
     for key, label in app.alert_center_metric_labels.items():
         label.configure(text=str(counts.get(key, 0)))
+    calendar_fresh_this_run = getattr(app, "calendar_last_fetch_monotonic", None) is not None
+    if not calendar_fresh_this_run:
+        for item in app.alert_center_candidates:
+            if item.get("source") == "Economic calendar":
+                item["source"] = "Calendar cache"
+                item["message"] = (
+                    str(item.get("message", ""))
+                    + " This is cached context only; live reminders require a successful calendar fetch this run."
+                )
+    feed_note = "CALENDAR UPDATED THIS RUN" if calendar_fresh_this_run else "CALENDAR CACHE · CONTEXT ONLY"
     app.alert_center_feed_label.configure(
-        text=f"● MONITORING · {now_utc.astimezone(app.home_zone).strftime('%H:%M:%S')} {app.home_zone.key.upper()}"
+        text=f"● MONITORING · {now_utc.astimezone(app.home_zone).strftime('%H:%M:%S')} · {feed_note}"
     )
 
     market_values = sorted({
@@ -219,7 +249,10 @@ def refresh_alert_center(
         status=app.alert_center_status_var.get(),
         market=app.alert_center_market_var.get(),
         impact=app.alert_center_impact_var.get(),
+        category=app.alert_center_category_var.get(),
+        timeframe=app.alert_center_timeframe_var.get(),
         query=app.alert_center_search_var.get(),
+        now=now_utc,
     )
     visible = {str(row["id"]): row for row in rows}
     app.alert_center_visible_by_id = visible
@@ -322,6 +355,8 @@ def reset_alert_center_filters(app) -> None:
     app.alert_center_status_var.set("ALL")
     app.alert_center_market_var.set("ALL")
     app.alert_center_impact_var.set("ALL")
+    app.alert_center_category_var.set("ALL")
+    app.alert_center_timeframe_var.set("ALL")
     app.alert_center_search_var.set("")
 
 
