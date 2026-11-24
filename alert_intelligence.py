@@ -218,9 +218,8 @@ class AlertCenterStore:
         priority = {"ACTIVE": 0, "TRIGGERED": 1, "UPCOMING": 2, "ACKNOWLEDGED": 3}
         def ordering(record: dict[str, Any]) -> tuple[int, float, str]:
             stamp = _parse_iso(record.get("scheduled_at")) or _parse_iso(record.get("created_at"))
-            if stamp is None:
-                stamp = datetime.max.replace(tzinfo=timezone.utc)
-            return priority.get(str(record.get("status")), 9), stamp.timestamp(), str(record.get("id"))
+            sort_stamp = stamp.timestamp() if stamp is not None else float("inf")
+            return priority.get(str(record.get("status")), 9), sort_stamp, str(record.get("id"))
         rows.sort(key=ordering)
         return rows
 
