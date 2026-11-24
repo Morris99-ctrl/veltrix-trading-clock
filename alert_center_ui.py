@@ -107,7 +107,7 @@ def build_alert_center(app, parent: tk.Widget) -> None:
     )
     specs = {
         "status": ("STATUS", 104, "center"),
-        "time": ("LOCAL TIME", 118, "center"),
+        "time": ("LOCAL TIME / ETA", 160, "center"),
         "market": ("MARKET", 100, "center"),
         "impact": ("IMPACT", 76, "center"),
         "alert": ("ALERT / EVENT", 310, "w"),
@@ -174,7 +174,15 @@ def _format_local_time(record: dict, home_zone) -> str:
         parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             return "TIME N/A"
-        return parsed.astimezone(home_zone).strftime("%d %b · %H:%M")
+        local_text = parsed.astimezone(home_zone).strftime("%d %b · %H:%M")
+    if str(record.get("status", "")).upper() == "UPCOMING":
+        remaining = max(0, int((parsed - datetime.now(timezone.utc)).total_seconds()))
+        days, remainder = divmod(remaining, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes = remainder // 60
+        eta = f"{days}d {hours}h" if days else (f"{hours}h {minutes:02d}m" if hours else f"{minutes}m")
+        local_text += f" · {eta}"
+    return local_text
     except (TypeError, ValueError, OverflowError, OSError):
         return "TIME N/A"
 
@@ -198,6 +206,11 @@ def refresh_alert_center(
         text=f"● MONITORING · {now_utc.astimezone(app.home_zone).strftime('%H:%M:%S')} {app.home_zone.key.upper()}"
     )
 
+    market_values = sorted({
+        str(item.get("market", "GLOBAL")).upper()
+        for item in app.alert_center.snapshot(app.alert_center_candidates)
+    })
+    app.alert_center_market_combo.configure(values=("ALL", *market_values))
     rows = app.alert_center.snapshot(
         app.alert_center_candidates,
         status=app.alert_center_status_var.get(),
