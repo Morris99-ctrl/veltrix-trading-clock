@@ -120,6 +120,15 @@ class AlertCenterStoreTests(unittest.TestCase):
         )
         self.assertEqual([row["id"] for row in rows], ["cpi"])
 
+    def test_risk_caution_maps_to_medium_impact(self):
+        store = AlertCenterStore()
+        record = store.record_triggered(
+            alert_id="risk-caution", title="Session caution", message="Schedule heuristic.",
+            category="warning", source="Session risk", market="LONDON",
+            impact="CAUTION", now=self.now,
+        )
+        self.assertEqual(record["impact"], "MEDIUM")
+
     def test_naive_clock_is_rejected(self):
         store = AlertCenterStore()
         with self.assertRaises(ValueError):
