@@ -41,7 +41,10 @@ from ui_theme import (
 from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
-from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
+from regime_data import (
+    import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets,
+    save_regime_datasets, snapshot_ohlc_records,
+)
 from session_clock import session_clock_hand_endpoints, session_clock_hand_polygon_coordinates
 from session_visuals import (
     session_window_progress, session_window_arc_angles, utc_offset_label,
@@ -2654,7 +2657,9 @@ class VeltrixTradingClock:
             )
             return
 
-        bars = tuple(dict(item) for item in dataset.get("bars", []) if isinstance(item, dict))
+        bars = snapshot_ohlc_records(
+            item for item in dataset.get("bars", []) if isinstance(item, dict)
+        )
         sessions = tuple(self.sessions)
         study_metadata = {
             "key": key,
@@ -3235,8 +3240,8 @@ class VeltrixTradingClock:
             return
         asset_key = self._selected_regime_asset_key()
         dataset = self.regime_datasets.get(asset_key)
-        bars = list(dataset.get("bars", [])) if isinstance(dataset, dict) else []
-        if not bars:
+        source_bars = dataset.get("bars", []) if isinstance(dataset, dict) else []
+        if not source_bars:
             messagebox.showwarning(
                 "No historical bars",
                 "Import an OHLC CSV in Regime Lab before running regime analysis.",
@@ -3258,7 +3263,7 @@ class VeltrixTradingClock:
             "bar_interval_minutes": dataset.get("bar_interval_minutes"),
             "variable_interval_bars": bool(dataset.get("variable_interval_bars", False)),
         }
-        snapshot = tuple(dict(item) if isinstance(item, dict) else item for item in bars)
+        snapshot = snapshot_ohlc_records(source_bars)
         self._clear_regime_results()
         self.regime_in_progress = True
         self.regime_run_button.configure(state="disabled")
