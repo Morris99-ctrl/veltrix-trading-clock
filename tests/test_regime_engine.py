@@ -98,6 +98,14 @@ class RegimeEngineTests(unittest.TestCase):
         )
         self.assertEqual(matrix_count, expected)
 
+    def test_input_bar_count_is_preserved_for_one_pass_iterables(self):
+        bars = make_bars([100.0 + index * 0.1 for index in range(90)])
+
+        result = analyse_market_regimes(iter(bars))
+
+        self.assertEqual(result["metadata"]["input_bars"], len(bars))
+        self.assertEqual(result["metadata"]["valid_bars"], len(bars))
+
     def test_invalid_and_duplicate_bars_are_removed(self):
         bars = make_bars([100 + i * 0.1 for i in range(80)])
         duplicate = bars[-1]
