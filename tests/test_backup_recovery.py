@@ -110,7 +110,7 @@ class BackupRecoveryTests(unittest.TestCase):
                         if name == "config.json":
                             payload += b" "
                         target.writestr(name, payload)
-            with self.assertRaisesRegex(BackupError, "Size verification failed|SHA-256 verification failed"):
+            with self.assertRaisesRegex(BackupError, "Archive size does not match|Size verification failed|SHA-256 verification failed"):
                 verify_backup(corrupt)
 
     def test_unknown_archive_paths_are_rejected(self):
