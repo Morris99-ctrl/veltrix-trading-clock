@@ -23,6 +23,11 @@ Retained capabilities
 - No broker integration, order execution or trading signals are introduced.
 
 Validation
-- Automated test matrix: pending.
-- Windows standalone package and executable verification: pending.
-- Manual desktop review: pending.
+- GitHub Actions run 45682482030: passed.
+- Python 3.10: 285 tests passed; compileall passed.
+- Python 3.11: 285 tests passed; compileall passed.
+- Python 3.12: 285 tests passed; compileall passed.
+- Windows standalone PyInstaller build: passed.
+- Executable verification: passed; VeltrixTradingClock.exe exists.
+- Windows build artifact upload: passed.
+- Manual desktop review: pending; validate actual Windows readings, page lifecycle, scrolling and idle CPU usage.
