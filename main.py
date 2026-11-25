@@ -108,6 +108,18 @@ UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 16
 SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
 
+def _format_backup_bytes(value: int) -> str:
+    size = max(0, int(value))
+    if size >= 1024 ** 3:
+        return f"{size / (1024 ** 3):.2f} GB"
+    if size >= 1024 ** 2:
+        return f"{size / (1024 ** 2):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
+
 DIGIT_SEGMENTS = {
     "0": "abcdef",
     "1": "bc",
@@ -3416,6 +3428,12 @@ class VeltrixTradingClock:
                 set_backup_status(self, f"{action.replace('_', ' ').upper()} FAILED · {error[:180]}", "error")
                 if hasattr(self, "backup_preview_label") and action == "verify":
                     self.backup_preview_label.configure(text=f"VERIFICATION FAILED · {error}")
+                    selection = self.backup_history_tree.selection()
+                    self.backup_verify_button.configure(state="normal" if selection else "disabled")
+                elif action == "create":
+                    refresh_backup_recovery_page(self)
+                elif action == "prepare_restore":
+                    refresh_backup_recovery_page(self)
             elif action == "create":
                 set_backup_status(
                     self,
