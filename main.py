@@ -3742,6 +3742,15 @@ class VeltrixTradingClock:
             self.session_animation_job = self.root.after(
                 SESSION_CLOCK_FRAME_MS, self._animate_session_clocks
             )
+        if page == "alerts":
+            now_utc = datetime.now(timezone.utc)
+            refresh_alerts_dashboard(self, now_utc, self.latest_session_states, force=True)
+            refresh_alert_center(
+                self, now_utc, self.latest_session_states,
+                self.calendar_events, self.economic_events,
+            )
+        elif page == "command_center":
+            refresh_command_center(self, datetime.now(timezone.utc))
         if page == "volatility" and hasattr(self, "volatility_canvas"):
             self.volatility_canvas.yview_moveto(0.0)
         if page == "regime" and hasattr(self, "regime_canvas"):
@@ -4922,12 +4931,16 @@ class VeltrixTradingClock:
         ]
         self.latest_session_states = states
         open_states = [state for state in states if state.is_open]
-        refresh_alerts_dashboard(self, now_utc, states)
+        # Alert polling stays active, but expensive table/timeline rendering is
+        # deferred while the Alerts workspace is hidden.
+        if self.current_page == "alerts":
+            refresh_alerts_dashboard(self, now_utc, states)
         self._poll_market_alerts(now_utc, open_states)
         self._poll_session_risk_alerts(now_utc, states)
         self._poll_economic_events(home_now)
         self._poll_live_calendar_events(home_now)
-        refresh_alert_center(self, now_utc, states, self.calendar_events, self.economic_events)
+        if self.current_page == "alerts":
+            refresh_alert_center(self, now_utc, states, self.calendar_events, self.economic_events)
         self.summary_open["value"].configure(text=f"{len(open_states)} / {len(states)}")
         transitions = sorted(states, key=lambda item: item.seconds_to_transition)
         if transitions:
@@ -5034,7 +5047,8 @@ class VeltrixTradingClock:
             text="AUDIO // MP3 READY" if self.audio_available and ALARM_SOUND_FILE.is_file() else "AUDIO: SYSTEM BELL"
         )
         self._update_next_alarm_display()
-        refresh_command_center(self, now_utc)
+        if self.current_page == "command_center":
+            refresh_command_center(self, now_utc)
         self.clock_job = self.root.after(self.refresh_ms, self.update_clock)
 
     @staticmethod
