@@ -1,6 +1,8 @@
 """Tkinter presentation for the Veltrix System Health workspace."""
 from __future__ import annotations
 
+import os
+import time
 import tkinter as tk
 from tkinter import ttk
 from typing import Any
@@ -274,7 +276,7 @@ def refresh_system_health_page(
     for key, value in values.items():
         app.health_metric_labels[key].configure(text=value)
     app.health_metric_detail_labels["process_cpu"].configure(
-        text=f"{max(1, __import__('os').cpu_count() or 1)} logical processor(s) · process share"
+        text=f"{max(1, os.cpu_count() or 1)} logical processor(s) · process share"
     )
     app.health_metric_detail_labels["process_ram"].configure(text="Resident working set · current sample")
     app.health_metric_detail_labels["system_ram"].configure(text="Physical memory in use · current sample")
@@ -313,8 +315,7 @@ def refresh_system_health_page(
         text="LIVE SAMPLING · 1 SECOND · PAUSES WHEN HIDDEN",
         fg=palette["success"],
     )
-    elapsed = max(0, int(sample.sampled_at.timestamp() - (sample.sampled_at.timestamp() -
-                    max(0.0, __import__('time').monotonic() - app.system_health_monitor.started_monotonic))))
+    elapsed = max(0, int(time.monotonic() - app.system_health_monitor.started_monotonic))
     hours, remainder = divmod(elapsed, 3600)
     minutes, seconds = divmod(remainder, 60)
     app.health_uptime_label.configure(
