@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import queue
+from collections import deque
 import sys
 import threading
 import time
@@ -52,6 +53,8 @@ from session_visuals import (
 )
 from session_timeline import build_session_timeline
 from smooth_scroll import find_scrollable_canvas, scroll_canvas_by_pixels, wheel_delta_pixels
+from system_health import SystemHealthMonitor, collect_worker_snapshot
+from system_health_ui import build_system_health_page, refresh_system_health_page
 from session_intelligence import historical_overlap_report, weekly_session_hours
 from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
 from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events
@@ -93,7 +96,7 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.16"
+APP_VERSION = "10.18"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 16
 SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
@@ -275,6 +278,11 @@ class VeltrixTradingClock:
         self.alert_log_lines: list[str] = []
         self.alert_center = AlertCenterStore(self.config.get("alert_center", {}))
         self.is_closing = False
+        self.system_health_monitor = SystemHealthMonitor()
+        self.system_health_job: str | None = None
+        self.system_health_next_sample_due: float | None = None
+        self.system_health_history: deque = deque(maxlen=60)
+        self.system_health_latency_history: deque = deque(maxlen=60)
 
         # Phase 11: persistent personal focus timers, goals and milestones.
         self.focus_store = FocusStore(
@@ -559,7 +567,12 @@ class VeltrixTradingClock:
             nav, text="FOCUS & GOALS", command=lambda: self.show_page("focus"),
             font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
-        self.focus_nav_button.pack(side="left")
+        self.focus_nav_button.pack(side="left", padx=(0, 5))
+        self.system_health_nav_button = tk.Button(
+            nav, text="HEALTH", command=lambda: self.show_page("system_health"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+        )
+        self.system_health_nav_button.pack(side="left")
 
         self.page_host = self._frame(self.outer)
         self.page_host.pack(fill="both", expand=True)
@@ -572,6 +585,7 @@ class VeltrixTradingClock:
         self.regime_view = self._frame(self.page_host)
         self.market_intelligence_view = self._frame(self.page_host)
         self.focus_view = self._frame(self.page_host)
+        self.system_health_view = self._frame(self.page_host)
         self.sessions_view.pack(fill="both", expand=True)
 
         # The Global Sessions page is vertically scrollable so the four clocks,
@@ -641,6 +655,7 @@ class VeltrixTradingClock:
         build_market_intelligence_page(self)
         build_session_performance_page(self)
         self._build_focus_page()
+        build_system_health_page(self)
         self.show_page("command_center")
 
         # Alarm control strip from the original clock. This stays visible on both pages.
@@ -2751,6 +2766,7 @@ class VeltrixTradingClock:
                     )
                     continue
                 if error:
+                    self.system_health_monitor.record_error("Session performance", error)
                     self.session_performance_result = None
                     self.session_performance_export_button.configure(state="disabled")
                     self.session_performance_status_label.configure(
@@ -3065,6 +3081,7 @@ class VeltrixTradingClock:
                     return
                 save_regime_datasets(REGIME_DATA_PATH, payload)
             except Exception as exc:
+                self.system_health_monitor.record_error("Dataset cache writer", exc)
                 self.regime_import_result_queue.put({"error": f"Dataset save failed: {exc}"})
             finally:
                 self.regime_cache_write_queue.task_done()
@@ -3157,6 +3174,7 @@ class VeltrixTradingClock:
             while True:
                 result = self.regime_import_result_queue.get_nowait()
                 if result.get("error"):
+                    self.system_health_monitor.record_error("OHLC CSV import / save", result["error"])
                     self.regime_import_in_progress = False
                     self.regime_import_button.configure(state="normal")
                     self.regime_status_label.configure(
@@ -3311,6 +3329,8 @@ class VeltrixTradingClock:
                     )
                     continue
                 if error or result is None:
+                    if error:
+                        self.system_health_monitor.record_error("Regime analysis", error)
                     self.regime_status_label.configure(
                         text=f"REGIME ANALYSIS FAILED · {error or 'Unknown analysis error'}",
                         fg=THEMES[self.theme_name]["error"],
@@ -3595,6 +3615,7 @@ class VeltrixTradingClock:
         self.market_fetch_in_progress = False
         self.refresh_market_button.configure(state="normal", text="REFRESH MARKET DATA")
         if error:
+            self.system_health_monitor.record_error("Market data", error)
             self.market_is_fresh = False
             self.market_status_label.configure(text=f"MARKET DATA UPDATE FAILED · {error[:145]}",
                                                fg=THEMES[self.theme_name]["error"])
@@ -3747,6 +3768,56 @@ class VeltrixTradingClock:
                 except tk.TclError:
                     pass
 
+    def _start_system_health_monitoring(self) -> None:
+        """Sample resources only while the read-only health workspace is visible."""
+        if self.is_closing or self.system_health_job is not None:
+            return
+        self.system_health_monitor.reset_baseline()
+        self.system_health_next_sample_due = time.perf_counter() + 1.0
+        self.health_status_label.configure(
+            text="STARTING RESOURCE SAMPLING...",
+            fg=THEMES[self.theme_name]["warning"],
+        )
+        self.system_health_job = self.root.after(1000, self._sample_system_health)
+
+    def _stop_system_health_monitoring(self) -> None:
+        """Stop the health page timer immediately when navigating elsewhere."""
+        if self.system_health_job is not None:
+            try:
+                self.root.after_cancel(self.system_health_job)
+            except tk.TclError:
+                pass
+        self.system_health_job = None
+        self.system_health_next_sample_due = None
+        if hasattr(self, "health_status_label"):
+            self.health_status_label.configure(
+                text="STANDBY · SAMPLING PAUSED",
+                fg=THEMES[self.theme_name]["muted"],
+            )
+
+    def _sample_system_health(self) -> None:
+        if self.is_closing or self.current_page != "system_health":
+            self.system_health_job = None
+            self.system_health_next_sample_due = None
+            return
+        now = time.perf_counter()
+        due = self.system_health_next_sample_due or now
+        event_loop_delay = max(0.0, (now - due) * 1000.0)
+        sample = self.system_health_monitor.sample()
+        self.system_health_history.append(sample)
+        self.system_health_latency_history.append(event_loop_delay)
+        workers = collect_worker_snapshot(self)
+        refresh_system_health_page(
+            self,
+            sample,
+            workers,
+            event_loop_delay,
+            list(self.system_health_latency_history),
+            self.system_health_monitor.recent_errors(),
+        )
+        self.system_health_next_sample_due = time.perf_counter() + 1.0
+        self.system_health_job = self.root.after(1000, self._sample_system_health)
+
     def show_page(self, page: str) -> None:
         page_map = {
             "command_center": (self.command_center_view, self.command_center_nav_button),
@@ -3758,13 +3829,14 @@ class VeltrixTradingClock:
             "regime": (self.regime_view, self.regime_nav_button),
             "market_intelligence": (self.market_intelligence_view, self.market_intelligence_nav_button),
             "focus": (self.focus_view, self.focus_nav_button),
+            "system_health": (self.system_health_view, self.system_health_nav_button),
         }
         if page not in page_map:
             page = "command_center"
         for view in (
             self.command_center_view, self.sessions_view, self.session_performance_view, self.alerts_view,
             self.calendar_view, self.volatility_view, self.regime_view,
-            self.market_intelligence_view, self.focus_view,
+            self.market_intelligence_view, self.focus_view, self.system_health_view,
         ):
             view.pack_forget()
         active_view, active_button = page_map[page]
@@ -3775,7 +3847,11 @@ class VeltrixTradingClock:
                 button.configure(bg=palette["button_active"], fg=palette["bright"])
             else:
                 button.configure(bg=palette["button_bg"], fg=palette["button_fg"])
+        if getattr(self, "current_page", None) == "system_health" and page != "system_health":
+            self._stop_system_health_monitoring()
         self.current_page = page
+        if page == "system_health":
+            self._start_system_health_monitoring()
         if page == "sessions" and self.session_animation_job is None:
             self.session_animation_job = self.root.after(
                 SESSION_CLOCK_FRAME_MS, self._animate_session_clocks
@@ -3928,6 +4004,7 @@ class VeltrixTradingClock:
             self.calendar_auto_refresh_job = None
 
         if error:
+            self.system_health_monitor.record_error("Economic calendar", error)
             # Exponential backoff: 30s, 60s, 120s ... capped at 15 minutes.
             # This is deliberately independent of the provider's successful-fetch cache floor.
             self.calendar_retry_count = min(self.calendar_retry_count + 1, 6)
@@ -3956,6 +4033,7 @@ class VeltrixTradingClock:
         try:
             save_calendar_cache(CALENDAR_CACHE_PATH, self.calendar_payload)
         except OSError as exc:
+            self.system_health_monitor.record_error("Calendar cache", exc)
             self._set_calendar_status(f"DATA RECEIVED · CACHE WRITE FAILED: {exc}", "warning")
         else:
             self._set_calendar_status(
@@ -4709,6 +4787,10 @@ class VeltrixTradingClock:
             self.command_center_canvas.configure(bg=palette["bg"])
         if hasattr(self, "sessions_canvas"):
             self.sessions_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "system_health_canvas"):
+            self.system_health_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "system_health_history_canvas"):
+            self.system_health_history_canvas.configure(bg=palette["panel"])
         if hasattr(self, "alerts_canvas"):
             self.alerts_canvas.configure(bg=palette["bg"])
         if hasattr(self, "alerts_session_canvas"):
@@ -4764,7 +4846,7 @@ class VeltrixTradingClock:
             self.command_center_nav_button, self.sessions_nav_button, self.session_performance_nav_button,
             self.alerts_nav_button, self.calendar_nav_button,
             self.volatility_nav_button, self.regime_nav_button, self.market_intelligence_nav_button,
-            self.focus_nav_button,
+            self.focus_nav_button, self.system_health_nav_button,
             self.session_performance_import_button, self.session_performance_run_button,
             self.session_performance_export_button,
             self.alerts_search_button, self.alerts_clear_button, self.alerts_sort_up_button,
@@ -5339,7 +5421,7 @@ class VeltrixTradingClock:
             self.calendar_auto_refresh_job, self.calendar_startup_fetch_job, self.calendar_queue_job,
             self.market_auto_refresh_job, self.market_startup_fetch_job, self.market_queue_job,
             self.regime_queue_job, self.regime_cache_load_job, self.regime_import_queue_job,
-            self.focus_tick_job,
+            self.focus_tick_job, self.system_health_job,
         ):
             if job is not None:
                 try:
