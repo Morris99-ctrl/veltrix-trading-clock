@@ -229,7 +229,7 @@ class SystemHealthMonitor:
         self._recent_errors: deque[dict[str, str]] = deque(maxlen=12)
         self._previous_process_cpu: float | None = None
         self._previous_wall: float | None = None
-        self._previous_system_cpu = read_system_cpu_counters()
+        self._previous_system_cpu = None
         self.reset_baseline()
 
     def reset_baseline(self) -> None:
