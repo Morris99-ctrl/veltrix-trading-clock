@@ -172,6 +172,13 @@ def _file_entries_for_backup(
             continue
         if source.is_symlink() or not source.is_file():
             raise BackupError(f"Refusing to back up non-regular user-data file: {name}.")
+        if name == "config.json":
+            try:
+                config_payload = json.loads(source.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise BackupError(f"Configuration cannot be safely backed up: {exc}") from exc
+            if not isinstance(config_payload, dict):
+                raise BackupError("Configuration backup must contain a JSON object.")
         if name == "focus_goals.sqlite3":
             target = staging_dir / name
             _sqlite_online_snapshot(source, target)
@@ -515,6 +522,14 @@ def _stage_verified_archive(
                 os.fsync(destination.fileno())
             if size != record["size_bytes"] or digest.hexdigest() != record["sha256"]:
                 raise BackupError(f"Restore staging verification failed for {name}.")
+    config_file = staging_dir / "config.json"
+    try:
+        config_payload = json.loads(config_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BackupError(f"Restored configuration is invalid: {exc}") from exc
+    if not isinstance(config_payload, dict):
+        raise BackupError("Restored configuration must contain a JSON object.")
+
     database = staging_dir / "focus_goals.sqlite3"
     if database.exists():
         try:
