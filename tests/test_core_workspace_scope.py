@@ -76,6 +76,13 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("self.session_animation_job", MAIN_SOURCE)
 
 
+    def test_hidden_dashboards_skip_periodic_rendering_and_refresh_when_opened(self):
+        self.assertIn('if self.current_page == "alerts":\n            refresh_alerts_dashboard', MAIN_SOURCE)
+        self.assertIn('if self.current_page == "alerts":\n            refresh_alert_center', MAIN_SOURCE)
+        self.assertIn('if self.current_page == "command_center":\n            refresh_command_center', MAIN_SOURCE)
+        self.assertIn('if page == "alerts":', MAIN_SOURCE)
+        self.assertIn('elif page == "command_center":', MAIN_SOURCE)
+
     def test_session_clock_animation_pauses_outside_the_sessions_workspace(self):
         self.assertIn('if self.current_page != "sessions":', MAIN_SOURCE)
         self.assertIn('self.session_animation_job = None', MAIN_SOURCE)
