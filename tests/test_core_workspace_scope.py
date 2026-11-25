@@ -76,6 +76,12 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("self.session_animation_job", MAIN_SOURCE)
 
 
+    def test_session_clock_animation_pauses_outside_the_sessions_workspace(self):
+        self.assertIn('if self.current_page != "sessions":', MAIN_SOURCE)
+        self.assertIn('self.session_animation_job = None', MAIN_SOURCE)
+        self.assertIn('page == "sessions" and self.session_animation_job is None', MAIN_SOURCE)
+        self.assertIn('SESSION_CLOCK_FRAME_MS, self._animate_session_clocks', MAIN_SOURCE)
+
     def test_global_session_intelligence_uses_the_session_engine_and_scrollable_map(self):
         self.assertIn("from session_timeline import build_session_timeline", MAIN_SOURCE)
         self.assertIn("def _build_session_timeline", MAIN_SOURCE)
