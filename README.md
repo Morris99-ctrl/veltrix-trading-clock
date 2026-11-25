@@ -2,7 +2,7 @@
 
 Veltrix v10.19 builds on the v10.18 System Health Monitor and the existing market-intelligence, session, alert and research workspaces. It adds verified local backups and a guarded next-launch recovery workflow without changing market-data providers, trading analytics or alert behaviour.
 
-**Current release:** v10.19. Automated local backup and recovery protects configuration, alarms, Focus database records, imported OHLC datasets and market/calendar caches. Backups are SHA-256 verified, retained locally and restored before the next application launch after a safety copy is made. Automated v10.19 validation is pending on the draft upgrade branch; manual Windows desktop review is still required. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
+**Current release:** v10.19. Automated local backup and recovery protects configuration, alarms, Focus database records, imported OHLC datasets and market/calendar caches. Backups are SHA-256 verified, retained locally and restored before the next application launch after a safety copy is made. v10.19 automated validation and the Windows standalone build have passed on the upgrade branch. Manual Windows desktop review remains the next acceptance step after merge. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
