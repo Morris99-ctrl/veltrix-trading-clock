@@ -89,6 +89,19 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn('page == "sessions" and self.session_animation_job is None', MAIN_SOURCE)
         self.assertIn('SESSION_CLOCK_FRAME_MS, self._animate_session_clocks', MAIN_SOURCE)
 
+    def test_session_timeline_snapshot_is_cached_by_schedule_inputs(self):
+        self.assertIn("self.session_timeline_cache_key: tuple | None = None", MAIN_SOURCE)
+        self.assertIn("self.session_timeline_cache: Any = None", MAIN_SOURCE)
+        self.assertIn("cache_key = (start_utc.date(), exchange_calendar_enabled, schedule_signature)", MAIN_SOURCE)
+        self.assertIn("if cache_key != self.session_timeline_cache_key:", MAIN_SOURCE)
+        self.assertIn("self.session_timeline_cache = build_session_timeline(", MAIN_SOURCE)
+        self.assertIn("snapshot = self.session_timeline_cache", MAIN_SOURCE)
+
+    def test_market_intelligence_analysis_is_deferred_until_its_workspace_is_visible(self):
+        self.assertIn('if self.current_page == "market_intelligence":\n            refresh_market_intelligence_page(self)', MAIN_SOURCE)
+        self.assertIn('page == "market_intelligence" and hasattr(self, "market_intelligence_canvas")', MAIN_SOURCE)
+        self.assertIn("refresh_market_intelligence_page(self)", MAIN_SOURCE)
+
     def test_hidden_global_sessions_render_only_when_active(self):
         self.assertIn('if self.current_page == "sessions":\n            self._refresh_global_sessions_workspace', MAIN_SOURCE)
         self.assertIn('def _refresh_global_sessions_workspace(', MAIN_SOURCE)
