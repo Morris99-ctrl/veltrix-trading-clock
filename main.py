@@ -226,6 +226,8 @@ class VeltrixTradingClock:
         self.latest_session_states: list = []
         self.session_probe_utc: datetime | None = None
         self.session_timeline_plot: tuple[float, float, datetime] | None = None
+        self.session_timeline_cache_key: tuple | None = None
+        self.session_timeline_cache: Any = None
         self.world_dial_signature: tuple | None = None
         self.theme_items: list[tuple[tk.Widget, str, str | None]] = []
         self.clock_canvas_signature: tuple[int, int, str] | None = None
@@ -950,10 +952,22 @@ class VeltrixTradingClock:
         palette = THEMES[self.theme_name]
         start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         end_utc = start_utc + timedelta(hours=24)
-        snapshot = build_session_timeline(
-            self.sessions, start_utc, hours=24,
-            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        exchange_calendar_enabled = bool(self.exchange_calendar_enabled_var.get())
+        schedule_signature = tuple(
+            (
+                session.key, session.name, session.timezone_name,
+                session.opens.isoformat(), session.closes.isoformat(), session.weekdays,
+            )
+            for session in self.sessions
         )
+        cache_key = (start_utc.date(), exchange_calendar_enabled, schedule_signature)
+        if cache_key != self.session_timeline_cache_key:
+            self.session_timeline_cache = build_session_timeline(
+                self.sessions, start_utc, hours=24,
+                apply_exchange_calendar=exchange_calendar_enabled,
+            )
+            self.session_timeline_cache_key = cache_key
+        snapshot = self.session_timeline_cache
         self._draw_world_session_dial(now_utc, snapshot)
         if self.session_probe_utc is not None and self.session_probe_utc.date() != start_utc.date():
             self.session_probe_utc = None
@@ -3678,7 +3692,8 @@ class VeltrixTradingClock:
         elif not self.market_is_fresh:
             self.market_status_label.configure(text="CACHED MARKET SNAPSHOT · LIVE DATA NOT VERIFIED THIS RUN",
                                                fg=THEMES[self.theme_name]["warning"])
-        refresh_market_intelligence_page(self)
+        if self.current_page == "market_intelligence":
+            refresh_market_intelligence_page(self)
 
     def _emit_market_regime_alerts(self) -> None:
         if not self.market_is_fresh or not bool(self.market_settings.get("regime_alerts_enabled", True)):
