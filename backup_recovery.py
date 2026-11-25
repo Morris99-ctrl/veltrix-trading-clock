@@ -82,6 +82,25 @@ def _sha256_file(path: Path) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
+def _write_file_to_zip(
+    archive: zipfile.ZipFile,
+    name: str,
+    source_path: Path,
+) -> tuple[int, str]:
+    """Stream one source into the archive while hashing the exact archived bytes."""
+    digest = hashlib.sha256()
+    size = 0
+    with source_path.open("rb") as source, archive.open(name, "w", force_zip64=True) as target:
+        while True:
+            chunk = source.read(HASH_CHUNK_BYTES)
+            if not chunk:
+                break
+            target.write(chunk)
+            digest.update(chunk)
+            size += len(chunk)
+    return size, digest.hexdigest()
+
+
 def _sha256_zip_member(archive: zipfile.ZipFile, name: str) -> tuple[int, str]:
     digest = hashlib.sha256()
     size = 0
@@ -153,12 +172,14 @@ def _file_entries_for_backup(
             continue
         if source.is_symlink() or not source.is_file():
             raise BackupError(f"Refusing to back up non-regular user-data file: {name}.")
-        target = staging_dir / name
         if name == "focus_goals.sqlite3":
+            target = staging_dir / name
             _sqlite_online_snapshot(source, target)
+            entries.append((name, target))
         else:
-            shutil.copy2(source, target)
-        entries.append((name, target))
+            # JSON/cache saves are atomic replacements. Stream those files
+            # directly into the ZIP instead of copying large OHLC files first.
+            entries.append((name, source))
     if "config.json" not in {name for name, _ in entries}:
         raise BackupError("The current configuration file is missing; no backup was created.")
     return entries
@@ -276,9 +297,6 @@ def verify_backup(backup_path: str | Path) -> dict[str, Any]:
                     raise BackupError(f"Size verification failed for {record['name']}.")
                 if digest != record["sha256"]:
                     raise BackupError(f"SHA-256 verification failed for {record['name']}.")
-            bad_member = archive.testzip()
-            if bad_member is not None:
-                raise BackupError(f"ZIP integrity check failed at {bad_member}.")
     except (OSError, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
         if isinstance(exc, BackupError):
             raise
@@ -363,6 +381,8 @@ def create_backup(
     if not source_dir.is_dir():
         raise BackupError("Veltrix user-data directory does not exist.")
     directory = _backup_dir(source_dir)
+    if directory.is_symlink():
+        raise BackupError("Backup directory must not be a symbolic link.")
     directory.mkdir(parents=True, exist_ok=True)
     now = _utc_now()
     backup_name = (
@@ -380,9 +400,8 @@ def create_backup(
                 compresslevel=3, allowZip64=True,
             ) as archive:
                 for name, staged_file in file_entries:
-                    size, digest = _sha256_file(staged_file)
+                    size, digest = _write_file_to_zip(archive, name, staged_file)
                     records.append({"name": name, "size_bytes": size, "sha256": digest})
-                    archive.write(staged_file, arcname=name)
                 manifest = {
                     "format": BACKUP_FORMAT,
                     "format_version": BACKUP_FORMAT_VERSION,
@@ -395,7 +414,7 @@ def create_backup(
                     MANIFEST_NAME,
                     json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8"),
                 )
-        with temporary_path.open("rb") as stream:
+        with temporary_path.open("rb+") as stream:
             os.fsync(stream.fileno())
         verified = verify_backup(temporary_path)
         os.replace(temporary_path, final_path)
@@ -427,6 +446,8 @@ def _safe_backup_path(data_dir: Path, backup_name: str) -> Path:
 
 def read_pending_restore(data_dir: str | Path) -> dict[str, Any] | None:
     marker = _pending_restore_path(data_dir)
+    if marker.is_symlink():
+        return {"error": "Pending restore request must not be a symbolic link."}
     if not marker.is_file():
         return None
     try:
@@ -469,7 +490,6 @@ def _stage_verified_archive(
     backup_path: Path,
     staging_dir: Path,
 ) -> tuple[dict[str, Any], set[str]]:
-    summary = verify_backup(backup_path)
     with zipfile.ZipFile(backup_path, "r") as archive:
         manifest = _manifest_from_archive(archive)
         for record in manifest["files"]:
@@ -492,7 +512,7 @@ def _stage_verified_archive(
     database = staging_dir / "focus_goals.sqlite3"
     if database.exists():
         try:
-            with sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True) as connection:
+            with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True) as connection:
                 check = connection.execute("PRAGMA integrity_check").fetchone()
                 if not check or str(check[0]).lower() != "ok":
                     raise BackupError("Focus database failed its integrity check.")
@@ -548,28 +568,43 @@ def apply_pending_restore(data_dir: str | Path, *, app_version: str = "unknown")
     if request.get("format_version") != BACKUP_FORMAT_VERSION:
         raise BackupError("Pending restore request uses an unsupported format.")
     backup_path = _safe_backup_path(root, request.get("backup_name"))
-    verify_backup(backup_path)
 
-    safety = create_backup(
-        root, app_version=app_version, preserve_names=(backup_path.name,)
-    )
-    safety_path = Path(safety["path"])
+    # Stage, hash and validate the selected snapshot exactly once before taking
+    # the safety copy. Recovery is intentionally performed before the app opens
+    # configuration or SQLite connections.
     try:
-        result = _apply_archive(root, backup_path)
-    except Exception as restore_error:
-        try:
-            _apply_archive(root, safety_path)
-            cancel_pending_restore(root)
-        except Exception as rollback_error:
-            raise BackupError(
-                "Restore failed and automatic rollback also failed. "
-                f"Keep the safety archive {safety_path.name}; details: "
-                f"restore={restore_error}; rollback={rollback_error}"
-            ) from rollback_error
-        raise BackupError(
-            "Restore failed. Veltrix restored the pre-restore data from "
-            f"{safety_path.name}. No selected backup was applied. Details: {restore_error}"
-        ) from restore_error
+        with tempfile.TemporaryDirectory(prefix=".veltrix-restore-", dir=root) as stage_name:
+            staging_dir = Path(stage_name)
+            manifest, included = _stage_verified_archive(backup_path, staging_dir)
+            safety = create_backup(
+                root, app_version=app_version, preserve_names=(backup_path.name,)
+            )
+            safety_path = Path(safety["path"])
+            try:
+                _commit_staged_restore(root, staging_dir, included)
+            except Exception as restore_error:
+                try:
+                    _apply_archive(root, safety_path)
+                    cancel_pending_restore(root)
+                except Exception as rollback_error:
+                    raise BackupError(
+                        "Restore failed and automatic rollback also failed. "
+                        f"Keep the safety archive {safety_path.name}; details: "
+                        f"restore={restore_error}; rollback={rollback_error}"
+                    ) from rollback_error
+                raise BackupError(
+                    "Restore failed. Veltrix restored the pre-restore data from "
+                    f"{safety_path.name}. No selected backup was applied. Details: {restore_error}"
+                ) from restore_error
+            result = {
+                "backup_name": backup_path.name,
+                "created_at": manifest["created_at"],
+                "restored_files": [name for name in _RESTORE_ORDER if name in included],
+            }
+    except BackupError:
+        raise
+    except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
+        raise BackupError(f"Could not apply the selected restore: {exc}") from exc
 
     cancel_pending_restore(root)
     result["pre_restore_backup"] = safety_path.name
