@@ -2,7 +2,7 @@
 
 Veltrix v10.16 adds a research-focused Market Intelligence workspace on top of the v10.15 Alert Intelligence Center, v10.14 Trading Command Center, v10.13 smooth session clocks and v10.12 high-readability desktop interface. It combines causal OHLC regime classification, annualised realised volatility, rolling volatility context and cross-asset correlation using the existing market-data feed.
 
-**Current release:** v10.18. The System Health Monitor adds local CPU, memory, event-loop, thread, worker and monitored-error diagnostics. The v10.18 automated validation and Windows standalone build are pending on the draft upgrade branch; a manual desktop review is still required. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
+**Current release:** v10.18. The System Health Monitor adds local CPU, memory, event-loop, thread, worker and monitored-error diagnostics. The v10.18 automated validation matrix and Windows standalone build have passed on the draft upgrade branch; a manual desktop review is still required. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
