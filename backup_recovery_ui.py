@@ -37,7 +37,8 @@ def refresh_backup_recovery_page(app: Any) -> None:
     tree = getattr(app, "backup_history_tree", None)
     if tree is None:
         return
-    tree.delete(*tree.get_children())
+    for item_id in tree.get_children():
+        tree.delete(item_id)
     app.backup_records = {}
     records = list_backups(app.app_data_dir)
     for record in records:
