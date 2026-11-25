@@ -51,6 +51,7 @@ from session_visuals import (
     local_day_phase, timeline_probe_from_x, session_calendar_close_override,
 )
 from session_timeline import build_session_timeline
+from smooth_scroll import find_scrollable_canvas, scroll_canvas_by_pixels, wheel_delta_pixels
 from session_intelligence import historical_overlap_report, weekly_session_hours
 from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
 from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events
@@ -225,6 +226,8 @@ class VeltrixTradingClock:
             value=bool(exchange_settings.get("enabled", False))
         )
         self.session_intelligence_cache_key: tuple | None = None
+        self._scrollable_canvases: dict[str, tk.Canvas] = {}
+        self._scroll_wheel_bindings_installed = False
         self.cards: dict[str, dict[str, tk.Widget]] = {}
         self.latest_session_states: list = []
         self.session_probe_utc: datetime | None = None
@@ -579,6 +582,7 @@ class VeltrixTradingClock:
             sessions_scroll_shell, bg=THEMES[self.theme_name]["bg"],
             highlightthickness=0, bd=0,
         )
+        self._register_scrollable_canvas(self.sessions_canvas)
         self.sessions_scrollbar = ttk.Scrollbar(
             sessions_scroll_shell, orient="vertical", command=self.sessions_canvas.yview,
         )
@@ -598,16 +602,6 @@ class VeltrixTradingClock:
             "<Configure>", lambda event: self.sessions_canvas.itemconfigure(
                 self.sessions_content_window, width=event.width
             )
-        )
-        self.sessions_canvas.bind(
-            "<MouseWheel>",
-            lambda event: self.sessions_canvas.yview_scroll(int(-event.delta / 120), "units"),
-        )
-        self.sessions_canvas.bind(
-            "<Button-4>", lambda _event: self.sessions_canvas.yview_scroll(-1, "units"),
-        )
-        self.sessions_canvas.bind(
-            "<Button-5>", lambda _event: self.sessions_canvas.yview_scroll(1, "units"),
         )
 
         # Global session summary.
@@ -1411,12 +1405,39 @@ class VeltrixTradingClock:
         )
         self.session_intelligence_cache_key = cache_key
 
+    def _register_scrollable_canvas(self, canvas: tk.Canvas) -> None:
+        """Route page-level wheel events to the scrollable canvas under the pointer."""
+        self._scrollable_canvases[str(canvas)] = canvas
+        if self._scroll_wheel_bindings_installed:
+            return
+        self.root.bind_all("<MouseWheel>", self._handle_page_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._handle_page_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self._handle_page_mousewheel, add="+")
+        self._scroll_wheel_bindings_installed = True
+
+    def _handle_page_mousewheel(self, event: Any) -> str | None:
+        """Scroll pages in pixels without scheduling idle animation callbacks."""
+        try:
+            pointer_widget = self.root.winfo_containing(event.x_root, event.y_root)
+        except (AttributeError, tk.TclError):
+            return None
+        canvas = find_scrollable_canvas(pointer_widget, self._scrollable_canvases)
+        if canvas is None:
+            return None
+        delta_pixels = wheel_delta_pixels(
+            getattr(event, "delta", 0),
+            platform_name=sys.platform,
+            button=getattr(event, "num", None),
+        )
+        return "break" if scroll_canvas_by_pixels(canvas, delta_pixels) else None
+
     def _build_focus_page(self) -> None:
         """Build the personal stopwatch, countdown and long-term goals workspace."""
         palette = THEMES[self.theme_name]
         shell = self._frame(self.focus_view)
         shell.pack(fill="both", expand=True)
         self.focus_canvas = tk.Canvas(shell, bg=palette["bg"], highlightthickness=0, bd=0)
+        self._register_scrollable_canvas(self.focus_canvas)
         scrollbar = ttk.Scrollbar(shell, orient="vertical", command=self.focus_canvas.yview)
         self.focus_canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
@@ -2024,6 +2045,7 @@ class VeltrixTradingClock:
         self.alerts_canvas = tk.Canvas(
             self.alerts_scroll_shell, bg=palette["bg"], highlightthickness=0, bd=0,
         )
+        self._register_scrollable_canvas(self.alerts_canvas)
         self.alerts_scrollbar = ttk.Scrollbar(
             self.alerts_scroll_shell, orient="vertical", command=self.alerts_canvas.yview,
             style="Veltrix.Alerts.Vertical.TScrollbar",
@@ -2044,16 +2066,6 @@ class VeltrixTradingClock:
             "<Configure>", lambda event: self.alerts_canvas.itemconfigure(
                 self.alerts_content_window, width=event.width
             )
-        )
-        self.alerts_canvas.bind(
-            "<MouseWheel>",
-            lambda event: self.alerts_canvas.yview_scroll(int(-event.delta / 120), "units"),
-        )
-        self.alerts_canvas.bind(
-            "<Button-4>", lambda _event: self.alerts_canvas.yview_scroll(-1, "units"),
-        )
-        self.alerts_canvas.bind(
-            "<Button-5>", lambda _event: self.alerts_canvas.yview_scroll(1, "units"),
         )
         self.alert_settings_container = self._frame(self.alerts_content, bg="panel", padx=4, pady=3)
         self.alert_settings_container.pack_forget()
@@ -2461,6 +2473,7 @@ class VeltrixTradingClock:
         # Keep the bottom alarm strip visible on shorter displays. The volatility
         # workspace scrolls independently inside the page host.
         self.volatility_canvas = tk.Canvas(self.volatility_view, highlightthickness=0, bd=0)
+        self._register_scrollable_canvas(self.volatility_canvas)
         self.volatility_scrollbar = ttk.Scrollbar(
             self.volatility_view, orient="vertical", command=self.volatility_canvas.yview,
             style="Veltrix.Market.Vertical.TScrollbar",
@@ -2778,6 +2791,7 @@ class VeltrixTradingClock:
     def _build_regime_page(self) -> None:
         """Build Phase 12 causal market-regime research workspace."""
         self.regime_canvas = tk.Canvas(self.regime_view, highlightthickness=0, bd=0)
+        self._register_scrollable_canvas(self.regime_canvas)
         scrollbar = ttk.Scrollbar(self.regime_view, orient="vertical", command=self.regime_canvas.yview)
         self.regime_canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
