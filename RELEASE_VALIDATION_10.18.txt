@@ -1,0 +1,63 @@
+VELTRIX TRADING CLOCK v10.18 — RELEASE VALIDATION
+
+Branch
+perf/v10.17-behaviour-preserving
+
+Base
+main (v10.16)
+
+New System Health Monitor coverage
+- Process CPU percentage normalised to total logical machine capacity.
+- System CPU percentage derived from cumulative idle/total counter differences.
+- Linux /proc CPU, memory and resident-set parsing.
+- Worker snapshot reads existing application state without creating threads.
+- Bounded, thread-safe monitored-error history.
+- Combined sampler test covers process CPU, system CPU, process RAM, system RAM and thread count.
+- Health workspace registration and visible-only sample lifecycle are covered in core workspace regression tests.
+- Sampling timer is cancelled when navigating away and on application close.
+- Unsupported platform readings remain N/A rather than being fabricated.
+
+Performance and scroll regression coverage
+- Pixel-based wheel deltas across Windows, macOS and Linux event formats.
+- Scroll target follows the pointer to the containing workspace canvas.
+- Scroll bounds are clamped and nested Treeview controls retain native wheel handling.
+- Hidden workspace rendering remains deferred.
+- Session clock animation remains paused when its workspace is hidden.
+- Existing timeline, market intelligence, regime, session performance, alert and app-path tests remain intact.
+
+Automated validation
+- GitHub Actions run: 45682482030
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45682482030
+- Source commit: 11cbe22ce8624784a15510b598fe5ab8361ed03b
+- Python 3.10: 285 tests passed; compileall passed.
+- Python 3.11: 285 tests passed; compileall passed.
+- Python 3.12: 285 tests passed; compileall passed.
+- Windows standalone PyInstaller build: passed.
+- Windows executable verification: passed.
+- Windows artifact upload: passed.
+
+Verified Windows artifact
+- Name: Veltrix-Trading-Clock-v10.18-Windows
+- Artifact ID: 15055690615
+- Size: 15,642,749 bytes
+- SHA-256: 5d0a1c58522b8faa03de1942a2ffe6db9a395c4478937f1778419645a50fdc09
+- Created: 25 November 2026.
+- Expires: 23 February 2027.
+
+Manual Windows desktop review — REQUIRED
+1. Launch Veltrix v10.18 and open HEALTH from the top header.
+2. Confirm process CPU and working-set RAM populate after the first sample.
+3. Confirm system CPU and physical RAM populate and remain within plausible Task Manager values.
+4. Leave HEALTH open for at least one minute; confirm the history graph advances and event-loop delay remains readable.
+5. Start a market-data refresh and confirm its worker switches to RUNNING, then returns to IDLE.
+6. Open and close other workspaces; confirm the health sampling timer pauses while hidden and resumes on return.
+7. Switch themes and inspect the health cards, worker table, chart, error rows and scrollbars.
+8. Scroll with the mouse wheel and a trackpad; check nested tables and controls retain their own scrolling.
+9. Leave the app idle on Command Center and observe CPU usage with Windows Task Manager; confirm the Health page timer is not running.
+10. Close the application and confirm no health sampling callbacks remain.
+
+Release status
+- Automated validation: PASS.
+- Windows standalone package: PASS.
+- Manual desktop review: PENDING.
+- Pull request #8 remains draft and unmerged until the desktop review is complete.
