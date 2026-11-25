@@ -76,6 +76,47 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("self.session_animation_job", MAIN_SOURCE)
 
 
+    def test_hidden_dashboards_skip_periodic_rendering_and_refresh_when_opened(self):
+        self.assertIn('if self.current_page == "alerts":\n            refresh_alerts_dashboard', MAIN_SOURCE)
+        self.assertIn('if self.current_page == "alerts":\n            refresh_alert_center', MAIN_SOURCE)
+        self.assertIn('if self.current_page == "command_center":\n            refresh_command_center', MAIN_SOURCE)
+        self.assertIn('if page == "alerts":', MAIN_SOURCE)
+        self.assertIn('elif page == "command_center":', MAIN_SOURCE)
+
+    def test_session_clock_animation_pauses_outside_the_sessions_workspace(self):
+        self.assertIn('if self.current_page != "sessions":', MAIN_SOURCE)
+        self.assertIn('self.session_animation_job = None', MAIN_SOURCE)
+        self.assertIn('page == "sessions" and self.session_animation_job is None', MAIN_SOURCE)
+        self.assertIn('SESSION_CLOCK_FRAME_MS, self._animate_session_clocks', MAIN_SOURCE)
+
+    def test_session_timeline_schedule_shapes_are_not_redrawn_each_second(self):
+        self.assertIn('tags="timeline-schedule"', MAIN_SOURCE)
+        self.assertIn("cache_key,\n        )", MAIN_SOURCE)
+        self.assertIn("if self.session_timeline_signature != signature:", MAIN_SOURCE)
+        self.assertIn('canvas.delete("timeline-dynamic")', MAIN_SOURCE)
+        self.assertIn('tags="timeline-dynamic"', MAIN_SOURCE)
+
+    def test_session_timeline_snapshot_is_cached_by_schedule_inputs(self):
+        self.assertIn("self.session_timeline_cache_key: tuple | None = None", MAIN_SOURCE)
+        self.assertIn("self.session_timeline_cache: Any = None", MAIN_SOURCE)
+        self.assertIn("cache_key = (start_utc.date(), exchange_calendar_enabled, schedule_signature)", MAIN_SOURCE)
+        self.assertIn("if cache_key != self.session_timeline_cache_key:", MAIN_SOURCE)
+        self.assertIn("self.session_timeline_cache = build_session_timeline(", MAIN_SOURCE)
+        self.assertIn("snapshot = self.session_timeline_cache", MAIN_SOURCE)
+
+    def test_market_intelligence_analysis_is_deferred_until_its_workspace_is_visible(self):
+        self.assertIn('if self.current_page == "market_intelligence":\n            refresh_market_intelligence_page(self)', MAIN_SOURCE)
+        self.assertIn('page == "market_intelligence" and hasattr(self, "market_intelligence_canvas")', MAIN_SOURCE)
+        self.assertIn("refresh_market_intelligence_page(self)", MAIN_SOURCE)
+
+    def test_hidden_global_sessions_render_only_when_active(self):
+        self.assertIn('if self.current_page == "sessions":\n            self._refresh_global_sessions_workspace', MAIN_SOURCE)
+        self.assertIn('def _refresh_global_sessions_workspace(', MAIN_SOURCE)
+        self.assertIn('elif page == "sessions":', MAIN_SOURCE)
+        self.assertIn('self._refresh_global_sessions_workspace(\n                now_utc, states, exchange_calendar_enabled', MAIN_SOURCE)
+        self.assertIn('self._draw_session_timeline(now_utc, states)', MAIN_SOURCE)
+        self.assertIn('self._refresh_session_intelligence(now_utc)', MAIN_SOURCE)
+
     def test_global_session_intelligence_uses_the_session_engine_and_scrollable_map(self):
         self.assertIn("from session_timeline import build_session_timeline", MAIN_SOURCE)
         self.assertIn("def _build_session_timeline", MAIN_SOURCE)
@@ -206,6 +247,50 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
             "Forward-return outcomes from Regime Lab are never consulted.",
         ):
             self.assertIn(symbol, SESSION_PERFORMANCE_SOURCE)
+
+    def test_system_health_workspace_is_registered_and_sampled_only_when_visible(self):
+        for symbol in (
+            "system_health_nav_button",
+            "system_health_view",
+            "build_system_health_page(self)",
+            'if page == "system_health":',
+            "self._start_system_health_monitoring()",
+            "self._stop_system_health_monitoring()",
+            "self._sample_system_health",
+            "collect_worker_snapshot(self)",
+            "refresh_system_health_page(",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        self.assertIn("class SystemHealthMonitor", (PROJECT_ROOT / "system_health.py").read_text(encoding="utf-8"))
+        self.assertIn("RECENT PERFORMANCE · LAST 60 SAMPLES", (PROJECT_ROOT / "system_health_ui.py").read_text(encoding="utf-8"))
+
+    def test_backup_and_recovery_workspace_protects_user_data_before_restore(self):
+        for symbol in (
+            "backup_nav_button",
+            "backup_recovery_view",
+            "build_backup_recovery_page(self)",
+            "def _maybe_start_automatic_backup",
+            "create_backup(",
+            "verify_backup(",
+            "prepare_restore(",
+            "apply_pending_restore(APP_DATA_DIR",
+            "self._finalize_close()",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        backup_engine = (PROJECT_ROOT / "backup_recovery.py").read_text(encoding="utf-8")
+        backup_ui = (PROJECT_ROOT / "backup_recovery_ui.py").read_text(encoding="utf-8")
+        for symbol in (
+            "focus_goals.sqlite3",
+            "market_cache.json",
+            "calendar_cache.json",
+            "regime_data.json",
+            "MANAGED_FILES",
+            "SHA-256",
+            "pre-restore",
+        ):
+            self.assertIn(symbol, backup_engine + backup_ui)
+        self.assertIn("SCHEDULE RESTORE", backup_ui)
+        self.assertIn("CANCEL QUEUED RESTORE", backup_ui)
 
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):

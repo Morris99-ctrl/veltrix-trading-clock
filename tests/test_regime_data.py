@@ -11,10 +11,25 @@ from regime_data import (
     infer_bar_interval_minutes,
     load_regime_datasets,
     save_regime_datasets,
+    snapshot_ohlc_records,
 )
 
 
 class RegimeDataTests(unittest.TestCase):
+    def test_analysis_snapshot_reuses_large_ohlc_row_records(self):
+        rows = [
+            {"timestamp_utc": "2026-11-12T10:00:00+00:00", "close": 100.0},
+            {"timestamp_utc": "2026-11-12T10:05:00+00:00", "close": 101.0},
+        ]
+
+        snapshot = snapshot_ohlc_records(rows)
+
+        self.assertIsInstance(snapshot, tuple)
+        self.assertEqual(snapshot, tuple(rows))
+        self.assertIs(snapshot[0], rows[0])
+        self.assertIs(snapshot[1], rows[1])
+
+
     def write_csv(self, directory: str, name: str, contents: str) -> Path:
         path = Path(directory) / name
         path.write_text(contents, encoding="utf-8")

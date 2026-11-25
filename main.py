@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import queue
+from collections import deque
 import sys
 import threading
 import time
@@ -41,13 +42,26 @@ from ui_theme import (
 from app_paths import APP_DATA_DIR, initialize_app_data, resource_path
 from focus_engine import FocusError, FocusStore, format_duration
 from regime_engine import RegimeConfig, analyse_market_regimes, export_regime_analysis_csv
-from regime_data import import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets, save_regime_datasets
+from regime_data import (
+    import_ohlc_csv, infer_bar_interval_minutes, load_regime_datasets,
+    save_regime_datasets, snapshot_ohlc_records,
+)
 from session_clock import session_clock_hand_endpoints, session_clock_hand_polygon_coordinates
 from session_visuals import (
     session_window_progress, session_window_arc_angles, utc_offset_label,
     local_day_phase, timeline_probe_from_x, session_calendar_close_override,
 )
 from session_timeline import build_session_timeline
+from smooth_scroll import find_scrollable_canvas, scroll_canvas_by_pixels, wheel_delta_pixels
+from system_health import SystemHealthMonitor, collect_worker_snapshot
+from system_health_ui import build_system_health_page, refresh_system_health_page
+from backup_recovery import (
+    BackupError, apply_pending_restore, cancel_pending_restore, create_backup,
+    latest_backup, prepare_restore, read_pending_restore, verify_backup,
+)
+from backup_recovery_ui import (
+    build_backup_recovery_page, refresh_backup_recovery_page, set_backup_status,
+)
 from session_intelligence import historical_overlap_report, weekly_session_hours
 from session_profiles import PROFILE_NAMES, apply_session_profile as build_profile_sessions, validate_session_schedule
 from exchange_calendar import EXCHANGE_CALENDARS, get_exchange_aware_session_state, upcoming_exchange_events
@@ -89,10 +103,22 @@ LEGACY_RESEARCH_CACHE_PATH = BASE_DIR / "research_cache.json"
 ALARM_SOUND_FILE = BASE_DIR / "alarm.mp3"
 ALARM_STATE_PATH = BASE_DIR / "alarm_state.json"
 SNOOZE_MINUTES = 5
-APP_VERSION = "10.16"
+APP_VERSION = "10.19"
 UI_QUEUE_POLL_MS = 500
 SESSION_CLOCK_FRAME_MS = 16
 SESSION_CLOCK_RING_REFRESH_SECONDS = 0.25
+
+def _format_backup_bytes(value: int) -> str:
+    size = max(0, int(value))
+    if size >= 1024 ** 3:
+        return f"{size / (1024 ** 3):.2f} GB"
+    if size >= 1024 ** 2:
+        return f"{size / (1024 ** 2):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
 
 DIGIT_SEGMENTS = {
     "0": "abcdef",
@@ -222,10 +248,14 @@ class VeltrixTradingClock:
             value=bool(exchange_settings.get("enabled", False))
         )
         self.session_intelligence_cache_key: tuple | None = None
+        self._scrollable_canvases: dict[str, tk.Canvas] = {}
+        self._scroll_wheel_bindings_installed = False
         self.cards: dict[str, dict[str, tk.Widget]] = {}
         self.latest_session_states: list = []
         self.session_probe_utc: datetime | None = None
         self.session_timeline_plot: tuple[float, float, datetime] | None = None
+        self.session_timeline_cache_key: tuple | None = None
+        self.session_timeline_cache: Any = None
         self.world_dial_signature: tuple | None = None
         self.theme_items: list[tuple[tk.Widget, str, str | None]] = []
         self.clock_canvas_signature: tuple[int, int, str] | None = None
@@ -267,6 +297,21 @@ class VeltrixTradingClock:
         self.alert_log_lines: list[str] = []
         self.alert_center = AlertCenterStore(self.config.get("alert_center", {}))
         self.is_closing = False
+        self.system_health_monitor = SystemHealthMonitor()
+        self.system_health_job: str | None = None
+        self.system_health_next_sample_due: float | None = None
+        self.system_health_history: deque = deque(maxlen=60)
+        self.system_health_latency_history: deque = deque(maxlen=60)
+        self.app_data_dir = APP_DATA_DIR
+        self.backup_task_queue: queue.Queue[tuple[str, dict | None, str | None, bool]] = queue.Queue()
+        self.backup_operation_in_progress = False
+        self.backup_current_action: str | None = None
+        self.backup_worker_thread: threading.Thread | None = None
+        self.backup_auto_job: str | None = None
+        self.backup_close_when_finished = False
+        self.backup_records: dict[str, dict[str, Any]] = {}
+        self.backup_verified_selection: str | None = None
+        self.backup_pending_restore = read_pending_restore(APP_DATA_DIR)
 
         # Phase 11: persistent personal focus timers, goals and milestones.
         self.focus_store = FocusStore(
@@ -420,6 +465,7 @@ class VeltrixTradingClock:
         )
         self.regime_cache_writer_thread.start()
         self._start_regime_cache_load()
+        self._schedule_automatic_backup(30_000)
 
     @staticmethod
     def _load_config() -> dict:
@@ -475,7 +521,17 @@ class VeltrixTradingClock:
         right_header = self._frame(header)
         right_header.pack(side="right", anchor="e")
         self.live_label = self._label(right_header, "● LIVE MONITOR", fg="success", font=("Segoe UI", 10, "bold"))
-        self.live_label.pack(side="left", padx=(0, 13))
+        self.live_label.pack(side="left", padx=(0, 10))
+        self.system_health_nav_button = tk.Button(
+            right_header, text="HEALTH", command=lambda: self.show_page("system_health"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+        )
+        self.system_health_nav_button.pack(side="left", padx=(0, 5))
+        self.backup_nav_button = tk.Button(
+            right_header, text="BACKUP", command=lambda: self.show_page("backup_recovery"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+        )
+        self.backup_nav_button.pack(side="left", padx=(0, 8))
         self.theme_selector = tk.OptionMenu(right_header, self.theme_var, *THEMES.keys(), command=self.set_theme)
         self.theme_selector.configure(font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=7, pady=5, cursor="hand2")
         self.theme_selector.pack(side="left")
@@ -564,6 +620,8 @@ class VeltrixTradingClock:
         self.regime_view = self._frame(self.page_host)
         self.market_intelligence_view = self._frame(self.page_host)
         self.focus_view = self._frame(self.page_host)
+        self.system_health_view = self._frame(self.page_host)
+        self.backup_recovery_view = self._frame(self.page_host)
         self.sessions_view.pack(fill="both", expand=True)
 
         # The Global Sessions page is vertically scrollable so the four clocks,
@@ -574,6 +632,7 @@ class VeltrixTradingClock:
             sessions_scroll_shell, bg=THEMES[self.theme_name]["bg"],
             highlightthickness=0, bd=0,
         )
+        self._register_scrollable_canvas(self.sessions_canvas)
         self.sessions_scrollbar = ttk.Scrollbar(
             sessions_scroll_shell, orient="vertical", command=self.sessions_canvas.yview,
         )
@@ -593,16 +652,6 @@ class VeltrixTradingClock:
             "<Configure>", lambda event: self.sessions_canvas.itemconfigure(
                 self.sessions_content_window, width=event.width
             )
-        )
-        self.sessions_canvas.bind(
-            "<MouseWheel>",
-            lambda event: self.sessions_canvas.yview_scroll(int(-event.delta / 120), "units"),
-        )
-        self.sessions_canvas.bind(
-            "<Button-4>", lambda _event: self.sessions_canvas.yview_scroll(-1, "units"),
-        )
-        self.sessions_canvas.bind(
-            "<Button-5>", lambda _event: self.sessions_canvas.yview_scroll(1, "units"),
         )
 
         # Global session summary.
@@ -642,6 +691,8 @@ class VeltrixTradingClock:
         build_market_intelligence_page(self)
         build_session_performance_page(self)
         self._build_focus_page()
+        build_system_health_page(self)
+        build_backup_recovery_page(self)
         self.show_page("command_center")
 
         # Alarm control strip from the original clock. This stays visible on both pages.
@@ -950,21 +1001,40 @@ class VeltrixTradingClock:
         palette = THEMES[self.theme_name]
         start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         end_utc = start_utc + timedelta(hours=24)
-        snapshot = build_session_timeline(
-            self.sessions, start_utc, hours=24,
-            apply_exchange_calendar=self.exchange_calendar_enabled_var.get(),
+        exchange_calendar_enabled = bool(self.exchange_calendar_enabled_var.get())
+        schedule_signature = tuple(
+            (
+                session.key, session.name, session.timezone_name,
+                session.opens.isoformat(), session.closes.isoformat(), session.weekdays,
+            )
+            for session in self.sessions
         )
+        cache_key = (start_utc.date(), exchange_calendar_enabled, schedule_signature)
+        if cache_key != self.session_timeline_cache_key:
+            self.session_timeline_cache = build_session_timeline(
+                self.sessions, start_utc, hours=24,
+                apply_exchange_calendar=exchange_calendar_enabled,
+            )
+            self.session_timeline_cache_key = cache_key
+        snapshot = self.session_timeline_cache
         self._draw_world_session_dial(now_utc, snapshot)
         if self.session_probe_utc is not None and self.session_probe_utc.date() != start_utc.date():
             self.session_probe_utc = None
 
         width = max(620, canvas.winfo_width())
         height = 166
-        signature = (width, height, self.theme_name, start_utc.date().isoformat())
+        signature = (
+            width, height, self.theme_name, start_utc.date().isoformat(), cache_key,
+        )
         left, right = 92.0, float(width - 15)
         self.session_timeline_plot = (left, right, start_utc)
         span = right - left
         top, lane_step, lane_height = 31.0, 23.0, 12.0
+        total_seconds = (end_utc - start_utc).total_seconds()
+
+        def x_at(moment: datetime) -> float:
+            seconds = (moment.astimezone(timezone.utc) - start_utc).total_seconds()
+            return left + span * seconds / total_seconds
 
         if self.session_timeline_signature != signature:
             canvas.delete("all")
@@ -1007,38 +1077,35 @@ class VeltrixTradingClock:
                 fill=palette["bg"], outline=palette["dim"], width=1,
                 tags="timeline-static",
             )
+
+            # Session windows are fixed for the cached day/schedule snapshot.
+            # Draw them only when the static timeline signature changes.
+            session_colours = (
+                palette["success"], palette["bright"], palette["warning"], palette["error"],
+            )
+            for index, session in enumerate(self.sessions):
+                colour = session_colours[index % len(session_colours)]
+                y = top + index * lane_step
+                for window in snapshot.windows:
+                    if window.session_key != session.key:
+                        continue
+                    x1, x2 = x_at(window.starts_at), x_at(window.ends_at)
+                    canvas.create_rectangle(
+                        x1, y + 1, max(x1 + 1, x2), y + lane_height - 1,
+                        fill=colour, outline=colour, tags="timeline-schedule",
+                    )
+
+            for overlap in snapshot.overlaps:
+                x1, x2 = x_at(overlap.starts_at), x_at(overlap.ends_at)
+                canvas.create_rectangle(
+                    x1, overlap_y + 1, max(x1 + 1, x2), overlap_y + lane_height - 1,
+                    fill=palette["error"], outline=palette["error"], tags="timeline-schedule",
+                )
             self.session_timeline_signature = signature
         else:
             canvas.delete("timeline-dynamic")
 
-        total_seconds = (end_utc - start_utc).total_seconds()
-
-        def x_at(moment: datetime) -> float:
-            seconds = (moment.astimezone(timezone.utc) - start_utc).total_seconds()
-            return left + span * seconds / total_seconds
-
-        session_colours = (
-            palette["success"], palette["bright"], palette["warning"], palette["error"],
-        )
-        for index, session in enumerate(self.sessions):
-            colour = session_colours[index % len(session_colours)]
-            y = top + index * lane_step
-            for window in snapshot.windows:
-                if window.session_key != session.key:
-                    continue
-                x1, x2 = x_at(window.starts_at), x_at(window.ends_at)
-                canvas.create_rectangle(
-                    x1, y + 1, max(x1 + 1, x2), y + lane_height - 1,
-                    fill=colour, outline=colour, tags="timeline-dynamic",
-                )
-
         overlap_y = top + len(self.sessions) * lane_step + 4
-        for overlap in snapshot.overlaps:
-            x1, x2 = x_at(overlap.starts_at), x_at(overlap.ends_at)
-            canvas.create_rectangle(
-                x1, overlap_y + 1, max(x1 + 1, x2), overlap_y + lane_height - 1,
-                fill=palette["error"], outline=palette["error"], tags="timeline-dynamic",
-            )
 
         if start_utc <= now_utc < end_utc:
             marker_x = x_at(now_utc)
@@ -1390,12 +1457,39 @@ class VeltrixTradingClock:
         )
         self.session_intelligence_cache_key = cache_key
 
+    def _register_scrollable_canvas(self, canvas: tk.Canvas) -> None:
+        """Route page-level wheel events to the scrollable canvas under the pointer."""
+        self._scrollable_canvases[str(canvas)] = canvas
+        if self._scroll_wheel_bindings_installed:
+            return
+        self.root.bind_all("<MouseWheel>", self._handle_page_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._handle_page_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self._handle_page_mousewheel, add="+")
+        self._scroll_wheel_bindings_installed = True
+
+    def _handle_page_mousewheel(self, event: Any) -> str | None:
+        """Scroll pages in pixels without scheduling idle animation callbacks."""
+        try:
+            pointer_widget = self.root.winfo_containing(event.x_root, event.y_root)
+        except (AttributeError, tk.TclError):
+            return None
+        canvas = find_scrollable_canvas(pointer_widget, self._scrollable_canvases)
+        if canvas is None:
+            return None
+        delta_pixels = wheel_delta_pixels(
+            getattr(event, "delta", 0),
+            platform_name=sys.platform,
+            button=getattr(event, "num", None),
+        )
+        return "break" if scroll_canvas_by_pixels(canvas, delta_pixels) else None
+
     def _build_focus_page(self) -> None:
         """Build the personal stopwatch, countdown and long-term goals workspace."""
         palette = THEMES[self.theme_name]
         shell = self._frame(self.focus_view)
         shell.pack(fill="both", expand=True)
         self.focus_canvas = tk.Canvas(shell, bg=palette["bg"], highlightthickness=0, bd=0)
+        self._register_scrollable_canvas(self.focus_canvas)
         scrollbar = ttk.Scrollbar(shell, orient="vertical", command=self.focus_canvas.yview)
         self.focus_canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
@@ -2003,6 +2097,7 @@ class VeltrixTradingClock:
         self.alerts_canvas = tk.Canvas(
             self.alerts_scroll_shell, bg=palette["bg"], highlightthickness=0, bd=0,
         )
+        self._register_scrollable_canvas(self.alerts_canvas)
         self.alerts_scrollbar = ttk.Scrollbar(
             self.alerts_scroll_shell, orient="vertical", command=self.alerts_canvas.yview,
             style="Veltrix.Alerts.Vertical.TScrollbar",
@@ -2023,16 +2118,6 @@ class VeltrixTradingClock:
             "<Configure>", lambda event: self.alerts_canvas.itemconfigure(
                 self.alerts_content_window, width=event.width
             )
-        )
-        self.alerts_canvas.bind(
-            "<MouseWheel>",
-            lambda event: self.alerts_canvas.yview_scroll(int(-event.delta / 120), "units"),
-        )
-        self.alerts_canvas.bind(
-            "<Button-4>", lambda _event: self.alerts_canvas.yview_scroll(-1, "units"),
-        )
-        self.alerts_canvas.bind(
-            "<Button-5>", lambda _event: self.alerts_canvas.yview_scroll(1, "units"),
         )
         self.alert_settings_container = self._frame(self.alerts_content, bg="panel", padx=4, pady=3)
         self.alert_settings_container.pack_forget()
@@ -2440,6 +2525,7 @@ class VeltrixTradingClock:
         # Keep the bottom alarm strip visible on shorter displays. The volatility
         # workspace scrolls independently inside the page host.
         self.volatility_canvas = tk.Canvas(self.volatility_view, highlightthickness=0, bd=0)
+        self._register_scrollable_canvas(self.volatility_canvas)
         self.volatility_scrollbar = ttk.Scrollbar(
             self.volatility_view, orient="vertical", command=self.volatility_canvas.yview,
             style="Veltrix.Market.Vertical.TScrollbar",
@@ -2636,7 +2722,9 @@ class VeltrixTradingClock:
             )
             return
 
-        bars = tuple(dict(item) for item in dataset.get("bars", []) if isinstance(item, dict))
+        bars = snapshot_ohlc_records(
+            item for item in dataset.get("bars", []) if isinstance(item, dict)
+        )
         sessions = tuple(self.sessions)
         study_metadata = {
             "key": key,
@@ -2715,6 +2803,7 @@ class VeltrixTradingClock:
                     )
                     continue
                 if error:
+                    self.system_health_monitor.record_error("Session performance", error)
                     self.session_performance_result = None
                     self.session_performance_export_button.configure(state="disabled")
                     self.session_performance_status_label.configure(
@@ -2755,6 +2844,7 @@ class VeltrixTradingClock:
     def _build_regime_page(self) -> None:
         """Build Phase 12 causal market-regime research workspace."""
         self.regime_canvas = tk.Canvas(self.regime_view, highlightthickness=0, bd=0)
+        self._register_scrollable_canvas(self.regime_canvas)
         scrollbar = ttk.Scrollbar(self.regime_view, orient="vertical", command=self.regime_canvas.yview)
         self.regime_canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
@@ -2982,7 +3072,8 @@ class VeltrixTradingClock:
         def worker() -> None:
             try:
                 payload = load_regime_datasets(REGIME_DATA_PATH, LEGACY_RESEARCH_CACHE_PATH)
-            except Exception:
+            except Exception as exc:
+                self.system_health_monitor.record_error("OHLC dataset load", exc)
                 payload = {"datasets": {}, "migrated_from_legacy": False, "skipped_tick_datasets": 0}
             self.regime_cache_load_queue.put(payload)
 
@@ -3028,6 +3119,7 @@ class VeltrixTradingClock:
                     return
                 save_regime_datasets(REGIME_DATA_PATH, payload)
             except Exception as exc:
+                self.system_health_monitor.record_error("Dataset cache writer", exc)
                 self.regime_import_result_queue.put({"error": f"Dataset save failed: {exc}"})
             finally:
                 self.regime_cache_write_queue.task_done()
@@ -3116,10 +3208,14 @@ class VeltrixTradingClock:
     def _drain_regime_import_results(self) -> None:
         if self.is_closing:
             return
+        self._drain_backup_results()
+        if self.is_closing:
+            return
         try:
             while True:
                 result = self.regime_import_result_queue.get_nowait()
                 if result.get("error"):
+                    self.system_health_monitor.record_error("OHLC CSV import / save", result["error"])
                     self.regime_import_in_progress = False
                     self.regime_import_button.configure(state="normal")
                     self.regime_status_label.configure(
@@ -3147,6 +3243,274 @@ class VeltrixTradingClock:
             pass
         if not self.is_closing:
             self.regime_import_queue_job = self.root.after(UI_QUEUE_POLL_MS, self._drain_regime_import_results)
+
+    def _schedule_automatic_backup(self, delay_ms: int = 24 * 60 * 60 * 1000) -> None:
+        if self.is_closing:
+            return
+        if self.backup_auto_job is not None:
+            try:
+                self.root.after_cancel(self.backup_auto_job)
+            except tk.TclError:
+                pass
+        self.backup_auto_job = self.root.after(
+            max(1_000, int(delay_ms)), self._maybe_start_automatic_backup
+        )
+
+    def _maybe_start_automatic_backup(self) -> None:
+        self.backup_auto_job = None
+        if self.is_closing:
+            return
+        if self.backup_operation_in_progress:
+            self._schedule_automatic_backup(5 * 60 * 1000)
+            return
+        pending = read_pending_restore(self.app_data_dir)
+        if pending:
+            self._schedule_automatic_backup(6 * 60 * 60 * 1000)
+            return
+        latest = latest_backup(self.app_data_dir)
+        if latest:
+            try:
+                created = datetime.fromisoformat(
+                    str(latest["created_at"]).replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+                age_seconds = max(0.0, (datetime.now(timezone.utc) - created).total_seconds())
+                remaining = 24 * 60 * 60 - age_seconds
+                if remaining > 0:
+                    self._schedule_automatic_backup(int(remaining * 1000))
+                    return
+            except (TypeError, ValueError):
+                pass
+        self._start_backup_operation("create", automatic=True)
+
+    def create_manual_backup(self) -> None:
+        self._start_backup_operation("create", automatic=False)
+
+    def _start_backup_operation(
+        self,
+        action: str,
+        *,
+        backup_name: str | None = None,
+        automatic: bool = False,
+    ) -> None:
+        if self.is_closing:
+            return
+        if self.backup_operation_in_progress:
+            set_backup_status(self, "BACKUP TASK ALREADY IN PROGRESS", "warning")
+            return
+        if action == "create":
+            if self.regime_cache_loading:
+                set_backup_status(self, "WAITING FOR THE OHLC DATA LIBRARY TO FINISH LOADING", "warning")
+                if automatic:
+                    self._schedule_automatic_backup(5 * 60 * 1000)
+                return
+            if not self._sync_runtime_config(show_errors=not automatic):
+                set_backup_status(self, "BACKUP NOT STARTED · SETTINGS COULD NOT BE SAVED", "error")
+                if automatic:
+                    self._schedule_automatic_backup(6 * 60 * 60 * 1000)
+                return
+            self._save_regime_cache()
+
+        self.backup_operation_in_progress = True
+        self.backup_current_action = action
+        if hasattr(self, "backup_now_button"):
+            self.backup_now_button.configure(state="disabled")
+            self.backup_refresh_button.configure(state="disabled")
+            self.backup_verify_button.configure(state="disabled")
+            self.backup_restore_button.configure(state="disabled")
+        status_text = {
+            "create": "CREATING SNAPSHOT · SQLITE AND LARGE DATASETS RUN IN BACKGROUND",
+            "verify": "VERIFYING ARCHIVE · CHECKING FILE SIZES AND SHA-256 HASHES",
+            "prepare_restore": "VERIFYING AND QUEUING RESTORE FOR NEXT LAUNCH",
+        }.get(action, "RUNNING BACKUP TASK")
+        set_backup_status(self, status_text, "warning")
+
+        def worker() -> None:
+            try:
+                if action == "create":
+                    writer = self.regime_cache_writer_thread
+                    if writer is not None and writer.is_alive():
+                        self.regime_cache_write_queue.join()
+                    elif getattr(self.regime_cache_write_queue, "unfinished_tasks", 0):
+                        raise BackupError("The OHLC cache writer stopped with an unsaved dataset.")
+                    result = create_backup(
+                        self.app_data_dir, app_version=APP_VERSION
+                    )
+                elif action == "verify":
+                    if not backup_name:
+                        raise BackupError("Select a backup archive to verify.")
+                    backup_path = self.app_data_dir / "backups" / backup_name
+                    result = verify_backup(backup_path)
+                elif action == "prepare_restore":
+                    if not backup_name:
+                        raise BackupError("Select a verified backup archive to restore.")
+                    result = prepare_restore(self.app_data_dir, backup_name)
+                else:
+                    raise BackupError(f"Unsupported backup operation: {action}")
+                self.backup_task_queue.put((action, result, None, automatic))
+            except Exception as exc:
+                self.backup_task_queue.put((action, None, str(exc), automatic))
+
+        self.backup_worker_thread = threading.Thread(
+            target=worker,
+            name=f"VeltrixBackup-{action}",
+            daemon=True,
+        )
+        self.backup_worker_thread.start()
+
+    def verify_selected_backup(self) -> None:
+        selection = self.backup_history_tree.selection()
+        if not selection:
+            set_backup_status(self, "SELECT A BACKUP ARCHIVE FIRST", "warning")
+            return
+        self._start_backup_operation("verify", backup_name=selection[0])
+
+    def schedule_selected_restore(self) -> None:
+        selection = self.backup_history_tree.selection()
+        if not selection or selection[0] != self.backup_verified_selection:
+            set_backup_status(self, "VERIFY AND PREVIEW THE SELECTED ARCHIVE FIRST", "warning")
+            return
+        backup_name = selection[0]
+        confirmed = messagebox.askyesno(
+            "Schedule Veltrix recovery",
+            "Veltrix will restore the selected configuration, alarm state, Focus database, "
+            "imported OHLC datasets and caches before the next launch.\n\n"
+            "The current data will first be captured in a separate safety backup. "
+            "The current session will continue unchanged until you close and reopen Veltrix.\n\n"
+            f"Selected snapshot: {backup_name}\n\nSchedule this restore?",
+            parent=self.root,
+        )
+        if confirmed:
+            self._start_backup_operation("prepare_restore", backup_name=backup_name)
+
+    def cancel_scheduled_restore(self) -> None:
+        if cancel_pending_restore(self.app_data_dir):
+            self.backup_pending_restore = None
+            refresh_backup_recovery_page(self)
+            set_backup_status(self, "QUEUED RESTORE CANCELLED · CURRENT DATA WAS NOT CHANGED", "success")
+        else:
+            refresh_backup_recovery_page(self)
+            set_backup_status(self, "NO RESTORE WAS QUEUED", "muted")
+
+    def _on_backup_selection(self, _event: Any = None) -> None:
+        selection = self.backup_history_tree.selection()
+        self.backup_verified_selection = None
+        self.backup_verify_button.configure(
+            state="normal" if selection and not self.backup_records.get(selection[0], {}).get("error")
+            else "disabled"
+        )
+        self.backup_restore_button.configure(state="disabled")
+        if selection:
+            record = self.backup_records.get(selection[0], {})
+            if record.get("error"):
+                self.backup_preview_label.configure(text=f"ARCHIVE CANNOT BE PREVIEWED · {record['error']}")
+                set_backup_status(self, "SELECTED ARCHIVE IS INVALID", "error")
+            else:
+                self.backup_preview_label.configure(
+                    text=f"SELECTED · {selection[0]} · {record.get('file_count', 0)} FILE(S) · "
+                         f"{record.get('created_at', '')} · VERIFY TO CHECK EVERY FILE HASH"
+                )
+                set_backup_status(self, "ARCHIVE SELECTED · NOT YET VERIFIED", "muted")
+        else:
+            self.backup_preview_label.configure(text="Select a snapshot and choose VERIFY & PREVIEW.")
+            set_backup_status(self, "SELECT A BACKUP ARCHIVE", "muted")
+
+    def _drain_backup_results(self) -> None:
+        while True:
+            try:
+                action, result, error, automatic = self.backup_task_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.backup_operation_in_progress = False
+            self.backup_current_action = None
+            self.backup_worker_thread = None
+            if error:
+                self.system_health_monitor.record_error(f"Backup / {action}", error)
+                set_backup_status(self, f"{action.replace('_', ' ').upper()} FAILED · {error[:180]}", "error")
+                if hasattr(self, "backup_preview_label") and action == "verify":
+                    self.backup_preview_label.configure(text=f"VERIFICATION FAILED · {error}")
+                    selection = self.backup_history_tree.selection()
+                    self.backup_verify_button.configure(state="normal" if selection else "disabled")
+                elif action == "create":
+                    refresh_backup_recovery_page(self)
+                elif action == "prepare_restore":
+                    refresh_backup_recovery_page(self)
+            elif action == "create":
+                set_backup_status(
+                    self,
+                    f"BACKUP VERIFIED · {result['name']} · {_format_backup_bytes(result['archive_size_bytes'])}",
+                    "success",
+                )
+                if hasattr(self, "backup_preview_label"):
+                    self.backup_preview_label.configure(
+                        text=f"BACKUP CREATED AND SHA-256 VERIFIED · {result['name']} · "
+                             f"{result['file_count']} FILE(S) · {result['created_at']}"
+                    )
+                refresh_backup_recovery_page(self)
+            elif action == "verify":
+                self.backup_verified_selection = result["name"]
+                files_text = "  ·  ".join(
+                    f"{item['name']} ({_format_backup_bytes(item['size_bytes'])})"
+                    for item in result["files"]
+                )
+                self.backup_preview_label.configure(
+                    text=f"VERIFIED ✓ · {result['name']} · {result['file_count']} FILE(S) · "
+                         f"{_format_backup_bytes(result['total_size_bytes'])} UNCOMPRESSED\n{files_text}"
+                )
+                self.backup_restore_button.configure(state="normal")
+                set_backup_status(self, "ARCHIVE AND ALL FILE HASHES VERIFIED", "success")
+            elif action == "prepare_restore":
+                self.backup_verified_selection = None
+                refresh_backup_recovery_page(self)
+                set_backup_status(
+                    self,
+                    f"RESTORE QUEUED · {result['name']} · CLOSE AND REOPEN VELTRIX TO APPLY",
+                    "warning",
+                )
+            if hasattr(self, "backup_now_button"):
+                self.backup_now_button.configure(state="normal")
+                self.backup_refresh_button.configure(state="normal")
+            if automatic:
+                self._schedule_automatic_backup(
+                    24 * 60 * 60 * 1000 if error is None else 6 * 60 * 60 * 1000
+                )
+            if self.backup_close_when_finished:
+                self._finalize_close()
+                return
+
+    def _sync_runtime_config(self, *, show_errors: bool = True) -> bool:
+        self.config["theme"] = self.theme_name
+        self.config["alerts"] = dict(self.alert_settings)
+        self.config["alert_center"] = self.alert_center.export_state()
+        self.config["economic_events"] = self.economic_events
+        self.config["calendar"] = dict(self.calendar_settings)
+        self.config["market_data"] = dict(self.market_settings)
+        self.config["market_instruments"] = list(self.market_instruments)
+        self.config["session_profiles"] = {
+            "selected": self.active_session_profile,
+            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
+            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
+        }
+        self.config["exchange_calendar"] = {
+            "enabled": bool(self.exchange_calendar_enabled_var.get())
+        }
+        self.config["session_risk"] = dict(self.session_risk_settings)
+        try:
+            self.regime_settings.update(asdict(self._collect_regime_config()))
+            self.regime_settings["selected_asset"] = self._selected_regime_asset_key()
+        except (AttributeError, ValueError, tk.TclError):
+            pass
+        self.config["regime_lab"] = dict(self.regime_settings)
+        try:
+            daily_target = max(0.5, min(24.0, float(self.focus_daily_target_var.get())))
+        except (AttributeError, ValueError, tk.TclError):
+            daily_target = 4.0
+        self.config["focus"] = {"daily_target_hours": daily_target}
+        try:
+            self.config["event_reminder_minutes"] = max(0, min(1440, int(self.event_lead_var.get())))
+        except (AttributeError, ValueError, tk.TclError):
+            pass
+        self._persist_alarm_state()
+        return self._save_config(show_error=show_errors)
 
     def _selected_regime_asset_key(self) -> str:
         label = self.regime_asset_var.get() if hasattr(self, "regime_asset_var") else ""
@@ -3217,8 +3581,8 @@ class VeltrixTradingClock:
             return
         asset_key = self._selected_regime_asset_key()
         dataset = self.regime_datasets.get(asset_key)
-        bars = list(dataset.get("bars", [])) if isinstance(dataset, dict) else []
-        if not bars:
+        source_bars = dataset.get("bars", []) if isinstance(dataset, dict) else []
+        if not source_bars:
             messagebox.showwarning(
                 "No historical bars",
                 "Import an OHLC CSV in Regime Lab before running regime analysis.",
@@ -3240,7 +3604,7 @@ class VeltrixTradingClock:
             "bar_interval_minutes": dataset.get("bar_interval_minutes"),
             "variable_interval_bars": bool(dataset.get("variable_interval_bars", False)),
         }
-        snapshot = tuple(dict(item) if isinstance(item, dict) else item for item in bars)
+        snapshot = snapshot_ohlc_records(source_bars)
         self._clear_regime_results()
         self.regime_in_progress = True
         self.regime_run_button.configure(state="disabled")
@@ -3274,6 +3638,8 @@ class VeltrixTradingClock:
                     )
                     continue
                 if error or result is None:
+                    if error:
+                        self.system_health_monitor.record_error("Regime analysis", error)
                     self.regime_status_label.configure(
                         text=f"REGIME ANALYSIS FAILED · {error or 'Unknown analysis error'}",
                         fg=THEMES[self.theme_name]["error"],
@@ -3558,6 +3924,7 @@ class VeltrixTradingClock:
         self.market_fetch_in_progress = False
         self.refresh_market_button.configure(state="normal", text="REFRESH MARKET DATA")
         if error:
+            self.system_health_monitor.record_error("Market data", error)
             self.market_is_fresh = False
             self.market_status_label.configure(text=f"MARKET DATA UPDATE FAILED · {error[:145]}",
                                                fg=THEMES[self.theme_name]["error"])
@@ -3570,6 +3937,7 @@ class VeltrixTradingClock:
         try:
             save_market_cache(MARKET_CACHE_PATH, self.market_snapshot)
         except OSError as exc:
+            self.system_health_monitor.record_error("Market cache", exc)
             self.market_status_label.configure(text=f"DATA RECEIVED · CACHE WRITE FAILED: {exc}",
                                                fg=THEMES[self.theme_name]["warning"])
         assets = self.market_snapshot.get("assets", {})
@@ -3678,7 +4046,8 @@ class VeltrixTradingClock:
         elif not self.market_is_fresh:
             self.market_status_label.configure(text="CACHED MARKET SNAPSHOT · LIVE DATA NOT VERIFIED THIS RUN",
                                                fg=THEMES[self.theme_name]["warning"])
-        refresh_market_intelligence_page(self)
+        if self.current_page == "market_intelligence":
+            refresh_market_intelligence_page(self)
 
     def _emit_market_regime_alerts(self) -> None:
         if not self.market_is_fresh or not bool(self.market_settings.get("regime_alerts_enabled", True)):
@@ -3709,6 +4078,56 @@ class VeltrixTradingClock:
                 except tk.TclError:
                     pass
 
+    def _start_system_health_monitoring(self) -> None:
+        """Sample resources only while the read-only health workspace is visible."""
+        if self.is_closing or self.system_health_job is not None:
+            return
+        self.system_health_monitor.reset_baseline()
+        self.system_health_next_sample_due = time.perf_counter() + 1.0
+        self.health_status_label.configure(
+            text="STARTING RESOURCE SAMPLING...",
+            fg=THEMES[self.theme_name]["warning"],
+        )
+        self.system_health_job = self.root.after(1000, self._sample_system_health)
+
+    def _stop_system_health_monitoring(self) -> None:
+        """Stop the health page timer immediately when navigating elsewhere."""
+        if self.system_health_job is not None:
+            try:
+                self.root.after_cancel(self.system_health_job)
+            except tk.TclError:
+                pass
+        self.system_health_job = None
+        self.system_health_next_sample_due = None
+        if hasattr(self, "health_status_label"):
+            self.health_status_label.configure(
+                text="STANDBY · SAMPLING PAUSED",
+                fg=THEMES[self.theme_name]["muted"],
+            )
+
+    def _sample_system_health(self) -> None:
+        if self.is_closing or self.current_page != "system_health":
+            self.system_health_job = None
+            self.system_health_next_sample_due = None
+            return
+        now = time.perf_counter()
+        due = self.system_health_next_sample_due or now
+        event_loop_delay = max(0.0, (now - due) * 1000.0)
+        sample = self.system_health_monitor.sample()
+        self.system_health_history.append(sample)
+        self.system_health_latency_history.append(event_loop_delay)
+        workers = collect_worker_snapshot(self)
+        refresh_system_health_page(
+            self,
+            sample,
+            workers,
+            event_loop_delay,
+            list(self.system_health_latency_history),
+            self.system_health_monitor.recent_errors(),
+        )
+        self.system_health_next_sample_due = time.perf_counter() + 1.0
+        self.system_health_job = self.root.after(1000, self._sample_system_health)
+
     def show_page(self, page: str) -> None:
         page_map = {
             "command_center": (self.command_center_view, self.command_center_nav_button),
@@ -3720,13 +4139,16 @@ class VeltrixTradingClock:
             "regime": (self.regime_view, self.regime_nav_button),
             "market_intelligence": (self.market_intelligence_view, self.market_intelligence_nav_button),
             "focus": (self.focus_view, self.focus_nav_button),
+            "system_health": (self.system_health_view, self.system_health_nav_button),
+            "backup_recovery": (self.backup_recovery_view, self.backup_nav_button),
         }
         if page not in page_map:
             page = "command_center"
         for view in (
             self.command_center_view, self.sessions_view, self.session_performance_view, self.alerts_view,
             self.calendar_view, self.volatility_view, self.regime_view,
-            self.market_intelligence_view, self.focus_view,
+            self.market_intelligence_view, self.focus_view, self.system_health_view,
+            self.backup_recovery_view,
         ):
             view.pack_forget()
         active_view, active_button = page_map[page]
@@ -3737,7 +4159,39 @@ class VeltrixTradingClock:
                 button.configure(bg=palette["button_active"], fg=palette["bright"])
             else:
                 button.configure(bg=palette["button_bg"], fg=palette["button_fg"])
+        if getattr(self, "current_page", None) == "system_health" and page != "system_health":
+            self._stop_system_health_monitoring()
         self.current_page = page
+        if page == "system_health":
+            self._start_system_health_monitoring()
+        if page == "backup_recovery":
+            refresh_backup_recovery_page(self)
+        if page == "sessions" and self.session_animation_job is None:
+            self.session_animation_job = self.root.after(
+                SESSION_CLOCK_FRAME_MS, self._animate_session_clocks
+            )
+        if page == "alerts":
+            now_utc = datetime.now(timezone.utc)
+            refresh_alerts_dashboard(self, now_utc, self.latest_session_states, force=True)
+            refresh_alert_center(
+                self, now_utc, self.latest_session_states,
+                self.calendar_events, self.economic_events,
+            )
+        elif page == "command_center":
+            refresh_command_center(self, datetime.now(timezone.utc))
+        elif page == "sessions":
+            now_utc = datetime.now(timezone.utc)
+            exchange_calendar_enabled = bool(self.exchange_calendar_enabled_var.get())
+            states = [
+                get_exchange_aware_session_state(
+                    session, now_utc, enabled=exchange_calendar_enabled
+                )
+                for session in self.sessions
+            ]
+            self.latest_session_states = states
+            self._refresh_global_sessions_workspace(
+                now_utc, states, exchange_calendar_enabled
+            )
         if page == "volatility" and hasattr(self, "volatility_canvas"):
             self.volatility_canvas.yview_moveto(0.0)
         if page == "regime" and hasattr(self, "regime_canvas"):
@@ -3864,6 +4318,7 @@ class VeltrixTradingClock:
             self.calendar_auto_refresh_job = None
 
         if error:
+            self.system_health_monitor.record_error("Economic calendar", error)
             # Exponential backoff: 30s, 60s, 120s ... capped at 15 minutes.
             # This is deliberately independent of the provider's successful-fetch cache floor.
             self.calendar_retry_count = min(self.calendar_retry_count + 1, 6)
@@ -3892,6 +4347,7 @@ class VeltrixTradingClock:
         try:
             save_calendar_cache(CALENDAR_CACHE_PATH, self.calendar_payload)
         except OSError as exc:
+            self.system_health_monitor.record_error("Calendar cache", exc)
             self._set_calendar_status(f"DATA RECEIVED · CACHE WRITE FAILED: {exc}", "warning")
         else:
             self._set_calendar_status(
@@ -4256,11 +4712,15 @@ class VeltrixTradingClock:
         if not sys.platform == "win32":
             self._set_alert_banner("IN-APP TEST SENT · WINDOWS TOASTS REQUIRE WINDOWS 10/11", "warning")
 
-    def _save_config(self) -> None:
+    def _save_config(self, *, show_error: bool = True) -> bool:
         try:
             save_config(CONFIG_PATH, self.config)
+            return True
         except (OSError, TypeError, ValueError) as exc:
-            messagebox.showerror("Could not save settings", str(exc), parent=self.root)
+            self.system_health_monitor.record_error("Configuration save", exc)
+            if show_error:
+                messagebox.showerror("Could not save settings", str(exc), parent=self.root)
+            return False
 
     def _summary_tile(self, parent: tk.Widget, column: int, title: str, value: str) -> dict[str, tk.Widget]:
         frame = self._frame(parent, bg="panel", padx=12, pady=8, highlightthickness=0)
@@ -4587,8 +5047,13 @@ class VeltrixTradingClock:
         return f"{phase} CYCLE · SESSION COMPLETE"
 
     def _animate_session_clocks(self) -> None:
-        """Sweep all four session dials independently of the slower status poll."""
+        """Sweep visible session dials independently of the slower status poll."""
         if self.is_closing:
+            return
+        # The session canvases are hidden on every other workspace. Stop the
+        # 60 FPS callback there instead of redrawing invisible widgets.
+        if self.current_page != "sessions":
+            self.session_animation_job = None
             return
         now_utc = datetime.now(timezone.utc)
         states_by_key = {state.definition.key: state for state in self.latest_session_states}
@@ -4640,6 +5105,12 @@ class VeltrixTradingClock:
             self.command_center_canvas.configure(bg=palette["bg"])
         if hasattr(self, "sessions_canvas"):
             self.sessions_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "system_health_canvas"):
+            self.system_health_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "backup_canvas"):
+            self.backup_canvas.configure(bg=palette["bg"])
+        if hasattr(self, "system_health_history_canvas"):
+            self.system_health_history_canvas.configure(bg=palette["panel"])
         if hasattr(self, "alerts_canvas"):
             self.alerts_canvas.configure(bg=palette["bg"])
         if hasattr(self, "alerts_session_canvas"):
@@ -4695,7 +5166,7 @@ class VeltrixTradingClock:
             self.command_center_nav_button, self.sessions_nav_button, self.session_performance_nav_button,
             self.alerts_nav_button, self.calendar_nav_button,
             self.volatility_nav_button, self.regime_nav_button, self.market_intelligence_nav_button,
-            self.focus_nav_button,
+            self.focus_nav_button, self.system_health_nav_button, self.backup_nav_button,
             self.session_performance_import_button, self.session_performance_run_button,
             self.session_performance_export_button,
             self.alerts_search_button, self.alerts_clear_button, self.alerts_sort_up_button,
@@ -4913,12 +5384,32 @@ class VeltrixTradingClock:
         ]
         self.latest_session_states = states
         open_states = [state for state in states if state.is_open]
-        refresh_alerts_dashboard(self, now_utc, states)
+        # Alert polling stays active, but expensive table/timeline rendering is
+        # deferred while the Alerts workspace is hidden.
+        if self.current_page == "alerts":
+            refresh_alerts_dashboard(self, now_utc, states)
         self._poll_market_alerts(now_utc, open_states)
         self._poll_session_risk_alerts(now_utc, states)
         self._poll_economic_events(home_now)
         self._poll_live_calendar_events(home_now)
-        refresh_alert_center(self, now_utc, states, self.calendar_events, self.economic_events)
+        if self.current_page == "alerts":
+            refresh_alert_center(self, now_utc, states, self.calendar_events, self.economic_events)
+        if self.current_page == "sessions":
+            self._refresh_global_sessions_workspace(now_utc, states, exchange_calendar_enabled)
+
+        self.audio_label.configure(
+            text="AUDIO // MP3 READY" if self.audio_available and ALARM_SOUND_FILE.is_file() else "AUDIO: SYSTEM BELL"
+        )
+        self._update_next_alarm_display()
+        if self.current_page == "command_center":
+            refresh_command_center(self, now_utc)
+        self.clock_job = self.root.after(self.refresh_ms, self.update_clock)
+
+    def _refresh_global_sessions_workspace(
+        self, now_utc: datetime, states: list, exchange_calendar_enabled: bool
+    ) -> None:
+        """Render Global Sessions widgets only while their workspace is visible."""
+        open_states = [state for state in states if state.is_open]
         self.summary_open["value"].configure(text=f"{len(open_states)} / {len(states)}")
         transitions = sorted(states, key=lambda item: item.seconds_to_transition)
         if transitions:
@@ -5020,13 +5511,6 @@ class VeltrixTradingClock:
             message = "NO TRACKED SESSION IS OPEN  ·  Monitoring the next scheduled opening."
             colour = palette["warning"]
         self.overlap_label.configure(text=message, fg=colour)
-
-        self.audio_label.configure(
-            text="AUDIO // MP3 READY" if self.audio_available and ALARM_SOUND_FILE.is_file() else "AUDIO: SYSTEM BELL"
-        )
-        self._update_next_alarm_display()
-        refresh_command_center(self, now_utc)
-        self.clock_job = self.root.after(self.refresh_ms, self.update_clock)
 
     @staticmethod
     def _find_overlaps(open_states) -> str:
@@ -5251,13 +5735,30 @@ class VeltrixTradingClock:
         self.status_label.configure(text=message, fg=colour)
 
     def on_close(self) -> None:
+        if self.is_closing:
+            return
+        if self.backup_operation_in_progress:
+            if not self.backup_close_when_finished:
+                self.backup_close_when_finished = True
+                messagebox.showinfo(
+                    "Backup in progress",
+                    "Veltrix will finish the current backup task before closing. "
+                    "This prevents an incomplete archive from being treated as a saved backup.",
+                    parent=self.root,
+                )
+            return
+        self._finalize_close()
+
+    def _finalize_close(self) -> None:
+        if self.is_closing:
+            return
         self.is_closing = True
         for job in (
             self.clock_job, self.session_animation_job, self.alarm_job, self.bell_job,
             self.calendar_auto_refresh_job, self.calendar_startup_fetch_job, self.calendar_queue_job,
             self.market_auto_refresh_job, self.market_startup_fetch_job, self.market_queue_job,
             self.regime_queue_job, self.regime_cache_load_job, self.regime_import_queue_job,
-            self.focus_tick_job,
+            self.focus_tick_job, self.system_health_job, self.backup_auto_job,
         ):
             if job is not None:
                 try:
@@ -5266,39 +5767,7 @@ class VeltrixTradingClock:
                     pass
         self.stop_audio()
         self._close_alarm_popup()
-        self.config["theme"] = self.theme_name
-        self.config["alerts"] = dict(self.alert_settings)
-        self.config["alert_center"] = self.alert_center.export_state()
-        self.config["economic_events"] = self.economic_events
-        self.config["calendar"] = dict(self.calendar_settings)
-        self.config["market_data"] = dict(self.market_settings)
-        self.config["market_instruments"] = list(self.market_instruments)
-        self.config["session_profiles"] = {
-            "selected": self.active_session_profile,
-            "base_sessions": [dict(item) for item in self.session_profile_base_sessions],
-            "custom": {key: dict(value) for key, value in self.custom_session_schedules.items()},
-        }
-        self.config["exchange_calendar"] = {
-            "enabled": bool(self.exchange_calendar_enabled_var.get())
-        }
-        self.config["session_risk"] = dict(self.session_risk_settings)
-        try:
-            self.regime_settings.update(asdict(self._collect_regime_config()))
-            self.regime_settings["selected_asset"] = self._selected_regime_asset_key()
-        except (AttributeError, ValueError, tk.TclError):
-            pass
-        self.config["regime_lab"] = dict(self.regime_settings)
-        try:
-            daily_target = max(0.5, min(24.0, float(self.focus_daily_target_var.get())))
-        except (AttributeError, ValueError, tk.TclError):
-            daily_target = 4.0
-        self.config["focus"] = {"daily_target_hours": daily_target}
-        try:
-            self.config["event_reminder_minutes"] = max(0, min(1440, int(self.event_lead_var.get())))
-        except (AttributeError, ValueError, tk.TclError):
-            pass
-        self._persist_alarm_state()
-        self._save_config()
+        self._sync_runtime_config(show_errors=True)
         if self.regime_cache_writer_thread is not None and self.regime_cache_writer_thread.is_alive():
             if not self.regime_cache_loading:
                 self._save_regime_cache()
@@ -5314,8 +5783,32 @@ class VeltrixTradingClock:
 
 def main() -> None:
     try:
+        startup_restore = None
+        restore_warning: str | None = None
+        try:
+            startup_restore = apply_pending_restore(APP_DATA_DIR, app_version=APP_VERSION)
+        except BackupError as exc:
+            restore_warning = str(exc)
+            if "automatic rollback also failed" in restore_warning.lower():
+                raise
+
         root = tk.Tk()
         VeltrixTradingClock(root)
+        if startup_restore:
+            restored = ", ".join(startup_restore.get("restored_files", []))
+            messagebox.showinfo(
+                "Veltrix recovery complete",
+                "The selected snapshot was restored successfully before the application opened.\n\n"
+                f"Restored files: {restored}\n"
+                f"Pre-restore safety copy: {startup_restore['pre_restore_backup']}",
+                parent=root,
+            )
+        if restore_warning:
+            messagebox.showwarning(
+                "Veltrix recovery was not applied",
+                restore_warning,
+                parent=root,
+            )
         root.mainloop()
     except Exception as exc:
         try:

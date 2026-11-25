@@ -8,13 +8,22 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
-from typing import Any
+from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from market_data import OHLCBar
 
 CSV_MAX_BYTES = 100 * 1024 * 1024
 CSV_MAX_ROWS = 2_000_000
+
+def snapshot_ohlc_records(raw_bars: Iterable[Any]) -> tuple[Any, ...]:
+    """Capture stable batch membership without cloning every imported OHLC row.
+
+    Analysis workers treat imported row records as read-only. The tuple keeps
+    the selected batch stable while reusing the large row dictionaries.
+    """
+    return tuple(raw_bars)
+
 
 HEADER_ALIASES = {
     "timestamp": {"timestamp", "datetime", "datetimeutc", "gmttime", "bartime", "opentime"},

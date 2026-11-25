@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import unittest
+from statistics import stdev
 from datetime import datetime, timedelta, timezone
 
 from market_intelligence_engine import build_market_intelligence_snapshot
@@ -180,6 +181,62 @@ class MarketIntelligenceEngineTests(unittest.TestCase):
                 market_payload(), self.instruments, market_is_fresh=True,
                 now_utc=datetime(2026, 11, 24),
             )
+
+    def test_volatility_percentile_uses_latest_sixty_rolling_windows(self):
+        closes = [
+            100.0 * math.exp(
+                0.0008 * index
+                + 0.012 * math.sin(index * 0.31)
+                + 0.003 * math.cos(index * 0.09)
+            )
+            for index in range(260)
+        ]
+        bars = make_bars(closes)
+        result = self.build(market_payload(gold={"daily_bars": bars}))
+        volatility = result["assets"]["gold"]["volatility"]
+
+        returns = [
+            math.log(right / left)
+            for left, right in zip(closes, closes[1:])
+        ]
+        rolling = [
+            math.sqrt(252) * 100.0 * stdev(returns[end - 20:end])
+            for end in range(20, len(returns) + 1)
+        ][-60:]
+        expected_current = math.sqrt(252) * 100.0 * stdev(returns[-20:])
+        expected_percentile = (
+            sum(value <= expected_current for value in rolling) / len(rolling) * 100.0
+        )
+
+        self.assertEqual(volatility["rv20_percentile_samples"], 60)
+        self.assertAlmostEqual(
+            volatility["rv20_percentile_lookback"], expected_percentile, places=12
+        )
+
+    def test_breadth_uses_latest_two_common_dates_for_staggered_histories(self):
+        universe = {
+            "AAA": make_bars(
+                [100, 101, 102, 103, 104],
+                start=datetime(2026, 1, 1, 16, tzinfo=timezone.utc),
+            ),
+            "BBB": make_bars(
+                [50, 49, 50, 51],
+                start=datetime(2026, 1, 2, 16, tzinfo=timezone.utc),
+            ),
+            "CCC": make_bars(
+                [200, 201, 202, 201],
+                start=datetime(2026, 1, 2, 16, tzinfo=timezone.utc),
+            ),
+        }
+        result = self.build(market_payload(), breadth=universe)
+        breadth = result["breadth"]
+
+        self.assertEqual(breadth["state"], "AVAILABLE")
+        self.assertEqual(breadth["as_of_utc"], "2026-01-05")
+        self.assertEqual(
+            (breadth["advancers"], breadth["decliners"], breadth["unchanged"]),
+            (2, 1, 0),
+        )
 
 
 if __name__ == "__main__":

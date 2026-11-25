@@ -144,12 +144,14 @@ def _volatility_summary(bars: list[OHLCBar]) -> dict[str, Any]:
     rv20 = _annualised_volatility(returns[-20:], 20)
     rv60 = _annualised_volatility(returns[-60:], 60)
 
+    # The percentile uses only the latest 60 rolling windows. Avoid
+    # calculating older windows that cannot affect the displayed result.
     rolling_20: list[float] = []
-    for end in range(20, len(returns) + 1):
+    first_end = max(20, len(returns) - 59)
+    for end in range(first_end, len(returns) + 1):
         value = _annualised_volatility(returns[end - 20:end], 20)
         if value is not None:
             rolling_20.append(value)
-    rolling_20 = rolling_20[-60:]
     percentile = _percentile_rank(rolling_20, rv20) if rv20 is not None and len(rolling_20) >= 5 else None
 
     latest_close = bars[-1].close if bars else None
@@ -263,11 +265,13 @@ def _market_breadth(
             "advance_share_pct": None, "as_of_utc": None,
         }
     day = common_dates[-1]
+    # common_dates is the intersection of every constituent's dates, so its
+    # penultimate entry is the latest valid prior date for every series.
+    previous_day = common_dates[-2] if len(common_dates) >= 2 else None
     counts = {"advancers": 0, "decliners": 0, "unchanged": 0}
     for bars in series.values():
         indexed = {item.timestamp.astimezone(timezone.utc).date().isoformat(): item.close for item in bars}
-        previous_days = [value for value in common_dates if value < day and value in indexed]
-        if not previous_days:
+        if previous_day is None or previous_day not in indexed:
             return {
                 "state": "UNAVAILABLE",
                 "reason": "A shared prior trading date is missing for one or more constituents.",
@@ -275,7 +279,7 @@ def _market_breadth(
                 "advancers": None, "decliners": None, "unchanged": None,
                 "advance_share_pct": None, "as_of_utc": None,
             }
-        previous = indexed[previous_days[-1]]
+        previous = indexed[previous_day]
         current = indexed[day]
         counts["advancers" if current > previous else
                "decliners" if current < previous else "unchanged"] += 1

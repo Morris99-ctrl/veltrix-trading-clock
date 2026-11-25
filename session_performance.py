@@ -380,7 +380,6 @@ def analyse_session_performance(
 
     session_groups: dict[str, dict[date, list[OHLCBar]]] = {item.key: {} for item in definitions}
     overlap_groups: dict[tuple[str, str], dict[date, list[OHLCBar]]] = {}
-    session_membership: dict[datetime, list[str]] = {}
 
     for bar in bars:
         stamp = bar.timestamp
@@ -393,10 +392,7 @@ def analyse_session_performance(
             if open_utc <= stamp < close_utc:
                 session_groups[session.key].setdefault(local.date(), []).append(bar)
                 members.append(session.key)
-        session_membership[stamp] = members
         for left, right in combinations(sorted(members), 2):
-            left_session = next(item for item in definitions if item.key == left)
-            right_session = next(item for item in definitions if item.key == right)
             # UTC date is used for a consistent overlap-day bucket across zones.
             overlap_groups.setdefault((left, right), {}).setdefault(stamp.date(), []).append(bar)
 

@@ -1,0 +1,68 @@
+VELTRIX TRADING CLOCK v10.19 — RELEASE VALIDATION
+
+Branch
+perf/v10.17-behaviour-preserving
+
+Base
+main (v10.16)
+
+Automated backup coverage
+- Snapshot inventory includes configuration, alarm state, calendar cache, market cache, Regime datasets, legacy cache, Focus SQLite database and custom alarm audio when present.
+- Manifest format/version, file allowlist, archive paths, duplicate names, file sizes and SHA-256 format are checked.
+- Archive verification checks member CRC, file sizes and SHA-256 hashes.
+- SQLite online snapshot retains committed Focus records and passes integrity_check.
+- Retention policy preserves the newest configured count and protects a selected restore archive.
+- Restore requests are verified and queued for the next app startup.
+- Recovery creates a pre-restore safety backup before changing any live user-data files.
+- Restore applies the selected snapshot before FocusStore and the active app configuration are loaded.
+- Missing managed files are removed to reproduce the selected snapshot's state.
+- Path traversal, unknown archive paths, symbolic links, too many entries, unsupported formats and invalid configuration payloads are rejected.
+- Tampered archives and missing configuration files are rejected.
+- A restore failure during file replacement triggers rollback from the pre-restore safety archive.
+- A restore is not applied while the current application instance is running.
+
+Workspace and lifecycle coverage
+- Backup shortcut and Backup & Recovery workspace are wired into the navigation.
+- Existing workspace and market-data behaviour remains intact.
+- Backup operations run in background threads; results return to Tk through the existing UI queue poll.
+- Daily backup scheduling checks whether the most recent valid snapshot is older than 24 hours.
+- Close requests wait for active backup work to complete.
+- Startup recovery occurs before the configuration and Focus database are opened.
+
+Automated validation
+- GitHub Actions run: 45685548345
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45685548345
+- Source commit: 4c00430196e54046c45da23dbb3fd9d952873b09
+- Python 3.10: 301 tests passed; compileall passed.
+- Python 3.11: 301 tests passed; compileall passed.
+- Python 3.12: 301 tests passed; compileall passed.
+- Windows standalone PyInstaller build: passed.
+- Windows executable verification: passed.
+- Windows artifact upload: passed.
+
+Verified Windows artifact
+- Name: Veltrix-Trading-Clock-v10.19-Windows
+- Artifact ID: 15054119778
+- Size: 15,675,952 bytes
+- SHA-256: 884f274ada62337ebca6ec8f0dbf735ac4ce33e6a27df081807865db9c7a1de6
+- Created: 25 November 2026.
+- Expires: 23 February 2027.
+
+Manual Windows desktop review — POST-MERGE ACCEPTANCE
+1. Launch v10.19 and open BACKUP. Create a manual archive and verify all listed hashes.
+2. Confirm configuration, alarm state, Focus database and imported OHLC datasets appear in the archive inventory when present.
+3. Change a setting and create a second backup; confirm the newer archive sorts first.
+4. Schedule restore of the earlier archive, then cancel it and confirm current data is unchanged.
+5. Schedule it again, close and reopen Veltrix. Confirm restoration occurs before the app opens and the pre-restore safety archive is retained.
+6. Verify both the restored archive and pre-restore safety archive.
+7. Confirm an overdue automatic snapshot is created after startup, while a recent snapshot is not duplicated within 24 hours.
+8. Confirm backup and verification keep the interface responsive and do not interrupt market/calendar updates.
+9. Check v10.18 Health metrics against Windows Task Manager; confirm Health sampling pauses when hidden and observe idle CPU on Command Center.
+10. Check scrolling across Sessions, Alerts, Focus, Volatility, Regime and Backup workspaces; confirm nested tables retain native scrolling.
+11. Verify existing sessions, alerts, calendar, Market Intelligence, Regime Lab, Session Performance, Focus & Goals and alarm behaviour.
+
+Release status
+- Automated Python validation: PASS.
+- Windows standalone package: PASS.
+- Manual Windows desktop acceptance: PENDING AFTER MERGE.
+- Pull request #8: ready for merge after successful automated checks.

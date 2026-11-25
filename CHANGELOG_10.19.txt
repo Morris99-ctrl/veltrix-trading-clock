@@ -1,0 +1,48 @@
+VELTRIX TRADING CLOCK — v10.19
+AUTOMATED BACKUP AND RECOVERY
+
+New workspace
+- Adds a BACKUP shortcut in the application header and a dedicated Backup & Recovery workspace.
+- Displays local timestamped snapshots, archive sizes, file counts and integrity status.
+- Supports manual backup creation, full archive verification and restore scheduling.
+- Shows pending restore requests and supports cancellation before the next startup.
+
+Automated backup policy
+- Creates a startup backup when the latest valid snapshot is older than 24 hours.
+- Repeats automatically every 24 hours while Veltrix remains open.
+- Performs archive compression, hashing and SQLite snapshotting in a background worker.
+- Synchronises current configuration and waits for pending OHLC-cache writes before snapshotting.
+- Retains the latest 14 valid archives; a selected restore archive is protected from pruning while queued.
+
+Protected user data
+- Configuration and persistent alert history.
+- Alarm state and optional custom alarm sound.
+- Focus goals, milestones, timer history and SQLite state.
+- Imported Regime Lab OHLC datasets and legacy research cache when present.
+- Market-data and economic-calendar caches.
+- Excludes application binaries, temporary files and credentials.
+
+Integrity and recovery
+- Archives use a versioned manifest, explicit managed-file allowlist, file sizes and SHA-256 hashes.
+- New backups are verified before being reported as successful.
+- Focus SQLite data is captured using SQLite's online backup API and checked with PRAGMA integrity_check.
+- Restore preview re-verifies every file and rejects unsupported formats, unknown paths, duplicates, symbolic links and oversized manifests.
+- Restore is queued for next launch so active configuration and database handles are not overwritten.
+- A full pre-restore safety backup is made before selected data is applied.
+- If selected restore fails during the commit, Veltrix attempts to restore the pre-restore safety snapshot.
+
+Performance and behaviour guardrails
+- Backup compression, hashing and SQLite backup run off the Tk event loop.
+- Closing Veltrix waits for an active backup task to finish so an incomplete archive is not mistaken for a completed snapshot.
+- Backups are local only; no network calls or new runtime package dependencies.
+- Existing market feeds, alert rules, session schedules, calculation formulas and imported data formats are unchanged.
+
+Validation
+- GitHub Actions run 45685548345: passed.
+- Python 3.10: 301 tests passed; compileall passed.
+- Python 3.11: 301 tests passed; compileall passed.
+- Python 3.12: 301 tests passed; compileall passed.
+- Windows standalone PyInstaller build: passed.
+- Executable verification: passed; VeltrixTradingClock.exe exists.
+- Windows artifact upload: passed.
+- Manual desktop review: pending as the first post-merge acceptance check.

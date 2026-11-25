@@ -1,8 +1,8 @@
-# Veltrix Trading Clock — v10.16 Market Intelligence Engine
+# Veltrix Trading Clock — v10.19 Automated Backup and Recovery
 
-Veltrix v10.16 adds a research-focused Market Intelligence workspace on top of the v10.15 Alert Intelligence Center, v10.14 Trading Command Center, v10.13 smooth session clocks and v10.12 high-readability desktop interface. It combines causal OHLC regime classification, annualised realised volatility, rolling volatility context and cross-asset correlation using the existing market-data feed.
+Veltrix v10.19 builds on the v10.18 System Health Monitor and the existing market-intelligence, session, alert and research workspaces. It adds verified local backups and a guarded next-launch recovery workflow without changing market-data providers, trading analytics or alert behaviour.
 
-**Current release:** v10.16. Automated validation and the Windows standalone build passed, and the desktop build was manually reviewed successfully on 24 November 2026. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
+**Current release:** v10.19. Automated local backup and recovery protects configuration, alarms, Focus database records, imported OHLC datasets and market/calendar caches. Backups are SHA-256 verified, retained locally and restored before the next application launch after a safety copy is made. v10.19 automated validation and the Windows standalone build have passed on the upgrade branch. Manual Windows desktop review remains the next acceptance step after merge. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -18,7 +18,38 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Regime Lab** — import completed OHLC history from a CSV, classify bars as range, trend-up, trend-down, volatility shock or transition, inspect historical conditional outcomes and export classifications.
 - **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime; v10.11 adds chronological training/holdout validation.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
+- **System Health Monitor** — read-only process/system resource metrics, event-loop delay, active background workers, pending UI result queues, a 60-sample CPU/RAM history and recent monitored worker errors. Sampling runs only while this workspace is visible.
+- **Backup & Recovery** — daily automatic local snapshots, manual backup creation, archive inventory, complete SHA-256 verification, 14-snapshot retention and restore scheduling for the next launch. A verified safety backup is created before recovery is applied.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
+
+## v10.19 Automated Backup and Recovery
+
+The **BACKUP** shortcut in the top header opens a local backup and recovery workspace.
+
+- **Automatic backups:** Veltrix creates a backup after startup when no snapshot exists from the previous 24 hours, then repeats every 24 hours while the application remains open. If the application is closed, the next launch performs the overdue backup after startup.
+- **Manual snapshots:** create an on-demand backup without blocking the Tk event loop. The current settings are synchronised first, and the OHLC cache writer is allowed to finish before the archive is made.
+- **Protected state:** includes configuration and alert history, alarm state, the optional custom alarm sound, Focus goals/milestones/timer history, imported OHLC datasets, the legacy research cache when present, and the market/calendar caches. Credentials, temporary files, program binaries and Python environments are excluded.
+- **Integrity:** every archive contains a format-versioned manifest, file sizes and SHA-256 hashes. New snapshots are verified before being accepted. The SQLite Focus database is copied with SQLite's online backup API and integrity-checked, including committed WAL data.
+- **Retention:** keeps the 14 most recent valid snapshots. A snapshot selected for a queued restore is protected from retention pruning until recovery is applied or cancelled.
+- **Restore preview:** verifies every member and checksum before allowing the user to schedule recovery. Unknown archive paths, duplicate entries, symbolic links, unsupported formats and oversized manifests are rejected.
+- **Safe recovery:** a restore is queued and applied before the next application instance opens its configuration or Focus database. Veltrix first creates a separate pre-restore safety snapshot. If the selected restore fails during application, the safety snapshot is used to roll the data back.
+- **Local privacy:** archives remain in the local application-data folder. No cloud upload, network request or new runtime dependency is introduced.
+
+The current session is not overwritten while the app is running. After confirming a restore, close and reopen Veltrix to apply it. Backups are local recovery copies, not a substitute for keeping a separate copy of important data on another device.
+
+## v10.18 System Health Monitor
+
+The System Health workspace makes application performance observable without adding another market-data provider or changing trading research:
+
+- **Process CPU:** measures Veltrix process CPU time and normalises it against total logical machine capacity.
+- **System CPU:** reads cumulative operating-system CPU counters and reports utilisation from the difference between consecutive samples.
+- **Memory:** reports the current process resident working set and physical system-memory load where the operating system exposes those measurements. Unsupported metrics are shown as N/A.
+- **UI responsiveness:** samples Tk event-loop callback delay and keeps a rolling 60-sample average and peak.
+- **Background activity:** reports the existing market-data, economic-calendar, OHLC import/load, regime-analysis and session-performance workers, as well as pending result queues and Python thread count.
+- **Recent monitored errors:** keeps a bounded in-memory history of selected worker/provider/cache failures for the current application run.
+- **Low idle overhead:** samples once per second only while the Health workspace is visible. Navigating away cancels the sampling callback. The monitor is read-only and uses standard-library operating-system APIs; no new runtime package or network call is introduced.
+
+CPU and memory readings are diagnostics, not performance guarantees. The monitor does not claim to capture every possible Tk exception or operating-system process.
 
 ## v10.16 Market Intelligence Engine
 

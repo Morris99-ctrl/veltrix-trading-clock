@@ -85,6 +85,8 @@ def build_alerts_dashboard(app, parent: tk.Widget) -> None:
     )
     app.alerts_session_canvas.pack(fill="both", expand=True, pady=(2, 0))
     app.alerts_session_timeline_signature = None
+    app.alerts_session_timeline_cache_key = None
+    app.alerts_session_timeline_cache = None
 
     status = app._frame(top, bg="bg", padx=8, pady=7, highlightthickness=0, bd=0)
     status.grid(row=0, column=2, sticky="nsew")
@@ -318,17 +320,29 @@ def draw_alerts_session_timeline(app, now_utc: datetime, states: list) -> None:
     start_utc = now_utc.astimezone(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    snapshot = build_session_timeline(
-        app.sessions, start_utc, hours=24,
-        apply_exchange_calendar=app.exchange_calendar_enabled_var.get(),
+    exchange_calendar_enabled = bool(app.exchange_calendar_enabled_var.get())
+    schedule_signature = tuple(
+        (
+            session.key, session.timezone_name, session.opens.isoformat(),
+            session.closes.isoformat(), session.weekdays,
+        )
+        for session in app.sessions
     )
+    cache_key = (start_utc.date(), exchange_calendar_enabled, schedule_signature)
+    if (
+        getattr(app, "alerts_session_timeline_cache_key", None) != cache_key
+        or getattr(app, "alerts_session_timeline_cache", None) is None
+    ):
+        app.alerts_session_timeline_cache = build_session_timeline(
+            app.sessions, start_utc, hours=24,
+            apply_exchange_calendar=exchange_calendar_enabled,
+        )
+        app.alerts_session_timeline_cache_key = cache_key
+    snapshot = app.alerts_session_timeline_cache
+
     width = max(440, canvas.winfo_width())
     height = 148
-    signature = (
-        width, height, app.theme_name, start_utc.date().isoformat(),
-        bool(app.exchange_calendar_enabled_var.get()),
-        tuple((s.key, s.opens, s.closes, s.weekdays, s.timezone_name) for s in app.sessions),
-    )
+    signature = (width, height, app.theme_name, cache_key)
     left, right = 47.0, float(width - 8)
     span = max(10.0, right - left)
     top, lane_step, lane_height = 32.0, 25.0, 14.0
