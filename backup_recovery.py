@@ -187,6 +187,8 @@ def _file_entries_for_backup(
 
 def _manifest_from_archive(archive: zipfile.ZipFile) -> dict[str, Any]:
     names = archive.namelist()
+    if len(names) > len(MANAGED_FILES) + 1:
+        raise BackupError("Backup archive contains too many entries.")
     if len(names) != len(set(names)):
         raise BackupError("Backup archive contains duplicate entries.")
     if MANIFEST_NAME not in names:
@@ -203,7 +205,8 @@ def _manifest_from_archive(archive: zipfile.ZipFile) -> dict[str, Any]:
         raise BackupError("Backup manifest must be a JSON object.")
     if manifest.get("format") != BACKUP_FORMAT:
         raise BackupError("This is not a Veltrix backup archive.")
-    if manifest.get("format_version") != BACKUP_FORMAT_VERSION:
+    format_version = manifest.get("format_version")
+    if isinstance(format_version, bool) or format_version != BACKUP_FORMAT_VERSION:
         raise BackupError("This backup uses an unsupported format version.")
     managed = manifest.get("managed_files")
     if managed != list(MANAGED_FILES):
@@ -308,7 +311,7 @@ def verify_backup(backup_path: str | Path) -> dict[str, Any]:
 def list_backups(data_dir: str | Path) -> list[dict[str, Any]]:
     """List timestamped local archives, leaving full digest verification on demand."""
     directory = _backup_dir(data_dir)
-    if not directory.is_dir():
+    if directory.is_symlink() or not directory.is_dir():
         return []
     results: list[dict[str, Any]] = []
     for path in directory.iterdir():
@@ -437,7 +440,10 @@ def create_backup(
 def _safe_backup_path(data_dir: Path, backup_name: str) -> Path:
     if not isinstance(backup_name, str) or not _BACKUP_NAME_RE.fullmatch(backup_name):
         raise BackupError("Selected backup filename is invalid.")
-    directory = _backup_dir(data_dir).resolve()
+    raw_directory = _backup_dir(data_dir)
+    if raw_directory.is_symlink():
+        raise BackupError("Backup directory must not be a symbolic link.")
+    directory = raw_directory.resolve()
     path = directory / backup_name
     if path.parent.resolve() != directory or path.is_symlink() or not path.is_file():
         raise BackupError("Selected backup is not stored in the Veltrix backup directory.")
