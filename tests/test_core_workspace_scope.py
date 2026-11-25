@@ -264,6 +264,34 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn("class SystemHealthMonitor", (PROJECT_ROOT / "system_health.py").read_text(encoding="utf-8"))
         self.assertIn("RECENT PERFORMANCE · LAST 60 SAMPLES", (PROJECT_ROOT / "system_health_ui.py").read_text(encoding="utf-8"))
 
+    def test_backup_and_recovery_workspace_protects_user_data_before_restore(self):
+        for symbol in (
+            "backup_nav_button",
+            "backup_recovery_view",
+            "build_backup_recovery_page(self)",
+            "def _maybe_start_automatic_backup",
+            "create_backup(",
+            "verify_backup(",
+            "prepare_restore(",
+            "apply_pending_restore(APP_DATA_DIR",
+            "self._finalize_close()",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        backup_engine = (PROJECT_ROOT / "backup_recovery.py").read_text(encoding="utf-8")
+        backup_ui = (PROJECT_ROOT / "backup_recovery_ui.py").read_text(encoding="utf-8")
+        for symbol in (
+            "focus_goals.sqlite3",
+            "market_cache.json",
+            "calendar_cache.json",
+            "regime_data.json",
+            "MANAGED_FILES",
+            "SHA-256",
+            "pre-restore",
+        ):
+            self.assertIn(symbol, backup_engine + backup_ui)
+        self.assertIn("SCHEDULE RESTORE", backup_ui)
+        self.assertIn("CANCEL QUEUED RESTORE", backup_ui)
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
