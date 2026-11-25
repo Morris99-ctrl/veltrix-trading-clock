@@ -16,8 +16,9 @@ Automated backup coverage
 - Recovery creates a pre-restore safety backup before changing any live user-data files.
 - Restore applies the selected snapshot before FocusStore and the active app configuration are loaded.
 - Missing managed files are removed to reproduce the selected snapshot's state.
-- Path traversal and unknown archive paths are rejected.
+- Path traversal, unknown archive paths, symbolic links, too many entries, unsupported formats and invalid configuration payloads are rejected.
 - Tampered archives and missing configuration files are rejected.
+- A restore failure during file replacement triggers rollback from the pre-restore safety archive.
 - A restore is not applied while the current application instance is running.
 
 Workspace and lifecycle coverage
@@ -29,29 +30,39 @@ Workspace and lifecycle coverage
 - Startup recovery occurs before the configuration and Focus database are opened.
 
 Automated validation
-- GitHub Actions run: pending.
-- Python 3.10 / 3.11 / 3.12: pending.
-- Windows PyInstaller build and executable verification: pending.
+- GitHub Actions run: 45685548345
+- URL: https://github.com/Morris99-ctrl/veltrix-trading-clock/actions/runs/45685548345
+- Source commit: 4c00430196e54046c45da23dbb3fd9d952873b09
+- Python 3.10: 301 tests passed; compileall passed.
+- Python 3.11: 301 tests passed; compileall passed.
+- Python 3.12: 301 tests passed; compileall passed.
+- Windows standalone PyInstaller build: passed.
+- Windows executable verification: passed.
+- Windows artifact upload: passed.
 
-Manual Windows desktop review — REQUIRED
-1. Open BACKUP from the header and confirm the workspace loads with no existing archive.
-2. Use CREATE BACKUP NOW and confirm a timestamped archive appears.
-3. Verify & Preview the new archive; confirm all listed file hashes pass.
-4. Confirm the archive includes current config, alarm, Focus database and imported OHLC data when present.
-5. Close and reopen Veltrix; confirm the latest snapshot is not duplicated within 24 hours.
-6. Change a non-sensitive setting, create another backup and confirm the archive list sorts newest first.
-7. Schedule restore of the earlier snapshot and confirm the UI reports RESTORE QUEUED.
-8. Cancel a queued restore and confirm the current data remains unchanged.
-9. Schedule the restore again, close Veltrix and reopen it. Confirm the selected snapshot is applied before the workspace opens.
-10. Confirm the pre-restore safety archive is retained and appears in the archive list.
-11. Verify both the restored snapshot and safety snapshot.
-12. Confirm invalid/tampered archives are refused and do not overwrite current files.
-13. Confirm automatic retention preserves the 14 most recent valid archives and protects a queued restore target.
-14. Confirm backup and verification leave the UI responsive and do not interrupt market/calendar updates.
-15. Confirm all v10.18 health-monitor, scrolling, sessions, alerts, research workspaces and alarm functionality remain available.
+Verified Windows artifact
+- Name: Veltrix-Trading-Clock-v10.19-Windows
+- Artifact ID: 15054119778
+- Size: 15,675,952 bytes
+- SHA-256: 884f274ada62337ebca6ec8f0dbf735ac4ce33e6a27df081807865db9c7a1de6
+- Created: 25 November 2026.
+- Expires: 23 February 2027.
+
+Manual Windows desktop review — POST-MERGE ACCEPTANCE
+1. Launch v10.19 and open BACKUP. Create a manual archive and verify all listed hashes.
+2. Confirm configuration, alarm state, Focus database and imported OHLC datasets appear in the archive inventory when present.
+3. Change a setting and create a second backup; confirm the newer archive sorts first.
+4. Schedule restore of the earlier archive, then cancel it and confirm current data is unchanged.
+5. Schedule it again, close and reopen Veltrix. Confirm restoration occurs before the app opens and the pre-restore safety archive is retained.
+6. Verify both the restored archive and pre-restore safety archive.
+7. Confirm an overdue automatic snapshot is created after startup, while a recent snapshot is not duplicated within 24 hours.
+8. Confirm backup and verification keep the interface responsive and do not interrupt market/calendar updates.
+9. Check v10.18 Health metrics against Windows Task Manager; confirm Health sampling pauses when hidden and observe idle CPU on Command Center.
+10. Check scrolling across Sessions, Alerts, Focus, Volatility, Regime and Backup workspaces; confirm nested tables retain native scrolling.
+11. Verify existing sessions, alerts, calendar, Market Intelligence, Regime Lab, Session Performance, Focus & Goals and alarm behaviour.
 
 Release status
-- Automated validation: PENDING.
-- Windows standalone package: PENDING.
-- Manual Windows desktop review: PENDING.
-- Pull request #8 remains draft until automated checks and the user's desktop review are complete.
+- Automated Python validation: PASS.
+- Windows standalone package: PASS.
+- Manual Windows desktop acceptance: PENDING AFTER MERGE.
+- Pull request #8: ready for merge after successful automated checks.
