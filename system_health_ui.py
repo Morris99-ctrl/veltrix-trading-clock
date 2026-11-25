@@ -152,17 +152,15 @@ def build_system_health_page(app: Any) -> None:
         "Local dataset cache writer",
     )
     for index, name in enumerate(worker_names):
-        row = app._frame(worker_panel, bg="panel")
+        row_surface = "dim" if index % 2 else "panel"
+        row = app._frame(worker_panel, bg=row_surface)
         row.pack(fill="x", pady=2)
         row.grid_columnconfigure(0, weight=2)
         row.grid_columnconfigure(1, weight=1)
         row.grid_columnconfigure(2, weight=4)
-        if index % 2:
-            for child in (row,):
-                child.configure(bg=palette["dim"])
-        label = app._label(row, name, bg="panel" if index % 2 == 0 else "dim", fg="text", font=("Segoe UI", 9))
+        label = app._label(row, name, bg=row_surface, fg="text", font=("Segoe UI", 9))
         label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
-        status = app._label(row, "IDLE", bg="panel" if index % 2 == 0 else "dim", fg="muted",
+        status = app._label(row, "IDLE", bg=row_surface, fg="muted",
                             font=("Segoe UI", 8, "bold"))
         status.grid(row=0, column=1, sticky="w", padx=(0, 8), pady=4)
         detail = app._label(row, "Waiting for a request", bg="panel" if index % 2 == 0 else "dim",
@@ -220,31 +218,36 @@ def draw_system_health_history(app: Any) -> None:
     except (tk.TclError, TypeError, ValueError):
         return
     canvas.delete("all")
-    left, right = 44, max(45, width - 12)
+    left, right = 44, max(45, width - 42)
     top, middle, bottom = 24, max(65, height // 2), max(66, height - 22)
-    for fraction in (0.0, 0.5, 1.0):
-        y = top + int((middle - top) * fraction)
-        canvas.create_line(left, y, right, y, fill=palette["border"], dash=(2, 3))
-        canvas.create_text(5, y, anchor="w", text=f"{int(100 - fraction * 100)}%", fill=palette["muted"],
-                           font=("Segoe UI", 7))
-        y2 = middle + int((bottom - middle) * fraction)
-        canvas.create_line(left, y2, right, y2, fill=palette["border"], dash=(2, 3))
-    canvas.create_text(left, 8, anchor="w", text="CPU", fill=palette["bright"], font=("Segoe UI", 8, "bold"))
-    canvas.create_text(right, 8, anchor="e", text="RAM · MB", fill=palette["success"], font=("Segoe UI", 8, "bold"))
-
     samples = list(getattr(app, "system_health_history", ()))
     if not samples:
         canvas.create_text(width / 2, height / 2, text="Waiting for the first resource sample...",
                            fill=palette["muted"], font=("Segoe UI", 9))
         return
+
+    ram_values = [sample.process_rss_mb for sample in samples if sample.process_rss_mb is not None]
+    ram_scale = max(256.0, max(ram_values, default=0.0) * 1.15)
+    for fraction in (0.0, 0.5, 1.0):
+        y = top + int((middle - top) * fraction)
+        canvas.create_line(left, y, right, y, fill=palette["border"], dash=(2, 3))
+        canvas.create_text(5, y, anchor="w", text=f"{int(100 - fraction * 100)}%",
+                           fill=palette["muted"], font=("Segoe UI", 7))
+        y2 = middle + int((bottom - middle) * fraction)
+        canvas.create_line(left, y2, right, y2, fill=palette["border"], dash=(2, 3))
+        canvas.create_text(width - 3, y2, anchor="e", text=f"{int(ram_scale * (1 - fraction))}",
+                           fill=palette["muted"], font=("Segoe UI", 7))
+    canvas.create_text(left, 8, anchor="w", text="CPU · %", fill=palette["bright"],
+                       font=("Segoe UI", 8, "bold"))
+    canvas.create_text(right, 8, anchor="e", text=f"RAM · MB (0–{ram_scale:.0f})",
+                       fill=palette["success"], font=("Segoe UI", 8, "bold"))
+
     plot_width = max(1, right - left)
     if len(samples) == 1:
         x_values = [right]
     else:
         x_values = [left + plot_width * index / (len(samples) - 1) for index in range(len(samples))]
     cpu_points: list[float] = []
-    ram_values = [sample.process_rss_mb for sample in samples if sample.process_rss_mb is not None]
-    ram_scale = max(256.0, max(ram_values, default=0.0) * 1.15)
     ram_points: list[float] = []
     for x, sample in zip(x_values, samples):
         cpu = min(100.0, max(0.0, sample.process_cpu_percent))
