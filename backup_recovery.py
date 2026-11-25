@@ -170,10 +170,12 @@ def _manifest_from_archive(archive: zipfile.ZipFile) -> dict[str, Any]:
         raise BackupError("Backup archive contains duplicate entries.")
     if MANIFEST_NAME not in names:
         raise BackupError("Backup archive has no manifest.")
-    if len(archive.read(MANIFEST_NAME)) > MAX_MANIFEST_BYTES:
+    manifest_info = archive.getinfo(MANIFEST_NAME)
+    if manifest_info.file_size > MAX_MANIFEST_BYTES:
         raise BackupError("Backup manifest is unexpectedly large.")
     try:
-        manifest = json.loads(archive.read(MANIFEST_NAME).decode("utf-8"))
+        manifest_bytes = archive.read(MANIFEST_NAME)
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise BackupError(f"Backup manifest is invalid: {exc}") from exc
     if not isinstance(manifest, dict):
