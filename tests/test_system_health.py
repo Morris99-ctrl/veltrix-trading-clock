@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from system_health import (
     SystemHealthMonitor,
@@ -76,6 +77,25 @@ class SystemHealthEngineTests(unittest.TestCase):
             [item["status"] for item in snapshot["workers"][:6]],
             ["RUNNING", "IDLE", "IDLE", "IDLE", "RUNNING", "IDLE"],
         )
+
+    def test_sampler_returns_cpu_memory_and_thread_metrics(self):
+        with (
+            patch("system_health.time.process_time", side_effect=[2.0, 2.5]),
+            patch("system_health.time.perf_counter", side_effect=[10.0, 11.0]),
+            patch("system_health.read_system_cpu_counters", side_effect=[(100, 200), (125, 300)]),
+            patch("system_health.read_process_rss_bytes", return_value=100 * 1024 * 1024),
+            patch("system_health.read_system_memory_percent", return_value=62.5),
+            patch("system_health.os.cpu_count", return_value=2),
+        ):
+            monitor = SystemHealthMonitor()
+            sample = monitor.sample()
+
+        self.assertAlmostEqual(sample.process_cpu_percent, 25.0)
+        self.assertAlmostEqual(sample.system_cpu_percent, 75.0)
+        self.assertAlmostEqual(sample.process_rss_mb, 100.0)
+        self.assertAlmostEqual(sample.system_memory_percent, 62.5)
+        self.assertGreaterEqual(sample.thread_count, 1)
+
 
     def test_error_history_is_bounded_and_thread_safe_to_read(self):
         monitor = SystemHealthMonitor()
