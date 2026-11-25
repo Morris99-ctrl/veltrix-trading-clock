@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from pathlib import Path
 
 from backup_recovery import (
@@ -193,6 +194,49 @@ class BackupRecoveryTests(unittest.TestCase):
                 create_backup(data)
             with self.assertRaisesRegex(BackupError, "symbolic link"):
                 prepare_restore(data, "veltrix-backup-20261125T000000Z-abcdef12.zip")
+
+    def test_restore_rolls_back_current_data_when_a_file_replace_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = self.make_data_dir(Path(folder), theme="CYAN", focus_title="Before restore")
+            selected = create_backup(data)
+            (data / "config.json").write_text(
+                json.dumps({"theme": "VIOLET", "sessions": [{"name": "Current"}]}),
+                encoding="utf-8",
+            )
+            (data / "market_cache.json").write_text(
+                json.dumps({"assets": {"current": {"close": 2200}}}),
+                encoding="utf-8",
+            )
+            prepare_restore(data, selected["name"])
+
+            import backup_recovery
+            real_replace = backup_recovery.os.replace
+            failed = {"value": False}
+
+            def fail_once(source, destination):
+                if str(destination).endswith("config.json") and not failed["value"]:
+                    failed["value"] = True
+                    raise OSError("simulated disk replacement failure")
+                return real_replace(source, destination)
+
+            with patch("backup_recovery.os.replace", side_effect=fail_once):
+                with self.assertRaisesRegex(BackupError, "pre-restore data"):
+                    apply_pending_restore(data, app_version="10.19")
+
+            current_config = json.loads((data / "config.json").read_text(encoding="utf-8"))
+            current_market = json.loads((data / "market_cache.json").read_text(encoding="utf-8"))
+            self.assertEqual(current_config["theme"], "VIOLET")
+            self.assertIn("current", current_market["assets"])
+            self.assertIsNone(read_pending_restore(data))
+            self.assertGreaterEqual(len(list_backups(data)), 2)
+
+    def test_invalid_configuration_is_not_archived_or_restored(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = self.make_data_dir(Path(folder))
+            (data / "config.json").write_text("{invalid json", encoding="utf-8")
+
+            with self.assertRaisesRegex(BackupError, "Configuration cannot be safely backed up"):
+                create_backup(data)
 
     def test_prepare_restore_rejects_path_traversal_names(self):
         with tempfile.TemporaryDirectory() as folder:
