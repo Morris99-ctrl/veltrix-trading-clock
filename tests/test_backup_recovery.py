@@ -179,6 +179,21 @@ class BackupRecoveryTests(unittest.TestCase):
 
             self.assertFalse((data / "alarm_state.json").exists())
 
+    def test_backup_folder_symlink_is_not_followed_for_restore(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = self.make_data_dir(root)
+            outside = root / "outside"
+            outside.mkdir()
+            try:
+                (data / "backups").symlink_to(outside, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("Directory symlinks are unavailable on this platform")
+            with self.assertRaisesRegex(BackupError, "symbolic link"):
+                create_backup(data)
+            with self.assertRaisesRegex(BackupError, "symbolic link"):
+                prepare_restore(data, "veltrix-backup-20261125T000000Z-abcdef12.zip")
+
     def test_prepare_restore_rejects_path_traversal_names(self):
         with tempfile.TemporaryDirectory() as folder:
             data = self.make_data_dir(Path(folder))
