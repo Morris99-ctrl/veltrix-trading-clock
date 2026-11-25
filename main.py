@@ -974,11 +974,18 @@ class VeltrixTradingClock:
 
         width = max(620, canvas.winfo_width())
         height = 166
-        signature = (width, height, self.theme_name, start_utc.date().isoformat())
+        signature = (
+            width, height, self.theme_name, start_utc.date().isoformat(), cache_key,
+        )
         left, right = 92.0, float(width - 15)
         self.session_timeline_plot = (left, right, start_utc)
         span = right - left
         top, lane_step, lane_height = 31.0, 23.0, 12.0
+        total_seconds = (end_utc - start_utc).total_seconds()
+
+        def x_at(moment: datetime) -> float:
+            seconds = (moment.astimezone(timezone.utc) - start_utc).total_seconds()
+            return left + span * seconds / total_seconds
 
         if self.session_timeline_signature != signature:
             canvas.delete("all")
@@ -1021,38 +1028,35 @@ class VeltrixTradingClock:
                 fill=palette["bg"], outline=palette["dim"], width=1,
                 tags="timeline-static",
             )
+
+            # Session windows are fixed for the cached day/schedule snapshot.
+            # Draw them only when the static timeline signature changes.
+            session_colours = (
+                palette["success"], palette["bright"], palette["warning"], palette["error"],
+            )
+            for index, session in enumerate(self.sessions):
+                colour = session_colours[index % len(session_colours)]
+                y = top + index * lane_step
+                for window in snapshot.windows:
+                    if window.session_key != session.key:
+                        continue
+                    x1, x2 = x_at(window.starts_at), x_at(window.ends_at)
+                    canvas.create_rectangle(
+                        x1, y + 1, max(x1 + 1, x2), y + lane_height - 1,
+                        fill=colour, outline=colour, tags="timeline-schedule",
+                    )
+
+            for overlap in snapshot.overlaps:
+                x1, x2 = x_at(overlap.starts_at), x_at(overlap.ends_at)
+                canvas.create_rectangle(
+                    x1, overlap_y + 1, max(x1 + 1, x2), overlap_y + lane_height - 1,
+                    fill=palette["error"], outline=palette["error"], tags="timeline-schedule",
+                )
             self.session_timeline_signature = signature
         else:
             canvas.delete("timeline-dynamic")
 
-        total_seconds = (end_utc - start_utc).total_seconds()
-
-        def x_at(moment: datetime) -> float:
-            seconds = (moment.astimezone(timezone.utc) - start_utc).total_seconds()
-            return left + span * seconds / total_seconds
-
-        session_colours = (
-            palette["success"], palette["bright"], palette["warning"], palette["error"],
-        )
-        for index, session in enumerate(self.sessions):
-            colour = session_colours[index % len(session_colours)]
-            y = top + index * lane_step
-            for window in snapshot.windows:
-                if window.session_key != session.key:
-                    continue
-                x1, x2 = x_at(window.starts_at), x_at(window.ends_at)
-                canvas.create_rectangle(
-                    x1, y + 1, max(x1 + 1, x2), y + lane_height - 1,
-                    fill=colour, outline=colour, tags="timeline-dynamic",
-                )
-
         overlap_y = top + len(self.sessions) * lane_step + 4
-        for overlap in snapshot.overlaps:
-            x1, x2 = x_at(overlap.starts_at), x_at(overlap.ends_at)
-            canvas.create_rectangle(
-                x1, overlap_y + 1, max(x1 + 1, x2), overlap_y + lane_height - 1,
-                fill=palette["error"], outline=palette["error"], tags="timeline-dynamic",
-            )
 
         if start_utc <= now_utc < end_utc:
             marker_x = x_at(now_utc)
