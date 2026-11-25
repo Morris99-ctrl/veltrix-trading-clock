@@ -3738,6 +3738,10 @@ class VeltrixTradingClock:
             else:
                 button.configure(bg=palette["button_bg"], fg=palette["button_fg"])
         self.current_page = page
+        if page == "sessions" and self.session_animation_job is None:
+            self.session_animation_job = self.root.after(
+                SESSION_CLOCK_FRAME_MS, self._animate_session_clocks
+            )
         if page == "volatility" and hasattr(self, "volatility_canvas"):
             self.volatility_canvas.yview_moveto(0.0)
         if page == "regime" and hasattr(self, "regime_canvas"):
@@ -4587,8 +4591,13 @@ class VeltrixTradingClock:
         return f"{phase} CYCLE · SESSION COMPLETE"
 
     def _animate_session_clocks(self) -> None:
-        """Sweep all four session dials independently of the slower status poll."""
+        """Sweep visible session dials independently of the slower status poll."""
         if self.is_closing:
+            return
+        # The session canvases are hidden on every other workspace. Stop the
+        # 60 FPS callback there instead of redrawing invisible widgets.
+        if self.current_page != "sessions":
+            self.session_animation_job = None
             return
         now_utc = datetime.now(timezone.utc)
         states_by_key = {state.definition.key: state for state in self.latest_session_states}
