@@ -54,10 +54,14 @@ class RegimeConfig:
         return self
 
 
-def _normalise_bars(bars: Iterable[OHLCBar | dict[str, Any]]) -> list[OHLCBar]:
-    """Validate, de-duplicate by timestamp and return ascending OHLC bars."""
+def _normalise_bars(
+    bars: Iterable[OHLCBar | dict[str, Any]],
+) -> tuple[list[OHLCBar], int]:
+    """Validate, de-duplicate by timestamp and return ascending OHLC bars plus input count."""
     by_time: dict[str, OHLCBar] = {}
+    input_count = 0
     for raw in bars:
+        input_count += 1
         try:
             bar = raw if isinstance(raw, OHLCBar) else OHLCBar.from_dict(raw)
             stamp = bar.timestamp
@@ -73,7 +77,7 @@ def _normalise_bars(bars: Iterable[OHLCBar | dict[str, Any]]) -> list[OHLCBar]:
             by_time[stamp.isoformat()] = bar
         except (KeyError, TypeError, ValueError, OverflowError):
             continue
-    return sorted(by_time.values(), key=lambda item: item.timestamp)
+    return sorted(by_time.values(), key=lambda item: item.timestamp), input_count
 
 
 def _true_ranges(bars: list[OHLCBar]) -> list[float]:
@@ -162,8 +166,7 @@ def analyse_market_regimes(
     i+horizon; it is intentionally not used by the classifier.
     """
     cfg = (config or RegimeConfig()).validate()
-    raw_bars = list(bars)
-    ordered = _normalise_bars(raw_bars)
+    ordered, input_bar_count = _normalise_bars(bars)
     if not ordered:
         raise ValueError("No valid OHLC bars are available for regime analysis.")
 
@@ -240,7 +243,7 @@ def analyse_market_regimes(
     return {
         "config": asdict(cfg),
         "metadata": {
-            "input_bars": len(raw_bars),
+            "input_bars": input_bar_count,
             "valid_bars": len(ordered),
             "classified_bars": total_classified,
             "warmup_bars": len(ordered) - total_classified,
