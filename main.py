@@ -3035,7 +3035,8 @@ class VeltrixTradingClock:
         def worker() -> None:
             try:
                 payload = load_regime_datasets(REGIME_DATA_PATH, LEGACY_RESEARCH_CACHE_PATH)
-            except Exception:
+            except Exception as exc:
+                self.system_health_monitor.record_error("OHLC dataset load", exc)
                 payload = {"datasets": {}, "migrated_from_legacy": False, "skipped_tick_datasets": 0}
             self.regime_cache_load_queue.put(payload)
 
@@ -3628,6 +3629,7 @@ class VeltrixTradingClock:
         try:
             save_market_cache(MARKET_CACHE_PATH, self.market_snapshot)
         except OSError as exc:
+            self.system_health_monitor.record_error("Market cache", exc)
             self.market_status_label.configure(text=f"DATA RECEIVED · CACHE WRITE FAILED: {exc}",
                                                fg=THEMES[self.theme_name]["warning"])
         assets = self.market_snapshot.get("assets", {})
