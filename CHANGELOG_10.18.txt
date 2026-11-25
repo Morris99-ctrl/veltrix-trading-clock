@@ -1,0 +1,28 @@
+VELTRIX TRADING CLOCK — v10.18
+SYSTEM HEALTH MONITOR
+
+New workspace
+- Adds a dedicated System Health workspace to the main navigation.
+- Displays Veltrix process CPU and resident working-set memory.
+- Displays whole-system CPU and physical memory load on supported Windows/Linux systems.
+- Displays Tk event-loop callback delay, 60-sample average/peak, Python thread count, Veltrix worker count and pending UI results.
+- Displays the existing market-data, calendar, OHLC cache, CSV import, regime-analysis and Session Performance worker states.
+- Keeps a bounded in-memory list of monitored worker, provider and cache errors.
+- Adds a 60-sample CPU/RAM history chart.
+
+Resource and lifecycle behaviour
+- Samples resource metrics at a one-second cadence only while the System Health workspace is visible.
+- Cancels the sampling callback when another workspace becomes active or the application closes.
+- Uses standard-library Windows API and Linux /proc metrics; unavailable platform measurements are shown as N/A.
+- Makes no additional network requests and adds no runtime package dependencies.
+- The monitor is diagnostic and read-only. It does not alter market feeds, alerts, session schedules, analytical formulas or saved research.
+
+Retained capabilities
+- Preserves the v10.17 scroll handling and performance optimisations.
+- Preserves market data providers, alert rules, session definitions, economic-calendar cadence, research settings and local datasets.
+- No broker integration, order execution or trading signals are introduced.
+
+Validation
+- Automated test matrix: pending.
+- Windows standalone package and executable verification: pending.
+- Manual desktop review: pending.
