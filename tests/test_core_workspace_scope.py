@@ -89,6 +89,13 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn('page == "sessions" and self.session_animation_job is None', MAIN_SOURCE)
         self.assertIn('SESSION_CLOCK_FRAME_MS, self._animate_session_clocks', MAIN_SOURCE)
 
+    def test_session_timeline_schedule_shapes_are_not_redrawn_each_second(self):
+        self.assertIn('tags="timeline-schedule"', MAIN_SOURCE)
+        self.assertIn("cache_key,\n        )", MAIN_SOURCE)
+        self.assertIn("if self.session_timeline_signature != signature:", MAIN_SOURCE)
+        self.assertIn('canvas.delete("timeline-dynamic")', MAIN_SOURCE)
+        self.assertIn('tags="timeline-dynamic"', MAIN_SOURCE)
+
     def test_session_timeline_snapshot_is_cached_by_schedule_inputs(self):
         self.assertIn("self.session_timeline_cache_key: tuple | None = None", MAIN_SOURCE)
         self.assertIn("self.session_timeline_cache: Any = None", MAIN_SOURCE)
