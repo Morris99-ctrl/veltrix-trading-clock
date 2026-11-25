@@ -38,6 +38,11 @@ Performance and behaviour guardrails
 - Existing market feeds, alert rules, session schedules, calculation formulas and imported data formats are unchanged.
 
 Validation
-- Automated test matrix: pending.
-- Windows standalone build and executable verification: pending.
-- Manual desktop review: pending.
+- GitHub Actions run 45685548345: passed.
+- Python 3.10: 301 tests passed; compileall passed.
+- Python 3.11: 301 tests passed; compileall passed.
+- Python 3.12: 301 tests passed; compileall passed.
+- Windows standalone PyInstaller build: passed.
+- Executable verification: passed; VeltrixTradingClock.exe exists.
+- Windows artifact upload: passed.
+- Manual desktop review: pending as the first post-merge acceptance check.
