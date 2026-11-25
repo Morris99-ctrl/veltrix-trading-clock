@@ -89,6 +89,14 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         self.assertIn('page == "sessions" and self.session_animation_job is None', MAIN_SOURCE)
         self.assertIn('SESSION_CLOCK_FRAME_MS, self._animate_session_clocks', MAIN_SOURCE)
 
+    def test_hidden_global_sessions_render_only_when_active(self):
+        self.assertIn('if self.current_page == "sessions":\n            self._refresh_global_sessions_workspace', MAIN_SOURCE)
+        self.assertIn('def _refresh_global_sessions_workspace(', MAIN_SOURCE)
+        self.assertIn('elif page == "sessions":', MAIN_SOURCE)
+        self.assertIn('self._refresh_global_sessions_workspace(\n                now_utc, states, exchange_calendar_enabled', MAIN_SOURCE)
+        self.assertIn('self._draw_session_timeline(now_utc, states)', MAIN_SOURCE)
+        self.assertIn('self._refresh_session_intelligence(now_utc)', MAIN_SOURCE)
+
     def test_global_session_intelligence_uses_the_session_engine_and_scrollable_map(self):
         self.assertIn("from session_timeline import build_session_timeline", MAIN_SOURCE)
         self.assertIn("def _build_session_timeline", MAIN_SOURCE)
