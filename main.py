@@ -3751,6 +3751,19 @@ class VeltrixTradingClock:
             )
         elif page == "command_center":
             refresh_command_center(self, datetime.now(timezone.utc))
+        elif page == "sessions":
+            now_utc = datetime.now(timezone.utc)
+            exchange_calendar_enabled = bool(self.exchange_calendar_enabled_var.get())
+            states = [
+                get_exchange_aware_session_state(
+                    session, now_utc, enabled=exchange_calendar_enabled
+                )
+                for session in self.sessions
+            ]
+            self.latest_session_states = states
+            self._refresh_global_sessions_workspace(
+                now_utc, states, exchange_calendar_enabled
+            )
         if page == "volatility" and hasattr(self, "volatility_canvas"):
             self.volatility_canvas.yview_moveto(0.0)
         if page == "regime" and hasattr(self, "regime_canvas"):
@@ -4941,6 +4954,22 @@ class VeltrixTradingClock:
         self._poll_live_calendar_events(home_now)
         if self.current_page == "alerts":
             refresh_alert_center(self, now_utc, states, self.calendar_events, self.economic_events)
+        if self.current_page == "sessions":
+            self._refresh_global_sessions_workspace(now_utc, states, exchange_calendar_enabled)
+
+        self.audio_label.configure(
+            text="AUDIO // MP3 READY" if self.audio_available and ALARM_SOUND_FILE.is_file() else "AUDIO: SYSTEM BELL"
+        )
+        self._update_next_alarm_display()
+        if self.current_page == "command_center":
+            refresh_command_center(self, now_utc)
+        self.clock_job = self.root.after(self.refresh_ms, self.update_clock)
+
+    def _refresh_global_sessions_workspace(
+        self, now_utc: datetime, states: list, exchange_calendar_enabled: bool
+    ) -> None:
+        """Render Global Sessions widgets only while their workspace is visible."""
+        open_states = [state for state in states if state.is_open]
         self.summary_open["value"].configure(text=f"{len(open_states)} / {len(states)}")
         transitions = sorted(states, key=lambda item: item.seconds_to_transition)
         if transitions:
@@ -5042,14 +5071,6 @@ class VeltrixTradingClock:
             message = "NO TRACKED SESSION IS OPEN  ·  Monitoring the next scheduled opening."
             colour = palette["warning"]
         self.overlap_label.configure(text=message, fg=colour)
-
-        self.audio_label.configure(
-            text="AUDIO // MP3 READY" if self.audio_available and ALARM_SOUND_FILE.is_file() else "AUDIO: SYSTEM BELL"
-        )
-        self._update_next_alarm_display()
-        if self.current_page == "command_center":
-            refresh_command_center(self, now_utc)
-        self.clock_job = self.root.after(self.refresh_ms, self.update_clock)
 
     @staticmethod
     def _find_overlaps(open_states) -> str:
