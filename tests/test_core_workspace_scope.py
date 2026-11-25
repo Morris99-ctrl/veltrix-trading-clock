@@ -248,6 +248,22 @@ class CoreWorkspaceScopeTests(unittest.TestCase):
         ):
             self.assertIn(symbol, SESSION_PERFORMANCE_SOURCE)
 
+    def test_system_health_workspace_is_registered_and_sampled_only_when_visible(self):
+        for symbol in (
+            "system_health_nav_button",
+            "system_health_view",
+            "build_system_health_page(self)",
+            'if page == "system_health":',
+            "self._start_system_health_monitoring()",
+            "self._stop_system_health_monitoring()",
+            "self._sample_system_health",
+            "collect_worker_snapshot(self)",
+            "refresh_system_health_page(",
+        ):
+            self.assertIn(symbol, MAIN_SOURCE)
+        self.assertIn("class SystemHealthMonitor", (PROJECT_ROOT / "system_health.py").read_text(encoding="utf-8"))
+        self.assertIn("RECENT PERFORMANCE · LAST 60 SAMPLES", (PROJECT_ROOT / "system_health_ui.py").read_text(encoding="utf-8"))
+
     def test_removed_research_and_execution_engines_are_not_imported_by_main(self):
         for module in ("research_engine", "backtest_engine", "bar_engine", "data_gateway"):
             self.assertNotIn(f"import {module}", MAIN_SOURCE)
