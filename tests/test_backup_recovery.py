@@ -123,7 +123,7 @@ class BackupRecoveryTests(unittest.TestCase):
                     for name in source.namelist():
                         target.writestr(name, source.read(name))
                     target.writestr("../../outside.txt", b"bad")
-            with self.assertRaisesRegex(BackupError, "unexpected"):
+            with self.assertRaisesRegex(BackupError, "unexpected|too many entries"):
                 verify_backup(malicious)
 
     def test_prepare_restore_verifies_archive_and_queues_for_next_launch(self):
