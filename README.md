@@ -1,8 +1,8 @@
-# Veltrix Trading Clock — v10.16 Market Intelligence Engine
+# Veltrix Trading Clock — v10.18 System Health Monitor
 
 Veltrix v10.16 adds a research-focused Market Intelligence workspace on top of the v10.15 Alert Intelligence Center, v10.14 Trading Command Center, v10.13 smooth session clocks and v10.12 high-readability desktop interface. It combines causal OHLC regime classification, annualised realised volatility, rolling volatility context and cross-asset correlation using the existing market-data feed.
 
-**Current release:** v10.16. Automated validation and the Windows standalone build passed, and the desktop build was manually reviewed successfully on 24 November 2026. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
+**Current release:** v10.18. The System Health Monitor adds local CPU, memory, event-loop, thread, worker and monitored-error diagnostics. The v10.18 automated validation and Windows standalone build are pending on the draft upgrade branch; a manual desktop review is still required. The application remains a descriptive research and session-monitoring tool; it does not provide execution-grade quotes, trading recommendations or order execution.
 
 The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces have been removed from the application. Their fetch, import, bar-construction, provider and backtesting workflows are no longer started or exposed by the Core Edition.
 
@@ -18,7 +18,22 @@ The former Research Lab, Strategy Lab, Tick Research and Data Center workspaces 
 - **Regime Lab** — import completed OHLC history from a CSV, classify bars as range, trend-up, trend-down, volatility shock or transition, inspect historical conditional outcomes and export classifications.
 - **Session Performance** — reuse the same local OHLC datasets to measure returns, observed ranges, realised volatility, positive-day rate, sample counts, estimated coverage and pairwise session-overlap behaviour; v10.10 adds rolling return/drawdown, sample-gated consistency rankings and performance grouped by causal market regime; v10.11 adds chronological training/holdout validation.
 - **Focus & Goals** — restart-safe stopwatch/countdown timers, daily focus history, goals and milestones.
+- **System Health Monitor** — read-only process/system resource metrics, event-loop delay, active background workers, pending UI result queues, a 60-sample CPU/RAM history and recent monitored worker errors. Sampling runs only while this workspace is visible.
 - **Alarm Clock** — the original seven-segment clock, alarm, snooze and theme system.
+
+## v10.18 System Health Monitor
+
+The System Health workspace makes application performance observable without adding another market-data provider or changing trading research:
+
+- **Process CPU:** measures Veltrix process CPU time and normalises it against total logical machine capacity.
+- **System CPU:** reads cumulative operating-system CPU counters and reports utilisation from the difference between consecutive samples.
+- **Memory:** reports the current process resident working set and physical system-memory load where the operating system exposes those measurements. Unsupported metrics are shown as N/A.
+- **UI responsiveness:** samples Tk event-loop callback delay and keeps a rolling 60-sample average and peak.
+- **Background activity:** reports the existing market-data, economic-calendar, OHLC import/load, regime-analysis and session-performance workers, as well as pending result queues and Python thread count.
+- **Recent monitored errors:** keeps a bounded in-memory history of selected worker/provider/cache failures for the current application run.
+- **Low idle overhead:** samples once per second only while the Health workspace is visible. Navigating away cancels the sampling callback. The monitor is read-only and uses standard-library operating-system APIs; no new runtime package or network call is introduced.
+
+CPU and memory readings are diagnostics, not performance guarantees. The monitor does not claim to capture every possible Tk exception or operating-system process.
 
 ## v10.16 Market Intelligence Engine
 
