@@ -491,7 +491,12 @@ class VeltrixTradingClock:
         right_header = self._frame(header)
         right_header.pack(side="right", anchor="e")
         self.live_label = self._label(right_header, "● LIVE MONITOR", fg="success", font=("Segoe UI", 10, "bold"))
-        self.live_label.pack(side="left", padx=(0, 13))
+        self.live_label.pack(side="left", padx=(0, 10))
+        self.system_health_nav_button = tk.Button(
+            right_header, text="HEALTH", command=lambda: self.show_page("system_health"),
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
+        )
+        self.system_health_nav_button.pack(side="left", padx=(0, 8))
         self.theme_selector = tk.OptionMenu(right_header, self.theme_var, *THEMES.keys(), command=self.set_theme)
         self.theme_selector.configure(font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=7, pady=5, cursor="hand2")
         self.theme_selector.pack(side="left")
@@ -567,12 +572,7 @@ class VeltrixTradingClock:
             nav, text="FOCUS & GOALS", command=lambda: self.show_page("focus"),
             font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
         )
-        self.focus_nav_button.pack(side="left", padx=(0, 5))
-        self.system_health_nav_button = tk.Button(
-            nav, text="HEALTH", command=lambda: self.show_page("system_health"),
-            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=9, pady=7, cursor="hand2",
-        )
-        self.system_health_nav_button.pack(side="left")
+        self.focus_nav_button.pack(side="left")
 
         self.page_host = self._frame(self.outer)
         self.page_host.pack(fill="both", expand=True)
